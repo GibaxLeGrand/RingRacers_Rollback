@@ -470,6 +470,29 @@ static void K_PrintSnapshotContext(const char *label, const uint8_t *buffer, siz
 	CONS_Printf("rollback_test: %s from byte %s: %s\n", label, sizeu1(start), line);
 }
 
+/** Prints where the last restore spent its time.
+  *
+  * The restore is the expensive half of a rollback, and it costs about four
+  * times more on a client drawing the game than on a dedicated server running
+  * the same map -- so the interesting question is not the total but which step
+  * carries the difference.
+  */
+static void K_PrintLoadProfile(const char *cmd)
+{
+	const loadstep_t *steps = NULL;
+	const size_t count = P_GetLoadProfile(&steps);
+	size_t i;
+
+	for (i = 0; i < count; i++)
+	{
+		// Steps that cost nothing worth reporting only bury the ones that do.
+		if (steps[i].us < 100)
+			continue;
+
+		CONS_Printf("%s: restore step %-20s %u us\n", cmd, steps[i].name, steps[i].us);
+	}
+}
+
 /** Prints who is on the grid.
   *
   * Every measurement below scales with this, and it is not something to be
@@ -678,6 +701,8 @@ static void Command_RollbackTest_f(void)
 	loadus = K_PreciseToMicros(I_GetPreciseTime() - started);
 
 	afterload = Consistancy();
+
+	K_PrintLoadProfile("rollback_test");
 
 	if (records)
 		K_CaptureRecords(&recsafter);

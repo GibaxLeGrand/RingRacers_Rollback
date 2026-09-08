@@ -45,6 +45,18 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading);
 // in. Diagnostic aid for comparing two snapshots of the same state.
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset);
 
+// How long each step of the last P_LoadNetGame took, in microseconds. The
+// restore is the expensive half of a rollback, so it says where its time goes.
+#define P_LOADPROFILE_MAX 16
+
+struct loadstep_t
+{
+	const char *name;
+	uint32_t us;
+};
+
+size_t P_GetLoadProfile(const loadstep_t **steps);
+
 // Archives one mobj on its own, so the same object can be compared before and
 // after a state restore. Diagnostic aid, see p_saveg.cpp.
 size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj);

@@ -7645,6 +7645,50 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 	TracyCZoneEnd(__zone);
 }
 
+// ----------------------------------------------------------------------------
+// Load profiling
+//
+// A restore costs about 11 ms on a client that is drawing the game and under
+// 3 ms on a dedicated server running the same map. Somewhere in here is work
+// that only a rendering build pays for, and the difference decides how many
+// tics of rollback fit in a frame -- so the steps time themselves.
+//
+// The cost of measuring is two clock reads per step on a path that already
+// takes milliseconds.
+// ----------------------------------------------------------------------------
+
+static loadstep_t g_loadprofile[P_LOADPROFILE_MAX];
+static size_t g_loadprofilecount;
+static precise_t g_loadprofilemark;
+
+static void P_ProfileReset(void)
+{
+	g_loadprofilecount = 0;
+	g_loadprofilemark = I_GetPreciseTime();
+}
+
+/** Records the time since the previous step under this name. */
+static void P_ProfileStep(const char *name)
+{
+	const precise_t now = I_GetPreciseTime();
+
+	if (g_loadprofilecount < P_LOADPROFILE_MAX)
+	{
+		g_loadprofile[g_loadprofilecount].name = name;
+		g_loadprofile[g_loadprofilecount].us =
+			(uint32_t)(((now - g_loadprofilemark) * (uint64_t)1000000) / I_GetPrecisePrecision());
+		g_loadprofilecount++;
+	}
+
+	g_loadprofilemark = now;
+}
+
+size_t P_GetLoadProfile(const loadstep_t **steps)
+{
+	*steps = g_loadprofile;
+	return g_loadprofilecount;
+}
+
 dboolean P_LoadGame(savebuffer_t *save)
 {
 	if (gamestate == GS_INTERMISSION)
@@ -7679,33 +7723,56 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading)
 
 	current_savebuffer = save;
 
+	P_ProfileReset();
+
 	save->p += CV_LoadNetVars(save->p);
+	P_ProfileStep("netvars");
 
 	if (!P_NetUnArchiveMisc(save, reloading))
 		return false;
+	P_ProfileStep("misc");
 
 	K_LoadEndCamera(save);
 	ReadMobjPointer(&g_endcam.panMobj);
 
 	P_NetUnArchivePlayers(save);
+	P_ProfileStep("players");
+
 	P_NetUnArchiveParties(save);
 	P_NetUnArchiveRoundQueue(save);
 	P_NetUnArchiveZVote(save);
+	P_ProfileStep("parties/queue/vote");
 
 	if (gamestate == GS_LEVEL)
 	{
 		P_NetUnArchiveWorld(save);
+		P_ProfileStep("world");
+
 		P_UnArchivePolyObjects(save);
+		P_ProfileStep("polyobjects");
+
 		P_NetUnArchiveThinkers(save);
+		P_ProfileStep("thinkers");
+
 		P_NetUnArchiveSpecials(save);
+		P_ProfileStep("specials");
+
 		P_NetUnArchiveColormaps(save);
+		P_ProfileStep("colormaps");
+
 		P_NetUnArchiveTubeWaypoints(save);
 		P_NetUnArchiveWaypoints(save);
+		P_ProfileStep("waypoints");
+
 		P_RelinkPointers();
+		P_ProfileStep("relink pointers");
 	}
 
 	ACS_UnArchive(save);
+	P_ProfileStep("ACS");
+
 	LUA_UnArchive(save, true);
+	P_ProfileStep("Lua");
 
 	P_NetUnArchiveRNG(save);
 
@@ -7715,6 +7782,7 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading)
 	// precipitation when loading a netgame save. Instead, precip has to be spawned here.
 	// This is done in P_NetUnArchiveSpecials now.
 	dboolean ret = P_UnArchiveLuabanksAndConsistency(save);
+	P_ProfileStep("rng/luabanks");
 
 	TracyCZoneEnd(__zone);
 	return ret;

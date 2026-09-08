@@ -335,6 +335,7 @@ TYPEDEF (polyfadedata_t);
 TYPEDEF (savedata_t);
 TYPEDEF (savedata_cup_t);
 TYPEDEF (savebuffer_t);
+TYPEDEF (loadstep_t);
 
 // p_setup.h
 TYPEDEF (levelflat_t);
