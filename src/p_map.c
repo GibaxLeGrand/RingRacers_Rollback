@@ -28,6 +28,7 @@
 #include "w_wad.h"
 
 #include "k_kart.h" // SRB2kart 011617
+#include "k_rollback.h"
 #include "k_collide.h"
 #include "k_respawn.h"
 #include "hu_stuff.h" // SRB2kart
@@ -533,6 +534,10 @@ static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
 	// Ignore... things.
 	if (thing == NULL || P_MobjWasRemoved(thing) == true)
 		return BMIT_CONTINUE;
+
+	// Counted for a resimulation check: two passes that examine different pairs
+	// are not simulating the same world, whatever their state says they hold.
+	K_RollbackTraceCollide(g_tm.thing->mobjnum, thing->mobjnum);
 
 	// don't clip against self
 	if (thing == g_tm.thing)

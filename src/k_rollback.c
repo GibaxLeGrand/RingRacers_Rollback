@@ -283,6 +283,22 @@ static tracehit_t g_hittrace[2][TRACE_MAX];
 static uint32_t g_hittracecount[2];
 static int32_t g_hittracing = -1; // which pass is recording, -1 for none
 
+// Collision pairs are counted rather than kept: there are hundreds a tic, and
+// the question they answer is only whether the two passes examined the same
+// ones. A differing count means a different set of pairs; the same count with
+// a differing hash means the same pairs in a different order.
+static uint32_t g_pairs[2];
+static uint32_t g_pairhash[2];
+
+void K_RollbackTraceCollide(uint32_t one, uint32_t two)
+{
+	if (g_hittracing < 0)
+		return;
+
+	g_pairs[g_hittracing]++;
+	g_pairhash[g_hittracing] = ((g_pairhash[g_hittracing] ^ one) * 16777619u) ^ two;
+}
+
 void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
 {
 	tracehit_t *hit;
@@ -301,6 +317,17 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
 /** Says where two passes stopped agreeing about who got hit. */
 static void K_ReportTrace(const char *cmd)
 {
+	if (g_pairs[0] != g_pairs[1] || g_pairhash[0] != g_pairhash[1])
+	{
+		CONS_Printf("%s: collision pairs -- live %u (hash %08x), replay %u (hash %08x)\n",
+			cmd, g_pairs[0], g_pairhash[0], g_pairs[1], g_pairhash[1]);
+	}
+	else
+	{
+		CONS_Printf("%s: both passes examined the same %u collision pairs, in the same order\n",
+			cmd, g_pairs[0]);
+	}
+
 	const uint32_t common = (g_hittracecount[0] < g_hittracecount[1]) ? g_hittracecount[0] : g_hittracecount[1];
 	uint32_t i;
 
@@ -1424,6 +1451,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// *archived* state reproduce.
 	srand((unsigned int)gametic);
 	g_hittracecount[0] = g_hittracecount[1] = 0;
+	g_pairs[0] = g_pairs[1] = 0;
+	g_pairhash[0] = g_pairhash[1] = 2166136261u;
 	g_hittracing = 0;
 
 	started = I_GetPreciseTime();

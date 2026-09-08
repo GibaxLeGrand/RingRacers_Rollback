@@ -44,6 +44,10 @@ int32_t K_RollbackMaxDepth(void);
 // compare. Does nothing the rest of the time.
 void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source);
 
+// Counts a pair of objects being tested against each other, while a check has
+// two passes to compare. Does nothing the rest of the time.
+void K_RollbackTraceCollide(uint32_t one, uint32_t two);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
