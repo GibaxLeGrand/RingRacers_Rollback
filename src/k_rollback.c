@@ -38,6 +38,8 @@
 #include "command.h"
 #include "d_clisrv.h" // Consistancy(), playerdelaytable
 #include "d_netcmd.h" // cv_mindelay
+#include <stddef.h> // offsetof
+
 #include "deh_tables.h" // MOBJTYPE_LIST, FREE_MOBJS
 #include "doomdef.h"
 #include "doomstat.h"
@@ -621,6 +623,15 @@ static void K_ComparePlayers(const char *cmd)
 	if (g_playercopy == NULL)
 		return;
 
+	// So a reported offset can be read straight off, rather than counted
+	// through d_player.h by hand.
+	CONS_Printf("%s: offsets -- cmd %s, oldcmd %s, SPBdistance %s, itemscale %s, "
+		"enteredGame %s, faultflash %s\n",
+		cmd,
+		sizeu1(offsetof(player_t, cmd)), sizeu2(offsetof(player_t, oldcmd)),
+		sizeu3(offsetof(player_t, SPBdistance)), sizeu4(offsetof(player_t, itemscale)),
+		sizeu5(offsetof(player_t, enteredGame)), sizeu1(offsetof(player_t, faultflash)));
+
 	for (i = 0; i < MAXPLAYERS && reported < 8; i++)
 	{
 		const uint8_t *was = g_playercopy + (sizeof (player_t) * i);
@@ -645,7 +656,11 @@ static void K_ComparePlayers(const char *cmd)
 			for (run = 0; at + run < sizeof (player_t) && was[at + run] != now[at + run]; run++)
 				;
 
-			if (run != 8) // let the pointers pass in silence
+			// Not a length test: two heap addresses on this platform differ only
+			// in their low bytes, so a pointer shows up as a run of three like
+			// anything else. Alignment is the tell -- every pointer in the
+			// structure sits on a multiple of eight.
+			if ((at % 8) != 0)
 			{
 				CONS_Printf("%s: player %d, %s bytes into player_t: %s bytes differ\n",
 					cmd, i, sizeu1(at), sizeu2(run));
