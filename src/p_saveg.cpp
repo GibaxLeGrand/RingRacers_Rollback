@@ -8058,6 +8058,29 @@ static loadstep_t g_loadprofile[P_LOADPROFILE_MAX];
 static size_t g_loadprofilecount;
 static precise_t g_loadprofilemark;
 
+static dboolean g_profilewatchplayers;
+
+void P_ProfileWatchPlayers(dboolean on)
+{
+	g_profilewatchplayers = on;
+}
+
+/** Hashes the player structures, for telling one step of a restore from another. */
+static uint32_t P_HashPlayers(void)
+{
+	const uint8_t *p = (const uint8_t *)players;
+	const size_t n = sizeof (player_t) * MAXPLAYERS;
+	uint32_t h = 2166136261u;
+	size_t i;
+
+	for (i = 0; i < n; i++)
+	{
+		h = (h ^ p[i]) * 16777619u;
+	}
+
+	return h;
+}
+
 static void P_ProfileReset(void)
 {
 	g_loadprofilecount = 0;
@@ -8074,6 +8097,8 @@ static void P_ProfileStep(const char *name)
 		g_loadprofile[g_loadprofilecount].name = name;
 		g_loadprofile[g_loadprofilecount].us =
 			(uint32_t)(((now - g_loadprofilemark) * (uint64_t)1000000) / I_GetPrecisePrecision());
+		g_loadprofile[g_loadprofilecount].playerhash =
+			g_profilewatchplayers ? P_HashPlayers() : 0;
 		g_loadprofilecount++;
 	}
 

@@ -64,7 +64,17 @@ struct loadstep_t
 {
 	const char *name;
 	uint32_t us;
+
+	// A hash of the player structures as this step left them, so a step that
+	// writes over what an earlier one restored can be named instead of
+	// guessed at. Only filled while P_ProfileWatchPlayers is on.
+	uint32_t playerhash;
 };
+
+// Turns the per-step hashing of the player structures on and off. Off by
+// default: it walks every player at every step of a restore, which is not
+// something a game should pay for.
+void P_ProfileWatchPlayers(dboolean on);
 
 size_t P_GetLoadProfile(const loadstep_t **steps);
 

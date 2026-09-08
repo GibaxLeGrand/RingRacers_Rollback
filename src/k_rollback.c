@@ -1061,6 +1061,43 @@ static void K_CopyPlayers(int32_t which)
 		memcpy(g_playercopy[which], players, sizeof (player_t) * MAXPLAYERS);
 }
 
+/** Names the steps of a restore that changed the player structures.
+  *
+  * "players" is meant to. Any step after it writing over what that one put
+  * back is the fault being hunted, and a step name is a far smaller thing to
+  * read through than a whole restore.
+  */
+static void K_ReportRestoreSteps(const char *cmd)
+{
+	const loadstep_t *steps = NULL;
+	const size_t count = P_GetLoadProfile(&steps);
+	char names[160];
+	char line[224];
+	int32_t n = 0;
+	size_t i;
+
+	if (count == 0 || steps == NULL)
+		return;
+
+	names[0] = '\0';
+
+	for (i = 1; i < count; i++)
+	{
+		if (steps[i].playerhash == steps[i - 1].playerhash)
+			continue;
+
+		if (n < (int32_t)sizeof (names) - 24)
+		{
+			n += snprintf(names + n, sizeof (names) - n, "%s%s",
+				(n > 0 ? ", " : ""), steps[i].name);
+		}
+	}
+
+	snprintf(line, sizeof (line), "%s: the restore changed the players at: %s",
+		cmd, (n > 0 ? names : "no step after the first"));
+	K_Finding(line);
+}
+
 /** Says which bytes of which player structure differ between two captures.
   *
   * The archive cannot answer this question about itself. Comparing snapshots
@@ -1712,8 +1749,13 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	K_CopyPlayers(0);
 	K_CopyMobjs();
 
+	// Watched over this restore only: hashing every player at every step is
+	// not something the game should pay for outside a check.
+	P_ProfileWatchPlayers(true);
+
 	if (!K_LoadGameState(gametic))
 	{
+		P_ProfileWatchPlayers(false);
 		CONS_Printf("rollback_resim: could not get back to the starting state -- "
 			"the level is left where the first pass ended\n");
 		goto done;
@@ -1721,6 +1763,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	K_ComparePlayers("rollback_resim restore", g_playercopy[2],
 		(const uint8_t *)players, -1);
+	K_ReportRestoreSteps("rollback_resim restore");
+	P_ProfileWatchPlayers(false);
 
 	srand((unsigned int)gametic);
 	g_hittracing = 1;
