@@ -82,6 +82,23 @@
 typedef struct
 {
 	uint8_t buffer[ROLLBACK_BUFSIZE + ROLLBACK_SLACK];
+
+	// Beside the archive rather than inside it.
+	//
+	// A snapshot has two jobs and they want different things from the cameras.
+	// Putting the world back wants them restored: a check replays three passes
+	// of a tic and the world rewinds, so a camera that keeps all three runs
+	// ahead and snaps back, once every soak interval -- visible as a jerk while
+	// driving, and a real rollback would do the same over its own window. The
+	// byte-for-byte comparison wants them gone: they are driven by a local view
+	// nothing archives, and comparing them accounted for 43 of the 44
+	// differences left in a played race.
+	//
+	// Held here, they are restored and not compared, which is what each job
+	// asked for. Taking them out of the archive to satisfy the second was
+	// giving up the first as well.
+	camera_t cameras[MAXSPLITSCREENPLAYERS];
+
 	size_t used;
 	tic_t tic;
 	int16_t gamemap;
@@ -153,6 +170,8 @@ static dboolean K_WriteSnapshot(rollbackslot_t *slot, tic_t tic)
 			"(caught in slack, nothing corrupted -- raise ROLLBACK_BUFSIZE)",
 			sizeu1(slot->used));
 
+	memcpy(slot->cameras, camera, sizeof (slot->cameras));
+
 	slot->tic = tic;
 	slot->gamemap = gamemap;
 	slot->valid = true;
@@ -197,7 +216,12 @@ dboolean K_LoadGameState(tic_t tic)
 	// reloading: keep the level in place, and keep the RNG seeds the archive
 	// restores instead of resetting them. Both are required for a rollback --
 	// replaying the same tics has to produce the same result.
-	return P_LoadNetGame(&save, true, true);
+	if (P_LoadNetGame(&save, true, true) == false)
+		return false;
+
+	memcpy(camera, slot->cameras, sizeof (slot->cameras));
+
+	return true;
 }
 
 // ----------------------------------------------------------------------------
