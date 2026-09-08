@@ -457,6 +457,44 @@ better detector, and the soak becomes the regression net behind it. Phase 2 is
 finished when it stops being the best instrument available, not when it is
 perfect.
 
+### Phase 3, as the code actually presents it
+
+Read out of the source rather than from netcode in general, so the plan names
+real things:
+
+- `netcmds[BACKUPTICS][MAXPLAYERS]` (d_clisrv.c:240) is the input ring, indexed
+  by tic modulo its length.
+- `G_Ticker` copies `netcmds[buf][i]` into `players[i].cmd` (g_game.c:2015).
+  That is the one place a tic learns what anybody pressed.
+- A client's inputs arrive into `netcmds[faketic % BACKUPTICS][player]` and are
+  marked `TICCMD_RECEIVED` (d_clisrv.c:5632). So the code already distinguishes
+  "this input is real" from "this slot is whatever was left in it".
+- `TryRunTics` runs `while (neededtic > gametic)` (d_clisrv.c:6748), which is
+  where a tic begins and where a rollback has to interrupt.
+
+Which gives four pieces, in order of risk:
+
+1. **Predict.** When a tic is about to run and a player's slot is not
+   `TICCMD_RECEIVED`, fill it by repeating that player's last known input and
+   record that the tic was predicted for them. Repeat-last is the standard
+   prediction and the right first one: it is correct whenever nobody changed
+   what they were holding, which is most tics.
+2. **Snapshot.** `K_SaveGameState(gametic)` before each tic. Measured at 0.8 ms
+   against a 28.6 ms budget, and the ring already holds twenty.
+3. **Correct.** When a real input arrives for a tic already run and it differs
+   from what was predicted, `K_LoadGameState` that tic, write the truth into
+   `netcmds`, and re-run forward to the present. The cost is the restore plus
+   one resimulated tic per tic rewound -- 6 ms plus roughly 1 ms each, so the
+   depth cap is a budget question, not a correctness one.
+4. **Cap.** `K_RollbackMaxDepth` already exists and `rollback_delay` already
+   prices a rollback as a percentage of a tic. Past the cap, pay the latency
+   with input delay instead of rewinding.
+
+Behind `cv_rollback`, off by default, so a build with it compiled in still
+plays exactly as a stock one until somebody turns it on. The soak stays on as
+the regression net: a rollback that breaks determinism will show up there
+first.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
