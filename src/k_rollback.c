@@ -37,10 +37,14 @@
 
 #include "command.h"
 #include "d_clisrv.h" // Consistancy()
+#include "deh_tables.h" // MOBJTYPE_LIST, FREE_MOBJS
 #include "doomdef.h"
 #include "doomstat.h"
 #include "i_system.h" // I_GetPreciseTime()
+#include "info.h"
 #include "m_random.h" // P_RandomFixed()
+#include "p_local.h" // thlist
+#include "p_mobj.h"
 #include "p_saveg.h"
 #include "z_zone.h"
 
@@ -186,6 +190,132 @@ static uint32_t K_PreciseToMicros(precise_t delta)
 	return (uint32_t)((delta * (uint64_t)1000000) / I_GetPrecisePrecision());
 }
 
+/** Names a mobj type, for diagnostics. Never NULL. */
+static const char *K_MobjTypeName(mobjtype_t type)
+{
+	const char *name = NULL;
+
+	if (type >= MT_FIRSTFREESLOT)
+	{
+		if (type <= MT_LASTFREESLOT)
+			name = FREE_MOBJS[type - MT_FIRSTFREESLOT];
+	}
+	else if (type < NUMMOBJTYPES)
+	{
+		name = MOBJTYPE_LIST[type];
+	}
+
+	return (name != NULL) ? name : "(unnamed type)";
+}
+
+/** Reports one mobj reference that the archive will not preserve.
+  *
+  * \return the running count of reports, incremented if this one was bad.
+  */
+static uint32_t K_CheckReference(const mobj_t *owner, const char *field, const mobj_t *ref, uint32_t reported)
+{
+	const char *why;
+
+	if (ref == NULL)
+		return reported; // nothing to preserve
+
+	if (P_MobjWasRemoved(ref) || TypeIsNetSynced(ref->type) == false)
+	{
+		// mobjnum is only handed out to the mobjs the archive writes, but it
+		// is never cleared, so an unarchived mobj can still be carrying a
+		// number from an earlier save. The reader would then resolve the
+		// reference to whichever archived mobj holds that number now.
+		why = (ref->mobjnum != 0)
+			? "is not archived but still carries a stale mobjnum -- restores as SOME OTHER OBJECT"
+			: "is not archived -- restores as NULL";
+	}
+	else if (ref->mobjnum == 0)
+	{
+		why = "was not numbered by this save -- restores as NULL";
+	}
+	else
+	{
+		return reported; // survives the round trip
+	}
+
+	// Cap the output: on a busy map a single systematic cause would otherwise
+	// bury everything else in the console.
+	if (reported < 12)
+	{
+		CONS_Printf("rollback_test: %s->%s = %s (mobjnum %u) %s\n",
+			K_MobjTypeName(owner->type), field,
+			K_MobjTypeName(ref->type), ref->mobjnum, why);
+	}
+
+	return reported + 1;
+}
+
+/** Reports the mobj references a snapshot cannot preserve.
+  *
+  * Must be called with the mobjnums a save has just handed out still valid,
+  * i.e. straight after P_SaveNetGame and before anything spawns or removes an
+  * object.
+  *
+  * The archiver writes a pointer field whenever it is non-NULL, without
+  * checking that its target is archived too. A pointer to an object the
+  * archive skips therefore goes out as a number that means nothing on the way
+  * back in -- which is one way for a round trip to come back changed.
+  */
+static void K_ReportLostReferences(void)
+{
+	thinker_t *th;
+	uint32_t reported = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		// An object the archive skips is not restored at all, so where its own
+		// pointers lead does not matter.
+		if (TypeIsNetSynced(mo->type) == false)
+			continue;
+
+		reported = K_CheckReference(mo, "target", mo->target, reported);
+		reported = K_CheckReference(mo, "tracer", mo->tracer, reported);
+		reported = K_CheckReference(mo, "hnext", mo->hnext, reported);
+		reported = K_CheckReference(mo, "hprev", mo->hprev, reported);
+		reported = K_CheckReference(mo, "itnext", mo->itnext, reported);
+		reported = K_CheckReference(mo, "punt_ref", mo->punt_ref, reported);
+		reported = K_CheckReference(mo, "owner", mo->owner, reported);
+	}
+
+	if (reported == 0)
+		CONS_Printf("rollback_test: every mobj reference in this state is archived\n");
+	else if (reported > 12)
+		CONS_Printf("rollback_test: %u unarchived references in total (only the first 12 listed)\n", reported);
+}
+
+/** Prints the bytes around an offset of a snapshot, for reading a mismatch by hand.
+  *
+  * The window reaches well back from the offset because what identifies a
+  * record is its header -- the thinker class byte and the diff masks that say
+  * which fields follow -- and those sit before the field that differs.
+  */
+static void K_PrintSnapshotContext(const char *label, const uint8_t *buffer, size_t used, size_t at)
+{
+	char line[3*64 + 1];
+	size_t start = (at > 47) ? (at - 47) : 0;
+	size_t end = at + 16;
+	size_t i;
+	int32_t n = 0;
+
+	if (end > used)
+		end = used;
+
+	for (i = start; i < end && n >= 0 && (size_t)n < sizeof (line) - 3; i++)
+		n += snprintf(line + n, sizeof (line) - n, "%02x ", buffer[i]);
+
+	CONS_Printf("rollback_test: %s from byte %s: %s\n", label, sizeu1(start), line);
+}
+
 /** Console command: rollback_test
   *
   * Snapshots the current state, perturbs it, restores it, then snapshots it a
@@ -254,6 +384,10 @@ static void Command_RollbackTest_f(void)
 
 	original = &rollbackring[gametic % ROLLBACK_TICS];
 
+	// Straight after the save, while the mobjnums it handed out still mean
+	// something.
+	K_ReportLostReferences();
+
 	P_RandomFixed(PR_UNDEFINED);
 	P_RandomFixed(PR_UNDEFINED);
 	P_RandomFixed(PR_UNDEFINED);
@@ -319,6 +453,9 @@ static void Command_RollbackTest_f(void)
 				sizeu1(at),
 				P_LocateSnapshotBlock(original->buffer, original->used, at),
 				original->buffer[at], resaved->buffer[at]);
+
+			K_PrintSnapshotContext("original", original->buffer, original->used, at);
+			K_PrintSnapshotContext("re-saved", resaved->buffer, resaved->used, at);
 		}
 		else
 		{
