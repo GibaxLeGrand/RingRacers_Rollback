@@ -1007,6 +1007,25 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 	playersblockend = (size_t)(save->p - save->buffer);
 
+	// The cameras, for a local snapshot only.
+	//
+	// They are not part of a netgame savegame and no other machine has any use
+	// for them -- but the tic reads them. DoABarrelRoll computes player->tilt,
+	// which is archived, by way of R_PointToAnglePlayer, which answers from the
+	// local camera; and the camera is moved by the tic and restored by nothing.
+	// So a replay starts from wherever the pass before left the camera and
+	// arrives at a different tilt, which is what 121 of 144 failing checks were
+	// in a soak run while somebody was actually driving. Idle, with the camera
+	// standing still, tilt never appeared once in 500 checks.
+	//
+	// Written whole, subsector pointer included: that points into level data a
+	// restore does not touch, and a local snapshot never leaves the machine
+	// that wrote it.
+	if (localsnapshot)
+	{
+		WRITEMEM(save->p, camera, sizeof (camera));
+	}
+
 	TracyCZoneEnd(__zone);
 }
 
@@ -1739,6 +1758,11 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].darkness_end = READUINT32(save->p);
 
 		//players[i].viewheight = P_GetPlayerViewHeight(players[i]); // scale cannot be factored in at this point
+	}
+
+	if (localrestore)
+	{
+		READMEM(save->p, camera, sizeof (camera));
 	}
 
 	TracyCZoneEnd(__zone);
