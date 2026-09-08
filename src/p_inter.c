@@ -32,6 +32,7 @@
 
 // SRB2kart
 #include "k_kart.h"
+#include "k_rollback.h"
 #include "k_battle.h"
 #include "k_specialstage.h"
 #include "k_pwrlv.h"
@@ -2788,6 +2789,9 @@ static void AddTimesHit(player_t *player)
 	const int32_t oldtimeshit = player->timeshit;
 
 	player->timeshit++;
+
+	// So a resimulation check can say which hit two passes disagree about.
+	K_RollbackTraceHit(player - players, 0, 0);
 
 	// overflow prevention
 	if (player->timeshit < oldtimeshit)

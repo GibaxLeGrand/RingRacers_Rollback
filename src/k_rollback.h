@@ -40,6 +40,10 @@ void K_RollbackSoakTicker(void);
 // with input delay instead. Set by rollback_maxdepth.
 int32_t K_RollbackMaxDepth(void);
 
+// Records a kart taking a hit, while a resimulation check has two passes to
+// compare. Does nothing the rest of the time.
+void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

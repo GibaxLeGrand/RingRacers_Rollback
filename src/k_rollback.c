@@ -223,6 +223,91 @@ static const char *K_MobjTypeName(mobjtype_t type)
 }
 
 // ----------------------------------------------------------------------------
+// The hit trace
+//
+// Neither the player structures nor the objects lose simulation state across a
+// restore -- both were compared in memory, and what differs is interpolation
+// and the thinker bookkeeping. So whatever makes a kart get hit on one pass and
+// not on the other lives somewhere a structure walk does not reach: the globals
+// the gameplay modules keep between them.
+//
+// Those cannot be enumerated the way a struct can. So stop hunting the state
+// and record the event instead: every hit, with the tic it landed on and who
+// caused it, once per pass. Where the two traces part company is the hit that
+// differs, and explaining one hit is a far smaller job than explaining
+// "something, somewhere".
+// ----------------------------------------------------------------------------
+
+#define TRACE_MAX 64
+
+typedef struct
+{
+	tic_t when;
+	uint8_t victim;
+	uint16_t inflictor;
+	uint16_t source;
+} tracehit_t;
+
+static tracehit_t g_hittrace[2][TRACE_MAX];
+static uint32_t g_hittracecount[2];
+static int32_t g_hittracing = -1; // which pass is recording, -1 for none
+
+void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
+{
+	tracehit_t *hit;
+
+	if (g_hittracing < 0 || g_hittracecount[g_hittracing] >= TRACE_MAX)
+		return;
+
+	hit = &g_hittrace[g_hittracing][g_hittracecount[g_hittracing]++];
+
+	hit->when = leveltime;
+	hit->victim = (uint8_t)victim;
+	hit->inflictor = inflictor;
+	hit->source = source;
+}
+
+/** Says where two passes stopped agreeing about who got hit. */
+static void K_ReportTrace(const char *cmd)
+{
+	const uint32_t common = (g_hittracecount[0] < g_hittracecount[1]) ? g_hittracecount[0] : g_hittracecount[1];
+	uint32_t i;
+
+	for (i = 0; i < common; i++)
+	{
+		const tracehit_t *a = &g_hittrace[0][i];
+		const tracehit_t *b = &g_hittrace[1][i];
+
+		if (a->when == b->when && a->victim == b->victim
+			&& a->inflictor == b->inflictor && a->source == b->source)
+			continue;
+
+		CONS_Printf("%s: hit %u differs -- live: tic %u, player %u, by %s\n",
+			cmd, i, a->when, a->victim, K_MobjTypeName((mobjtype_t)a->inflictor));
+		CONS_Printf("%s: hit %u differs -- replay: tic %u, player %u, by %s\n",
+			cmd, i, b->when, b->victim, K_MobjTypeName((mobjtype_t)b->inflictor));
+		return;
+	}
+
+	if (g_hittracecount[0] != g_hittracecount[1])
+	{
+		const int32_t extra = (g_hittracecount[0] > g_hittracecount[1]) ? 0 : 1;
+		const tracehit_t *only = &g_hittrace[extra][common];
+
+		CONS_Printf("%s: %u hits live against %u on the replay -- the %s has one at "
+			"tic %u on player %u, by %s\n",
+			cmd, g_hittracecount[0], g_hittracecount[1],
+			(extra == 0 ? "live pass" : "replay"),
+			only->when, only->victim, K_MobjTypeName((mobjtype_t)only->inflictor));
+	}
+	else if (common > 0)
+	{
+		CONS_Printf("%s: both passes agree on all %u hits, so the difference is elsewhere\n",
+			cmd, common);
+	}
+}
+
+// ----------------------------------------------------------------------------
 // The objects, compared in memory
 //
 // The same instrument that cleared the player structures, pointed at mobjs.
@@ -1282,6 +1367,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// before each pass keeps the question to the one being asked: does the
 	// *archived* state reproduce.
 	srand((unsigned int)gametic);
+	g_hittracecount[0] = g_hittracecount[1] = 0;
+	g_hittracing = 0;
 
 	started = I_GetPreciseTime();
 	K_RunFrozenTics(tics, frozen);
@@ -1313,6 +1400,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	}
 
 	srand((unsigned int)gametic);
+	g_hittracing = 1;
 
 	started = I_GetPreciseTime();
 	K_RunFrozenTics(tics, frozen);
@@ -1367,6 +1455,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 			first, "first pass", second, "second pass",
 			&recsfirst, &recssecond, records);
 
+		K_ReportTrace("rollback_resim");
+
 		if (identical == false)
 		{
 			if (repeatable)
@@ -1394,6 +1484,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	}
 
 done:
+	g_hittracing = -1;
+
 	Z_Free(first);
 	Z_Free(second);
 	Z_Free(third);
