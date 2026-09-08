@@ -234,6 +234,35 @@ What is left to close it is the object-side twin of `P_NamePlayerField`: the
 mobj record is written under diff masks, so naming a field inside one means
 walking those masks the way the archiver does.
 
+### The played race, after the cameras went in
+
+| | driving, before | driving, after |
+|---|---|---|
+| failures | 144 / 550 | 149 / 530 |
+| replay not repeatable | **121** | **14** |
+| restore loses something | 23 | **135** |
+| `tilt` named | 242 | 141 |
+
+The cameras did what they were archived for and nothing more. Replays that
+were not repeatable collapse, 121 to 14 -- two restored passes now agree,
+because they now start from the same camera. But `tilt` did not go away; it
+changed category. It is now a difference between the live pass and the
+restored one.
+
+And the restore is not what loses it: the post-restore comparison, which reads
+the structures with no tic in between, does not report offset 84 for any
+player. So both passes start with the same tilt, the same camera and the same
+frozen inputs, and one tic later they disagree.
+
+The players it names are bots -- 1, 5, 3, 2, 4, 9 -- and a bot is not a display
+player, so `R_PointToAnglePlayer` answers it from `viewx`/`viewy` rather than
+from a camera. Those are renderer globals written by the frame interpolator,
+and no frame is drawn between the passes, so they cannot move. Something the
+tic reads still differs and it is not yet known what: the next instrument
+should record `viewx`, `viewy` and the camera at the moment `DoABarrelRoll`
+runs, in both passes, rather than reasoning about which of them could have
+moved.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive
