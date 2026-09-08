@@ -44,6 +44,10 @@ int32_t K_RollbackMaxDepth(void);
 // compare. Does nothing the rest of the time.
 void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source);
 
+// Records the end-of-tic copy of timeshit into timeshitprev, taken or not, with
+// the two values that decide it. Does nothing outside a check.
+void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag);
+
 // Counts a pair of objects being tested against each other, while a check has
 // two passes to compare. Does nothing the rest of the time.
 void K_RollbackTraceCollide(uint32_t one, uint32_t two);

@@ -51,6 +51,7 @@
 // SRB2kart
 #include "m_cond.h" // M_UpdateUnlockablesAndExtraEmblems
 #include "k_kart.h"
+#include "k_rollback.h" // K_RollbackTraceSkip
 #include "console.h" // CON_LogMessage
 #include "k_respawn.h"
 #include "k_bot.h"
@@ -4875,10 +4876,24 @@ void P_PlayerAfterThink(player_t *player)
 	// so a lag value of 1 is exactly attached to the player.
 	K_HandleFollower(player);
 
-	if (P_MobjWasRemoved(player->mo) || (player->mo->eflags & MFE_PAUSED) == 0)
 	{
-		player->timeshitprev = player->timeshit;
-		player->timeshit = 0;
+		// Skipping this leaves timeshitprev holding whatever it held, so two
+		// passes that disagree about being in hitlag end the tic with different
+		// values and nothing else to show for it -- which is what every failing
+		// check of a soak reports. Recorded either way, with the two numbers the
+		// decision is made from.
+		const dboolean copied = (P_MobjWasRemoved(player->mo)
+			|| (player->mo->eflags & MFE_PAUSED) == 0);
+
+		K_RollbackTraceHitCopy((int32_t)(player - players), copied,
+			P_MobjWasRemoved(player->mo) ? 0 : player->mo->hitlag,
+			player->nullHitlag);
+
+		if (copied)
+		{
+			player->timeshitprev = player->timeshit;
+			player->timeshit = 0;
+		}
 	}
 
 	if (K_PlayerUsesBotMovement(player))

@@ -296,7 +296,9 @@ static void K_ReleaseFindings(void)
 // "something, somewhere".
 // ----------------------------------------------------------------------------
 
-#define TRACE_MAX 64
+// One event per player per tic now that the hit copy is recorded whether or not
+// it happens, so a four-tic replay of a full grid needs sixty-four on its own.
+#define TRACE_MAX 256
 
 typedef struct
 {
@@ -304,10 +306,26 @@ typedef struct
 	uint8_t victim;
 	uint16_t inflictor;
 	uint16_t source;
+	uint16_t a;
+	uint16_t b;
 } tracehit_t;
 
 static tracehit_t g_hittrace[2][TRACE_MAX];
 static uint32_t g_hittracecount[2];
+static uint32_t g_tracedropped[2];
+
+/** Names an event kind, so a report reads as something that happened. */
+static const char *K_TraceKindName(uint16_t kind)
+{
+	switch (kind)
+	{
+		case 0: return "a hit counted";
+		case 1: return "a hit taken back";
+		case 2: return "a damage judgement";
+		case 3: return "the end-of-tic hit copy";
+		default: return "an event of an unknown kind";
+	}
+}
 static int32_t g_hittracing = -1; // which pass is recording, -1 for none
 
 // Collision pairs are counted rather than kept: there are hundreds a tic, and
@@ -330,8 +348,16 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
 {
 	tracehit_t *hit;
 
-	if (g_hittracing < 0 || g_hittracecount[g_hittracing] >= TRACE_MAX)
+	if (g_hittracing < 0)
 		return;
+
+	if (g_hittracecount[g_hittracing] >= TRACE_MAX)
+	{
+		// A trace that quietly stops recording compares equal to one that had
+		// nothing more to record.
+		g_tracedropped[g_hittracing]++;
+		return;
+	}
 
 	hit = &g_hittrace[g_hittracing][g_hittracecount[g_hittracing]++];
 
@@ -339,6 +365,44 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
 	hit->victim = (uint8_t)victim;
 	hit->inflictor = inflictor;
 	hit->source = source;
+	hit->a = 0;
+	hit->b = 0;
+}
+
+/** Records the end-of-tic copy of timeshit into timeshitprev, taken or not.
+  *
+  * Every failing check a soak reports names timeshitprev, with timeshit at zero
+  * on both sides and the hit trace recording no hit at all -- so nothing was
+  * hit, and what differs is whether P_PlayerAfterThink copied. That copy is
+  * skipped while the kart is in hitlag, in which case timeshitprev keeps
+  * whatever it held; so the two passes disagree about being in hitlag.
+  *
+  * Recorded either way, rather than only when skipped, because a pass that
+  * records nothing tells you nothing about what it decided from: with both
+  * decisions in both traces the entries line up and the report shows hitlag and
+  * nullHitlag on each side of the disagreement.
+  */
+void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag)
+{
+	tracehit_t *hit;
+
+	if (g_hittracing < 0)
+		return;
+
+	if (g_hittracecount[g_hittracing] >= TRACE_MAX)
+	{
+		g_tracedropped[g_hittracing]++;
+		return;
+	}
+
+	hit = &g_hittrace[g_hittracing][g_hittracecount[g_hittracing]++];
+
+	hit->when = leveltime;
+	hit->victim = (uint8_t)victim;
+	hit->inflictor = 3;
+	hit->source = (copied ? 0 : 1); // 1 means the copy was skipped
+	hit->a = (uint16_t)((hitlag < 0) ? 0 : ((hitlag > 65535) ? 65535 : hitlag));
+	hit->b = (uint16_t)((nullhitlag < 0) ? 0 : ((nullhitlag > 65535) ? 65535 : nullhitlag));
 }
 
 /** Says where two passes stopped agreeing about who got hit. */
@@ -364,15 +428,16 @@ static void K_ReportTrace(const char *cmd)
 		const tracehit_t *b = &g_hittrace[1][i];
 
 		if (a->when == b->when && a->victim == b->victim
-			&& a->inflictor == b->inflictor && a->source == b->source)
+			&& a->inflictor == b->inflictor && a->source == b->source
+			&& a->a == b->a && a->b == b->b)
 			continue;
 
-		// kind 0 is a hit counted, 1 one taken back, 2 a judgement: bit 1 means
-		// invincible, bit 4 inside hitlag.
-		CONS_Printf("%s: event %u differs -- live: tic %u, player %u, kind %u, flags %u\n",
-			cmd, i, a->when, a->victim, a->inflictor, a->source);
-		CONS_Printf("%s: event %u differs -- replay: tic %u, player %u, kind %u, flags %u\n",
-			cmd, i, b->when, b->victim, b->inflictor, b->source);
+		// For a judgement, flags bit 1 means invincible and bit 4 inside
+		// hitlag. For a skipped copy, the detail is hitlag and nullHitlag.
+		CONS_Printf("%s: event %u differs -- live: tic %u, player %u, %s, flags %u, detail %u/%u\n",
+			cmd, i, a->when, a->victim, K_TraceKindName(a->inflictor), a->source, a->a, a->b);
+		CONS_Printf("%s: event %u differs -- replay: tic %u, player %u, %s, flags %u, detail %u/%u\n",
+			cmd, i, b->when, b->victim, K_TraceKindName(b->inflictor), b->source, b->a, b->b);
 		return;
 	}
 
@@ -381,16 +446,26 @@ static void K_ReportTrace(const char *cmd)
 		const int32_t extra = (g_hittracecount[0] > g_hittracecount[1]) ? 0 : 1;
 		const tracehit_t *only = &g_hittrace[extra][common];
 
-		CONS_Printf("%s: %u hits live against %u on the replay -- the %s has one at "
-			"tic %u on player %u, by %s\n",
+		// Not a mobj type: the kind is what this field carries, and printing it
+		// as a type named an object that had nothing to do with anything.
+		CONS_Printf("%s: %u events live against %u on the replay -- the %s has %s at "
+			"tic %u on player %u, detail %u/%u\n",
 			cmd, g_hittracecount[0], g_hittracecount[1],
 			(extra == 0 ? "live pass" : "replay"),
-			only->when, only->victim, K_MobjTypeName((mobjtype_t)only->inflictor));
+			K_TraceKindName(only->inflictor),
+			only->when, only->victim, only->a, only->b);
 	}
 	else if (common > 0)
 	{
-		CONS_Printf("%s: both passes agree on all %u hits, so the difference is elsewhere\n",
+		CONS_Printf("%s: both passes agree on all %u events, so the difference is elsewhere\n",
 			cmd, common);
+	}
+
+	if (g_tracedropped[0] > 0 || g_tracedropped[1] > 0)
+	{
+		CONS_Printf("%s: the trace filled up -- %u events live and %u on the replay "
+			"were not recorded, so this comparison is of the first %u only\n",
+			cmd, g_tracedropped[0], g_tracedropped[1], (uint32_t)TRACE_MAX);
 	}
 }
 
@@ -1580,6 +1655,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// *archived* state reproduce.
 	srand((unsigned int)gametic);
 	g_hittracecount[0] = g_hittracecount[1] = 0;
+	g_tracedropped[0] = g_tracedropped[1] = 0;
 	g_pairs[0] = g_pairs[1] = 0;
 	g_pairhash[0] = g_pairhash[1] = 2166136261u;
 	g_hittracing = 0;
