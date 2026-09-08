@@ -214,6 +214,26 @@ sixteen traced copy decisions, hitlag and nullHitlag included -- so they differ
 over *what was copied*, not over whether to copy, and the trace now carries the
 values as well as the decision.
 
+### And what the ordering fix did to it
+
+Measured on the binary, not on the branch: the exe carries `<branch> <short
+sha> <subject>`, so a run is only counted if `grep` finds the commit's own sha
+in the file that ran. That check exists because a run was once reported against
+a stale binary -- the artifact of the *previous* commit, installed because
+`gh run list --limit 1` answers with the last finished run when the new one does
+not exist yet.
+
+**500 checks, 2 failures. 0.4 percent, from 7.2, with no crash and not one
+unrepeatable replay.** Nothing at all in the players block any more.
+
+Both survivors are the same thing: `MT_SHADOW`, the drop shadow, one byte going
+from 1 to 0, identical diff masks on both sides, and only late in a race
+(leveltime 5140 and 5210). Decoration -- but the oracle counts it, so it counts.
+
+What is left to close it is the object-side twin of `P_NamePlayerField`: the
+mobj record is written under diff masks, so naming a field inside one means
+walking those masks the way the archiver does.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive
