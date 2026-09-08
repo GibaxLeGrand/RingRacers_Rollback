@@ -2036,7 +2036,7 @@ void G_Ticker(dboolean run)
 			if (demo.attract)
 				F_AttractDemoTicker();
 			P_Ticker(run); // tic the game
-			K_RollbackSoakTicker(); // does nothing unless rollback_soak is on
+			K_RollbackTicker(); // does nothing unless rollback_keep or _soak is on
 			F_TextPromptTicker();
 			AM_Ticker();
 			HU_Ticker();

@@ -59,8 +59,7 @@
 // and sized for the worst a netgame savegame can be. Measured snapshots of a
 // full sixteen-kart race come to 120 KiB, so the ring was reserving twenty
 // megabytes to carry two and a half -- enough of the zone that an unrelated
-// allocation failed and took the game down with "not enough memory for item
-// roulette list".
+// allocation failed and took the game down with "not enough memory for item\n// roulette list".
 //
 // A quarter of that was still twice the largest snapshot then seen -- and it
 // was not enough, because 120 KiB is what a race weighs seconds after the
@@ -1911,8 +1910,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// Allocated once and kept. A soak runs this hundreds of times, and
 	// taking three megabytes and giving them back on every check fragments
 	// the zone until something innocent cannot find room -- which is exactly
-	// how a soak killed a session with "not enough memory for item roulette
-	// list", an allocation that had nothing to do with any of this.
+	// how a soak killed a session with "not enough memory for item roulette\n// list", an allocation that had nothing to do with any of this.
 	if (g_first == NULL)
 	{
 		g_first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
@@ -2066,9 +2064,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// A third pass, from a restored state like the second. The first pass ran
 	// from the live world, and what the archive does not carry -- decoration,
 	// the C library's generator, anything nobody saves -- is left wherever the
-	// pass before put it. So first against second answers "does a restored
-	// world behave like the live one", while second against third answers "is
-	// the replay repeatable at all". The two failures need different fixes and
+	// pass before put it. So first against second answers "does a restored\n// world behave like the live one", while second against third answers "is\n// the replay repeatable at all". The two failures need different fixes and
 	// look identical without this.
 	if (K_LoadGameState(gametic))
 	{
@@ -2238,6 +2234,142 @@ static void Command_RollbackSoak_f(void)
   * is fine where this is meant to run, which is a dedicated server with nobody
   * watching.
   */
+// ----------------------------------------------------------------------------
+// Keeping every tic, and replaying one with the inputs that really ran
+//
+// The soak replays with the inputs frozen, which is what makes its two passes
+// comparable -- and blind to everything edge-triggered, because a button held
+// through a frozen tic was never pressed during it. A rollback replays what
+// actually happened, so the ring has to fill during ordinary play and the
+// replay has to read the inputs back out of netcmds, where the netcode keeps
+// 512 tics of them.
+//
+// Nothing here changes how the game runs. Keeping snapshots costs one save a
+// tic and is off by default; replaying is a command, and it puts the world back
+// where it found it.
+// ----------------------------------------------------------------------------
+
+static dboolean g_keeping;
+
+/** Console command: rollback_keep <0|1> */
+static void Command_RollbackKeep_f(void)
+{
+	if (COM_Argc() < 2)
+	{
+		CONS_Printf("rollback_keep <0|1>: currently %s. Keeps a snapshot of "
+			"every tic, so a replay can start from any of the last %d.\n",
+			g_keeping ? "on" : "off", ROLLBACK_TICS - 1);
+		return;
+	}
+
+	g_keeping = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_keep: %s\n", g_keeping ? "on" : "off");
+}
+
+/** Console command: rollback_replay [tics]
+  *
+  * Rewinds that many tics and replays them with the inputs that really ran,
+  * then checks the world arrives where it already was. This is the operation a
+  * rollback performs, done deliberately instead of in response to a packet, and
+  * it is the first thing here that replays real inputs rather than frozen ones.
+  */
+static void Command_RollbackReplay_f(void)
+{
+	rollbackslot_t *present;
+	precise_t started;
+	uint32_t us;
+	int32_t n = 4;
+	int32_t i;
+	tic_t from, t;
+
+	if (COM_Argc() > 1)
+		n = atoi(COM_Argv(1));
+
+	if (gamestate != GS_LEVEL)
+	{
+		CONS_Printf("rollback_replay: not in a level\n");
+		return;
+	}
+
+	// One slot holds where the replay starts and one holds where it has to
+	// arrive, so the ring cannot be asked for its whole length.
+	if (n < 1 || n > ROLLBACK_TICS - 2)
+	{
+		CONS_Printf("rollback_replay: between 1 and %d tics\n", ROLLBACK_TICS - 2);
+		return;
+	}
+
+	if (n >= (int32_t)gametic)
+	{
+		CONS_Printf("rollback_replay: the game has not run that many tics yet\n");
+		return;
+	}
+
+	if (!K_SaveGameState(gametic))
+	{
+		CONS_Printf("rollback_replay: could not snapshot the present\n");
+		return;
+	}
+
+	present = &rollbackring[gametic % ROLLBACK_TICS];
+	from = gametic - (tic_t)n;
+
+	if (!K_LoadGameState(from))
+	{
+		CONS_Printf("rollback_replay: no snapshot for tic %s -- turn rollback_keep "
+			"on and let %d tics go by\n", sizeu1(from), n);
+		return;
+	}
+
+	// The inputs of each tic as the netcode recorded them, rather than one tic's
+	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
+	started = I_GetPreciseTime();
+
+	for (t = from + 1; t <= gametic; t++)
+	{
+		for (i = 0; i < MAXPLAYERS; i++)
+		{
+			if (playeringame[i])
+				players[i].cmd = netcmds[t % BACKUPTICS][i];
+		}
+
+		P_Ticker(true);
+	}
+
+	us = K_PreciseToMicros(I_GetPreciseTime() - started);
+
+	if (!K_WriteSnapshot(g_first, gametic))
+	{
+		CONS_Printf("rollback_replay: could not snapshot the replay\n");
+		return;
+	}
+
+	K_ReportComparison("rollback_replay", "replay", present, "the world as it was",
+		g_first, "the replay", NULL, NULL, false);
+
+	CONS_Printf("rollback_replay: %d tics replayed in %u us -- %u us per tic\n",
+		n, us, us / (uint32_t)n);
+
+	// Back to where this found the world, whatever the replay decided.
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_replay: WARNING - could not restore the present\n");
+	}
+}
+
+/** Called once per tic, after P_Ticker. */
+void K_RollbackTicker(void)
+{
+	// After the tic, so the slot for tic N holds the world as N left it, which
+	// is where N+1 starts. The soak's checks already save and load on that
+	// convention.
+	if (g_keeping && gamestate == GS_LEVEL && g_soakbusy == false)
+		K_SaveGameState(gametic);
+
+	K_RollbackSoakTicker();
+}
+
 void K_RollbackSoakTicker(void)
 {
 	if (g_soakinterval == 0 || gamestate != GS_LEVEL)
@@ -2393,4 +2525,6 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_soak", Command_RollbackSoak_f);
 	COM_AddDebugCommand("rollback_maxdepth", Command_RollbackMaxDepth_f);
 	COM_AddDebugCommand("rollback_delay", Command_RollbackDelay_f);
+	COM_AddDebugCommand("rollback_keep", Command_RollbackKeep_f);
+	COM_AddDebugCommand("rollback_replay", Command_RollbackReplay_f);
 }
