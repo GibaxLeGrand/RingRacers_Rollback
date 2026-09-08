@@ -295,6 +295,32 @@ which objects are attached. 0x20d8 became 0x22d8 -- `WHIP`. So the whip object
 is attached on one pass and not on the other, which is the first survivor that
 is not decoration.
 
+### Three maps, and the end of the player-state failures
+
+Writing a player's attachment only when its object is going into the save --
+the mobjnum-reuse rule that had been applied to object-to-object pointers and
+never to player-to-object ones -- ends every failure the players block had.
+
+| map | before | after |
+|---|---|---|
+| RR_NORTHERNDISTRICT | 2 / 500 | **0 / 520** |
+| RR_GREENHILLS | 8 / 590 | 4 / 580 |
+| RR_SONICSPEEDWAY | 2 / 560 | 4 / 560 |
+
+Not one `flags` failure anywhere afterwards, and no unrepeatable replay on any
+map. Each run is checked against the map name the resim prints, so a soak on the
+wrong map cannot be reported as a soak on the right one.
+
+What is left is 0.7 percent on two of the three, entirely in the thinkers block
+and entirely decoration: `MT_SHADOW` seven times, `GREENHILLSTREE` twice,
+`MT_SPRAYCAN` once. Same record length, same diff masks, one byte flipping
+between 0 and 1. Which field that is has **not** been established -- naming a
+field inside a mobj record needs the object-side twin of `P_NamePlayerField`,
+and those records are written under diff masks rather than in a fixed order.
+
+So: player state is clean on three maps, and the residue is scenery. Recorded as
+identified rather than explained.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive
