@@ -74,6 +74,11 @@ static dboolean localrestore;
 // the unarchiving functions above it.
 static void P_ProfileStep(const char *name);
 
+// Where each player's record started, in the last archive written. The players
+// block is written as one run of fields with no markers inside it, so without
+// this a difference reported there is a bare offset into 16 records.
+static size_t playerrecordoffset[MAXPLAYERS];
+
 // Block UINT32s to attempt to ensure that the correct data is
 // being sent and received
 #define ARCHIVEBLOCK_MISC			0x7FEEDEED
@@ -229,8 +234,11 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 	WRITEUINT32(save->p, ARCHIVEBLOCK_PLAYERS);
 
+	memset(playerrecordoffset, 0, sizeof (playerrecordoffset));
+
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
+		playerrecordoffset[i] = (size_t)(save->p - save->buffer);
 		WRITESINT8(save->p, (int8_t)adminplayers[i]);
 
 		for (j = 0; j < PWRLV_NUMTYPES; j++)
@@ -7942,6 +7950,36 @@ size_t P_SaveBufferRemaining(const savebuffer_t *save)
   *
   * \return a static string naming the block. Never NULL.
   */
+/** Reads an offset inside the players block as a player and a distance into
+  * that player's record.
+  *
+  * Only meaningful for the archive that was written last, since it is that
+  * one's layout being described.
+  *
+  * eturn false if the offset is not inside any player's record.
+  */
+dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into)
+{
+	int32_t i;
+	int32_t found = -1;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (playerrecordoffset[i] == 0 || playerrecordoffset[i] > offset)
+			continue;
+
+		if (found < 0 || playerrecordoffset[i] > playerrecordoffset[found])
+			found = i;
+	}
+
+	if (found < 0)
+		return false;
+
+	*player = (uint8_t)found;
+	*into = offset - playerrecordoffset[found];
+	return true;
+}
+
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset)
 {
 	static const uint32_t markers[] = {

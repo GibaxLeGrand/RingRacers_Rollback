@@ -47,6 +47,10 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local);
 // in. Diagnostic aid for comparing two snapshots of the same state.
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset);
 
+// Reads an offset inside the players block as a player and a distance into that
+// player's record, for the archive written last.
+dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into);
+
 // How long each step of the last P_LoadNetGame took, in microseconds. The
 // restore is the expensive half of a rollback, so it says where its time goes.
 #define P_LOADPROFILE_MAX 16

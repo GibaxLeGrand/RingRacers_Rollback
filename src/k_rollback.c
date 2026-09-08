@@ -579,6 +579,21 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 
 		K_PrintSnapshotContext(labela, a->buffer, a->used, at);
 		K_PrintSnapshotContext(labelb, b->buffer, b->used, at);
+
+		// The players block has no markers inside it, so an offset there means
+		// nothing until it is read as a player and a distance into its record.
+		{
+			uint8_t who;
+			size_t into;
+
+			if (P_LocatePlayerField(at, &who, &into))
+			{
+				CONS_Printf("%s: that is player %u (%s), %s bytes into their record\n",
+					cmd, who,
+					(playeringame[who] ? player_names[who] : "not in game"),
+					sizeu1(into));
+			}
+		}
 	}
 	else
 	{
