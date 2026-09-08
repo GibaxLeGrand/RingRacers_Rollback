@@ -244,7 +244,7 @@ static const char *K_MobjTypeName(mobjtype_t type)
 // in the table -- whose interpolation and HUD counters differ on every check,
 // failing or not -- so the player the check was actually about never got a
 // line.
-#define HELD_MAX 24
+#define HELD_MAX 40
 static char g_held[HELD_MAX][160];
 static uint32_t g_heldcount;
 static uint32_t g_helddropped;
@@ -1040,7 +1040,7 @@ static uint32_t K_HashOrder(int32_t which)
   * -- so the offsets reported have to be read against d_player.h rather than
   * trusted blindly. Everything else that differs is state a restore lost.
   */
-static uint8_t *g_playercopy[2];
+static uint8_t *g_playercopy[3];
 
 // Which player the archive comparison blamed, so the structure comparison can
 // start there. -1 until it says.
@@ -1656,6 +1656,13 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 		goto done;
 	}
 
+	// The state the snapshot was taken from, so the restore can be asked
+	// whether it reproduces it -- on its own, before a tic has had the chance
+	// to move anything. The round-trip test only ever proved the archive
+	// re-serialises to the same bytes, which a field the restore drops on the
+	// floor passes just as happily.
+	K_CopyPlayers(2);
+
 	startedat = leveltime;
 
 	g_holdfindings = true;
@@ -1711,6 +1718,9 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 			"the level is left where the first pass ended\n");
 		goto done;
 	}
+
+	K_ComparePlayers("rollback_resim restore", g_playercopy[2],
+		(const uint8_t *)players, -1);
 
 	srand((unsigned int)gametic);
 	g_hittracing = 1;
