@@ -293,6 +293,155 @@ static void K_ReportLostReferences(void)
 		CONS_Printf("rollback_test: %u unarchived references in total (only the first 12 listed)\n", reported);
 }
 
+// ----------------------------------------------------------------------------
+// Per-object comparison
+//
+// A byte offset into a snapshot says that something changed, not what. These
+// archive each object on its own, before and after a restore, so a difference
+// can be reported as an object and a diff bit instead of a number.
+// ----------------------------------------------------------------------------
+
+#define ROLLBACK_DIAGBYTES (1024*1024)
+#define ROLLBACK_DIAGRECS 8192
+
+typedef struct
+{
+	uint32_t offset;
+	uint32_t length;
+	mobjtype_t type;
+} diagrec_t;
+
+typedef struct
+{
+	uint8_t *bytes;
+	diagrec_t *recs;
+	uint32_t count;
+	dboolean truncated;
+} diagset_t;
+
+/** Archives every object the snapshot holds, one record per object.
+  *
+  * Walks the same list in the same order as the archiver, so record N here is
+  * record N of the snapshot, and the two captures line up object for object as
+  * long as the restore rebuilds the list in archive order.
+  */
+static void K_CaptureRecords(diagset_t *set)
+{
+	thinker_t *th;
+	size_t used = 0;
+
+	set->count = 0;
+	set->truncated = false;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+		size_t wrote;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (TypeIsNetSynced(mo->type) == false)
+			continue;
+
+		// P_ArchiveMobjForDiagnostics wants room for a whole record.
+		if (set->count >= ROLLBACK_DIAGRECS || used + 4096 > ROLLBACK_DIAGBYTES)
+		{
+			set->truncated = true;
+			break;
+		}
+
+		wrote = P_ArchiveMobjForDiagnostics(set->bytes + used, ROLLBACK_DIAGBYTES - used, mo);
+		if (wrote == 0)
+		{
+			set->truncated = true;
+			break;
+		}
+
+		set->recs[set->count].offset = (uint32_t)used;
+		set->recs[set->count].length = (uint32_t)wrote;
+		set->recs[set->count].type = mo->type;
+		set->count++;
+		used += wrote;
+	}
+}
+
+static uint32_t K_ReadLE32(const uint8_t *p)
+{
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/** Prints the diff masks of one object record.
+  *
+  * The record is a thinker class byte, then diff, then diff2 if diff carries
+  * its top bit, then diff3 if diff2 carries its top bit -- MD_MORE and
+  * MD2_MORE, which are private to p_saveg.c, hence the bare 1<<31 here.
+  */
+static void K_PrintRecordMasks(const char *label, const uint8_t *rec, uint32_t length)
+{
+	uint32_t diff = 0, diff2 = 0, diff3 = 0;
+
+	if (length >= 5)
+		diff = K_ReadLE32(rec + 1);
+	if ((diff & 0x80000000) != 0 && length >= 9)
+		diff2 = K_ReadLE32(rec + 5);
+	if ((diff2 & 0x80000000) != 0 && length >= 13)
+		diff3 = K_ReadLE32(rec + 9);
+
+	CONS_Printf("rollback_test: %s diff %08x diff2 %08x diff3 %08x\n",
+		label, diff, diff2, diff3);
+}
+
+/** Names the objects whose archived record changed across a restore. */
+static void K_ReportRecordDifferences(const diagset_t *before, const diagset_t *after)
+{
+	uint32_t common = (before->count < after->count) ? before->count : after->count;
+	uint32_t reported = 0;
+	uint32_t i;
+
+	if (before->count != after->count)
+	{
+		CONS_Printf("rollback_test: %u objects archived before the restore, %u after\n",
+			before->count, after->count);
+	}
+
+	for (i = 0; i < common && reported < 3; i++)
+	{
+		const uint8_t *a = before->bytes + before->recs[i].offset;
+		const uint8_t *b = after->bytes + after->recs[i].offset;
+		const uint32_t la = before->recs[i].length;
+		const uint32_t lb = after->recs[i].length;
+
+		if (la == lb && memcmp(a, b, la) == 0)
+			continue;
+
+		// A type mismatch means the two captures have drifted out of step, so
+		// everything after this point is comparing unrelated objects.
+		if (before->recs[i].type != after->recs[i].type)
+		{
+			CONS_Printf("rollback_test: object %u is %s before the restore and %s after -- "
+				"the objects no longer line up, so the rest of this comparison is meaningless\n",
+				i, K_MobjTypeName(before->recs[i].type), K_MobjTypeName(after->recs[i].type));
+			return;
+		}
+
+		CONS_Printf("rollback_test: object %u (%s) changed: %u bytes became %u\n",
+			i, K_MobjTypeName(before->recs[i].type), la, lb);
+		K_PrintRecordMasks("  before:", a, la);
+		K_PrintRecordMasks("  after: ", b, lb);
+		reported++;
+	}
+
+	if (reported == 0 && before->count == after->count)
+	{
+		CONS_Printf("rollback_test: every object came back identical, so what changed is "
+			"outside the per-object records\n");
+	}
+
+	if (before->truncated || after->truncated)
+		CONS_Printf("rollback_test: note - the object capture hit its limit, later objects were not compared\n");
+}
+
 /** Prints the bytes around an offset of a snapshot, for reading a mismatch by hand.
   *
   * The window reaches well back from the offset because what identifies a
@@ -314,6 +463,14 @@ static void K_PrintSnapshotContext(const char *label, const uint8_t *buffer, siz
 		n += snprintf(line + n, sizeof (line) - n, "%02x ", buffer[i]);
 
 	CONS_Printf("rollback_test: %s from byte %s: %s\n", label, sizeu1(start), line);
+}
+
+static void K_FreeDiagSet(diagset_t *set)
+{
+	Z_Free(set->bytes);
+	Z_Free(set->recs);
+	set->bytes = NULL;
+	set->recs = NULL;
 }
 
 /** Console command: rollback_test
@@ -349,6 +506,8 @@ static void K_PrintSnapshotContext(const char *label, const uint8_t *buffer, siz
 static void Command_RollbackTest_f(void)
 {
 	rollbackslot_t *original, *resaved;
+	diagset_t recsbefore = {0}, recsafter = {0};
+	dboolean records = false;
 	precise_t started;
 	uint32_t saveus, loadus, resaveus;
 	int16_t before, afterperturb, afterload;
@@ -388,6 +547,19 @@ static void Command_RollbackTest_f(void)
 	// something.
 	K_ReportLostReferences();
 
+	// Same window: the per-object records depend on that numbering too. Taken
+	// outside the timed sections, and read-only, so neither the measurements
+	// nor the state are affected. A failure here costs the object-level
+	// report, nothing else.
+	recsbefore.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+	recsbefore.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+	recsafter.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+	recsafter.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+
+	records = (recsbefore.bytes && recsbefore.recs && recsafter.bytes && recsafter.recs);
+	if (records)
+		K_CaptureRecords(&recsbefore);
+
 	P_RandomFixed(PR_UNDEFINED);
 	P_RandomFixed(PR_UNDEFINED);
 	P_RandomFixed(PR_UNDEFINED);
@@ -399,17 +571,24 @@ static void Command_RollbackTest_f(void)
 	{
 		CONS_Printf("rollback_test: K_LoadGameState failed\n");
 		Z_Free(resaved);
+		K_FreeDiagSet(&recsbefore);
+		K_FreeDiagSet(&recsafter);
 		return;
 	}
 	loadus = K_PreciseToMicros(I_GetPreciseTime() - started);
 
 	afterload = Consistancy();
 
+	if (records)
+		K_CaptureRecords(&recsafter);
+
 	started = I_GetPreciseTime();
 	if (!K_WriteSnapshot(resaved, gametic))
 	{
 		CONS_Printf("rollback_test: second K_WriteSnapshot failed\n");
 		Z_Free(resaved);
+		K_FreeDiagSet(&recsbefore);
+		K_FreeDiagSet(&recsafter);
 		return;
 	}
 	resaveus = K_PreciseToMicros(I_GetPreciseTime() - started);
@@ -457,12 +636,20 @@ static void Command_RollbackTest_f(void)
 			K_PrintSnapshotContext("original", original->buffer, original->used, at);
 			K_PrintSnapshotContext("re-saved", resaved->buffer, resaved->used, at);
 		}
+
 		else
 		{
 			CONS_Printf("rollback_test: the shorter snapshot is a prefix of the longer one, "
 				"so what changed is at the end -- in the '%s' block\n",
 				P_LocateSnapshotBlock(original->buffer, original->used, common));
 		}
+
+		// Which object, and which of its fields -- the byte offset above says
+		// neither on its own.
+		if (records)
+			K_ReportRecordDifferences(&recsbefore, &recsafter);
+		else
+			CONS_Printf("rollback_test: no memory for the per-object comparison\n");
 	}
 
 	CONS_Printf("rollback_test: consistancy before=%d perturbed=%d afterload=%d -- %s\n",
@@ -484,6 +671,8 @@ static void Command_RollbackTest_f(void)
 #endif
 
 	Z_Free(resaved);
+	K_FreeDiagSet(&recsbefore);
+	K_FreeDiagSet(&recsafter);
 }
 
 void K_RegisterRollbackStuff(void)

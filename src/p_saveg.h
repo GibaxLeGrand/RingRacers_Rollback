@@ -42,6 +42,10 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading);
 // in. Diagnostic aid for comparing two snapshots of the same state.
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset);
 
+// Archives one mobj on its own, so the same object can be compared before and
+// after a state restore. Diagnostic aid, see p_saveg.cpp.
+size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj);
+
 mobj_t *P_FindNewPosition(uint32_t oldposition);
 
 struct savedata_bot_s

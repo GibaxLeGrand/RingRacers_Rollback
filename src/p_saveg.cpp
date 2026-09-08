@@ -4239,6 +4239,42 @@ static void WriteMobjPointer(mobj_t *mobj)
 	WRITEUINT32(current_savebuffer->p, SaveMobjnum(mobj));
 }
 
+/** Archives one mobj on its own, for diagnostics.
+  *
+  * Writes exactly what P_NetArchiveThinkers would write for this object, into
+  * a caller-supplied buffer instead of the snapshot. Comparing the same object
+  * before and after a state restore says which object changed and which of its
+  * diff bits moved -- a byte offset into a whole snapshot says neither.
+  *
+  * Only meaningful straight after a P_SaveNetGame, whose numbering pass the
+  * record depends on.
+  *
+  * eturn bytes written, or 0 if the buffer could not hold the record.
+  */
+size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj)
+{
+	savebuffer_t save = {0};
+	savebuffer_t *previous = current_savebuffer;
+	size_t used;
+
+	// A mobj record is far smaller than this, but the archiver writes through
+	// unchecked macros, so refuse rather than overrun.
+	if (buffer == NULL || size < 4096)
+		return 0;
+
+	if (P_SaveBufferFromExisting(&save, buffer, size) == false)
+		return 0;
+
+	current_savebuffer = &save;
+	SaveMobjThinker(&save, &mobj->thinker, tc_mobj);
+	current_savebuffer = previous;
+
+	used = (size_t)(save.p - save.buffer);
+
+	// The buffer belongs to the caller: no P_SaveBufferFree.
+	return used;
+}
+
 static void P_NetArchiveThinkers(savebuffer_t *save)
 {
 	TracyCZone(__zone, true);
