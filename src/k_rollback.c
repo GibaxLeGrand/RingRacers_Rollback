@@ -613,6 +613,11 @@ typedef struct
 	dboolean truncated;
 } diagset_t;
 
+// The working buffers a resimulation check needs, kept between checks.
+static rollbackslot_t *g_first, *g_second, *g_third;
+static diagset_t g_recsfirst, g_recssecond, g_recsthird;
+
+
 /** Archives every object the snapshot holds, one record per object.
   *
   * Walks the same list in the same order as the archiver, so record N here is
@@ -1407,16 +1412,31 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	if (verbose)
 		K_PrintGrid("rollback_resim");
 
-	first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
-	second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
-	third = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+	// Allocated once and kept. A soak runs this hundreds of times, and
+	// taking three megabytes and giving them back on every check fragments
+	// the zone until something innocent cannot find room -- which is exactly
+	// how a soak killed a session with "not enough memory for item roulette
+	// list", an allocation that had nothing to do with any of this.
+	if (g_first == NULL)
+	{
+		g_first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		g_second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		g_third = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 
-	recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
-	recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
-	recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
-	recssecond.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
-	recsthird.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
-	recsthird.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+		g_recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+		g_recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+		g_recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+		g_recssecond.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+		g_recsthird.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+		g_recsthird.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+	}
+
+	first = g_first;
+	second = g_second;
+	third = g_third;
+	recsfirst = g_recsfirst;
+	recssecond = g_recssecond;
+	recsthird = g_recsthird;
 
 	records = (recsfirst.bytes && recsfirst.recs && recssecond.bytes && recssecond.recs
 		&& recsthird.bytes && recsthird.recs);
@@ -1513,6 +1533,13 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// look identical without this.
 	if (K_LoadGameState(gametic))
 	{
+		// Not recorded. This pass exists to tell a repeatable replay from a
+		// lossy restore, and leaving the trace armed folded its events into the
+		// replay's tally -- which is how "the replay lands twice the hits"
+		// came to be reported, and why every one of those figures was exactly
+		// double.
+		g_hittracing = -1;
+
 		srand((unsigned int)gametic);
 		K_RunFrozenTics(tics, frozen);
 
@@ -1578,13 +1605,6 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 done:
 	g_hittracing = -1;
 	g_holdfindings = false;
-
-	Z_Free(first);
-	Z_Free(second);
-	Z_Free(third);
-	K_FreeDiagSet(&recsfirst);
-	K_FreeDiagSet(&recssecond);
-	K_FreeDiagSet(&recsthird);
 
 	return identical;
 }
