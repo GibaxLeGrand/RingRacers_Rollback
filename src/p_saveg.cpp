@@ -3148,6 +3148,25 @@ static inline uint32_t SaveMobjnum(const mobj_t *mobj)
 	return 0;
 }
 
+/** Is this object one that P_SaveNetGame writes?
+  *
+  * A reference is only worth archiving if its target is archived too, since
+  * the reader resolves it by mobjnum. An object that is not written has no
+  * number of its own -- MF_NOTHINK objects never even reach a thinker list, so
+  * the numbering pass at the top of P_SaveNetGame never sees them -- and the
+  * reference comes back as NULL. Worse, mobjnum is handed out per save and
+  * never cleared, so an unarchived object holding a number from an earlier
+  * save would be resolved to whichever object holds that number now.
+  *
+  * Only meaningful once P_SaveNetGame has assigned the numbers for this save.
+  */
+static inline dboolean MobjIsArchived(const mobj_t *mobj)
+{
+	return (mobj != NULL && mobj->mobjnum != 0
+		&& P_MobjWasRemoved(mobj) == false
+		&& TypeIsNetSynced(mobj->type) != false);
+}
+
 static uint32_t SaveSector(const sector_t *sector)
 {
 	if (sector) return (uint32_t)(sector - sectors);
@@ -3322,9 +3341,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 		diff |= MD_THRESHOLD;
 	if (mobj->lastlook != -1)
 		diff |= MD_LASTLOOK;
-	if (mobj->target)
+	if (MobjIsArchived(mobj->target))
 		diff |= MD_TARGET;
-	if (mobj->tracer)
+	if (MobjIsArchived(mobj->tracer))
 		diff |= MD_TRACER;
 	if (mobj->friction != ORIG_FRICTION)
 		diff |= MD_FRICTION;
@@ -3354,9 +3373,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 		diff2 |= MD2_EXTVAL1;
 	if (mobj->extravalue2)
 		diff2 |= MD2_EXTVAL2;
-	if (mobj->hnext)
+	if (MobjIsArchived(mobj->hnext))
 		diff2 |= MD2_HNEXT;
-	if (mobj->hprev)
+	if (MobjIsArchived(mobj->hprev))
 		diff2 |= MD2_HPREV;
 	if (mobj->standingslope)
 		diff2 |= MD2_SLOPE;
@@ -3402,7 +3421,7 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 		diff2 |= MD2_WAYPOINTCAP;
 	if (mobj == trackercap)
 		diff2 |= MD2_KITEMCAP;
-	if (mobj->itnext)
+	if (MobjIsArchived(mobj->itnext))
 		diff2 |= MD2_ITNEXT;
 	if (mobj->frozen)
 		diff2 |= MD2_FROZEN;
@@ -3413,9 +3432,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 		diff3 |= MD3_LIGHTLEVEL;
 	if (mobj->reappear)
 		diff3 |= MD3_REAPPEAR;
-	if (mobj->punt_ref)
+	if (MobjIsArchived(mobj->punt_ref))
 		diff3 |= MD3_PUNT_REF;
-	if (mobj->owner)
+	if (MobjIsArchived(mobj->owner))
 		diff3 |= MD3_OWNER;
 	if (mobj->bakexoff || mobj->bakeyoff || mobj->bakezoff || mobj->bakexpiv ||
 		mobj->bakeypiv || mobj->bakezpiv)
