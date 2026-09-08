@@ -50,6 +50,7 @@
 #include "p_mobj.h"
 #include "p_saveg.h"
 #include "p_tick.h" // leveltime
+#include "r_state.h" // sectors
 #include "z_zone.h"
 
 // Nominal snapshot size: the same figure the engine already trusts for a full
@@ -514,14 +515,41 @@ static void K_PrintLoadProfile(const char *cmd)
   * repeatable, gameplay-affecting, and invisible to a comparison of the
   * archive.
   *
-  * \param blockmap hashes the blockmap chains rather than the thinker list.
+  * Three chains hold objects and three can disagree: the thinker list the
+  * simulation runs down, the blockmap cells collision walks, and the sector
+  * lists. They are relinked by different code, so they have to be asked
+  * separately.
   */
-static uint32_t K_HashOrder(dboolean blockmap)
+#define K_ORDER_THINKERS 0
+#define K_ORDER_BLOCKMAP 1
+#define K_ORDER_SECTORS 2
+
+static uint32_t K_HashOrder(int32_t which)
 {
 	uint32_t hash = 2166136261u; // FNV-1a, for no reason beyond being short
 	thinker_t *th;
 
-	if (blockmap)
+	if (which == K_ORDER_SECTORS)
+	{
+		size_t s;
+
+		for (s = 0; s < numsectors; s++)
+		{
+			const mobj_t *mo;
+
+			for (mo = sectors[s].thinglist; mo != NULL; mo = mo->snext)
+			{
+				if (mo->mobjnum == 0 || TypeIsNetSynced(mo->type) == false)
+					continue;
+
+				hash = (hash ^ mo->mobjnum) * 16777619u;
+			}
+		}
+
+		return hash;
+	}
+
+	if (which == K_ORDER_BLOCKMAP)
 	{
 		int32_t cell;
 
@@ -765,7 +793,7 @@ static void Command_RollbackTest_f(void)
 	precise_t started;
 	uint32_t saveus, loadus, resaveus;
 	int16_t before, afterperturb, afterload;
-	uint32_t thinkerorder, blockmaporder;
+	uint32_t thinkerorder, blockmaporder, sectororder;
 
 	if (gamestate != GS_LEVEL)
 	{
@@ -804,8 +832,9 @@ static void Command_RollbackTest_f(void)
 	// against nothing reports a change every time.
 	K_ReportLostReferences();
 
-	thinkerorder = K_HashOrder(false);
-	blockmaporder = K_HashOrder(true);
+	thinkerorder = K_HashOrder(K_ORDER_THINKERS);
+	blockmaporder = K_HashOrder(K_ORDER_BLOCKMAP);
+	sectororder = K_HashOrder(K_ORDER_SECTORS);
 	K_PrintOrder("rollback_test", "before the restore");
 
 	// Same window: the per-object records depend on that numbering too. Taken
@@ -849,9 +878,10 @@ static void Command_RollbackTest_f(void)
 	}
 	else
 	{
-		CONS_Printf("rollback_test: thinker order %s, blockmap order %s\n",
-			(K_HashOrder(false) == thinkerorder ? "kept" : "CHANGED"),
-			(K_HashOrder(true) == blockmaporder ? "kept" : "CHANGED"));
+		CONS_Printf("rollback_test: thinker order %s, blockmap order %s, sector order %s\n",
+			(K_HashOrder(K_ORDER_THINKERS) == thinkerorder ? "kept" : "CHANGED"),
+			(K_HashOrder(K_ORDER_BLOCKMAP) == blockmaporder ? "kept" : "CHANGED"),
+			(K_HashOrder(K_ORDER_SECTORS) == sectororder ? "kept" : "CHANGED"));
 	}
 
 	K_PrintOrder("rollback_test", "after the restore ");
