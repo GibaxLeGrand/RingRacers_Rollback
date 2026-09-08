@@ -563,6 +563,41 @@ static uint32_t K_HashOrder(dboolean blockmap)
 	return hash;
 }
 
+/** Prints the first few archived objects in the order the lists hold them.
+  *
+  * A hash says the order changed; this says how. Reversed, rotated or shuffled
+  * are three different faults with three different fixes, and the sequence
+  * makes the difference obvious where a number cannot.
+  */
+static void K_PrintOrder(const char *cmd, const char *when)
+{
+	char line[128];
+	thinker_t *th;
+	int32_t n = 0;
+	int32_t shown = 0;
+
+	line[0] = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ] && shown < 12; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || TypeIsNetSynced(mo->type) == false)
+			continue;
+
+		n += snprintf(line + n, sizeof (line) - n, "%u ", mo->mobjnum);
+		shown++;
+
+		if (n < 0 || (size_t)n >= sizeof (line) - 8)
+			break;
+	}
+
+	CONS_Printf("%s: thinker list %s: %s\n", cmd, when, line);
+}
+
 /** Prints who is on the grid.
   *
   * Every measurement below scales with this, and it is not something to be
@@ -745,6 +780,7 @@ static void Command_RollbackTest_f(void)
 	before = Consistancy();
 	thinkerorder = K_HashOrder(false);
 	blockmaporder = K_HashOrder(true);
+	K_PrintOrder("rollback_test", "before the restore");
 
 	started = I_GetPreciseTime();
 	if (!K_SaveGameState(gametic))
@@ -797,6 +833,8 @@ static void Command_RollbackTest_f(void)
 	CONS_Printf("rollback_test: thinker order %s, blockmap order %s\n",
 		(K_HashOrder(false) == thinkerorder ? "kept" : "CHANGED"),
 		(K_HashOrder(true) == blockmaporder ? "kept" : "CHANGED"));
+
+	K_PrintOrder("rollback_test", "after the restore ");
 
 	K_PrintLoadProfile("rollback_test");
 
