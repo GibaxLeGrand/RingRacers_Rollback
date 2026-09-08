@@ -1276,6 +1276,76 @@ static void K_ReportRestoreSteps(const char *cmd)
 	}
 }
 
+/** Says which of a player's attached objects appeared or vanished.
+  *
+  * The record's flags word is a bit per object a player has hold of, and a
+  * difference in it means one of them was attached on one pass and not the
+  * other. Reading which bit that was took a hex window and the enum by hand;
+  * the pointers are right here in the two captures, so ask them instead.
+  *
+  * Only whether a pointer is null is compared. The addresses themselves differ
+  * across a restore by design.
+  */
+static void K_ReportAttachments(const char *cmd, const uint8_t *was, const uint8_t *now)
+{
+	static const struct { size_t at; const char *name; } attach[] =
+	{
+		{ offsetof(player_t, awayview.mobj), "awayview.mobj" },
+		{ offsetof(player_t, followmobj), "followmobj" },
+		{ offsetof(player_t, follower), "follower" },
+		{ offsetof(player_t, skybox.viewpoint), "skybox.viewpoint" },
+		{ offsetof(player_t, skybox.centerpoint), "skybox.centerpoint" },
+		{ offsetof(player_t, hoverhyudoro), "hoverhyudoro" },
+		{ offsetof(player_t, ballhogreticule), "ballhogreticule" },
+		{ offsetof(player_t, stumbleIndicator), "stumbleIndicator" },
+		{ offsetof(player_t, wavedashIndicator), "wavedashIndicator" },
+		{ offsetof(player_t, trickIndicator), "trickIndicator" },
+		{ offsetof(player_t, whip), "whip" },
+		{ offsetof(player_t, hand), "hand" },
+		{ offsetof(player_t, ringShooter), "ringShooter" },
+		{ offsetof(player_t, flickyAttacker), "flickyAttacker" },
+		{ offsetof(player_t, powerup.flickyController), "powerup.flickyController" },
+		{ offsetof(player_t, powerup.barrier), "powerup.barrier" },
+		{ offsetof(player_t, stoneShoe), "stoneShoe" },
+		{ offsetof(player_t, toxomisterCloud), "toxomisterCloud" },
+		{ offsetof(player_t, flybot), "flybot" },
+	};
+
+	int32_t i;
+	size_t k;
+
+	if (was == NULL || now == NULL)
+		return;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		const uint8_t *a = was + (sizeof (player_t) * i);
+		const uint8_t *b = now + (sizeof (player_t) * i);
+
+		if (playeringame[i] == false)
+			continue;
+
+		for (k = 0; k < sizeof (attach) / sizeof (attach[0]); k++)
+		{
+			uintptr_t pa = 0, pb = 0;
+			char text[160];
+
+			memcpy(&pa, a + attach[k].at, sizeof (pa));
+			memcpy(&pb, b + attach[k].at, sizeof (pb));
+
+			if ((pa != 0) == (pb != 0))
+				continue;
+
+			snprintf(text, sizeof (text),
+				"%s: player %d has %s on the %s and not on the %s",
+				cmd, i, attach[k].name,
+				(pa != 0) ? "live pass" : "replay",
+				(pa != 0) ? "replay" : "live pass");
+			K_Finding(text);
+		}
+	}
+}
+
 /** Says which bytes of which player structure differ between two captures.
   *
   * The archive cannot answer this question about itself. Comparing snapshots
@@ -2042,6 +2112,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 		// comparison above has named the player worth starting with.
 		K_ComparePlayers("rollback_resim", g_playercopy[0], g_playercopy[1],
 			g_blamedplayer);
+		K_ReportAttachments("rollback_resim", g_playercopy[0], g_playercopy[1]);
 
 		// What the restore itself did to the world, gathered before the replay
 		// ran and worth reading now that it went somewhere else.
