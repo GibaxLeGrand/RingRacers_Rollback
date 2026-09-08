@@ -499,7 +499,9 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEUINT8(save->p, players[i].kartspeed);
 		WRITEUINT8(save->p, players[i].kartweight);
 
-		WRITEUINT8(save->p, players[i].followerskin);
+		// Signed: -1 is the sentinel for having no follower, and an unsigned
+		// byte turned it into 255. Same one byte on the wire either way.
+		WRITESINT8(save->p, players[i].followerskin);
 		WRITEUINT8(save->p, players[i].followerready);	// booleans are really just numbers eh??
 		WRITEUINT16(save->p, players[i].followercolor);
 		if (flags & FOLLOWER)
@@ -1197,7 +1199,7 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].kartspeed = READUINT8(save->p);
 		players[i].kartweight = READUINT8(save->p);
 
-		players[i].followerskin = READUINT8(save->p);
+		players[i].followerskin = READSINT8(save->p);
 		players[i].followerready = READUINT8(save->p);
 		players[i].followercolor = READUINT16(save->p);
 		if (flags & FOLLOWER)
