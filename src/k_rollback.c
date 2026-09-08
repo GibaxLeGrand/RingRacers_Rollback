@@ -591,6 +591,63 @@ static uint32_t K_HashOrder(int32_t which)
 	return hash;
 }
 
+/** Compares the player structures in memory across a restore.
+  *
+  * The archive cannot answer this question about itself. Comparing snapshots
+  * only ever compares what the archive carries, so a field it does not carry is
+  * equal on both sides by construction and invisible however hard you look.
+  * Reading the structures themselves has no such blind spot.
+  *
+  * Pointers legitimately differ -- a restore rebuilds objects at new addresses
+  * -- so the offsets reported have to be read against d_player.h rather than
+  * trusted blindly. Everything else that differs is state a restore lost.
+  */
+static uint8_t *g_playercopy;
+
+static void K_CopyPlayers(void)
+{
+	if (g_playercopy == NULL)
+		g_playercopy = (uint8_t *)Z_Malloc(sizeof (player_t) * MAXPLAYERS, PU_STATIC, NULL);
+
+	if (g_playercopy != NULL)
+		memcpy(g_playercopy, players, sizeof (player_t) * MAXPLAYERS);
+}
+
+static void K_ComparePlayers(const char *cmd)
+{
+	uint32_t reported = 0;
+	int32_t i;
+
+	if (g_playercopy == NULL)
+		return;
+
+	for (i = 0; i < MAXPLAYERS && reported < 8; i++)
+	{
+		const uint8_t *was = g_playercopy + (sizeof (player_t) * i);
+		const uint8_t *now = (const uint8_t *)&players[i];
+		size_t at;
+
+		if (playeringame[i] == false)
+			continue;
+
+		for (at = 0; at < sizeof (player_t); at++)
+		{
+			if (was[at] == now[at])
+				continue;
+
+			CONS_Printf("%s: player %d differs at byte %s of player_t "
+				"(0x%02x became 0x%02x)\n",
+				cmd, i, sizeu1(at), was[at], now[at]);
+
+			reported++;
+			break;
+		}
+	}
+
+	if (reported == 0)
+		CONS_Printf("%s: every player structure came back identical, pointers and all\n", cmd);
+}
+
 /** Prints the first few archived objects in the order the lists hold them.
   *
   * A hash says the order changed; this says how. Reversed, rotated or shuffled
@@ -836,6 +893,7 @@ static void Command_RollbackTest_f(void)
 	blockmaporder = K_HashOrder(K_ORDER_BLOCKMAP);
 	sectororder = K_HashOrder(K_ORDER_SECTORS);
 	K_PrintOrder("rollback_test", "before the restore");
+	K_CopyPlayers();
 
 	// Same window: the per-object records depend on that numbering too. Taken
 	// outside the timed sections, and read-only, so neither the measurements
@@ -885,6 +943,7 @@ static void Command_RollbackTest_f(void)
 	}
 
 	K_PrintOrder("rollback_test", "after the restore ");
+	K_ComparePlayers("rollback_test");
 
 	K_PrintLoadProfile("rollback_test");
 
