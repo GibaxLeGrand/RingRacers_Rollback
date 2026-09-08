@@ -464,20 +464,43 @@ perfect.
   or an external shaper.
 - A scripted server and client on one machine (`-server` and `connect` exist).
 
-### Before phase 5 -- against a stock build
+### Before phase 5 -- the wire-format audit, done
 
-This one has a prerequisite nobody has done yet: **an audit of what we changed
-in the wire format**. The compatibility claim is currently an assertion. Every
-change to `p_saveg` needs sorting into one of two piles:
+Every change to `p_saveg` since the upstream base (`05cca02c9`), sorted.
 
-- **Local only**, and therefore harmless to a stock server: the `local` flag on
-  `P_SaveNetGame`, the per-viewport render flags, `tilt` and the cameras being
-  skipped in a local snapshot, `oldcmd` and the other fields a local snapshot
-  adds.
-- **Shared with the wire**, and therefore needing thought: `MobjIsArchived`
-  changes which object-to-object pointers are written at all; the `onconveyor`
-  read order is a fix to a stock bug, which means our reader now disagrees with
-  a stock writer's reader on purpose. Both need a decision -- fix upstream,
-  gate on a version, or accept the incompatibility.
+**Local only.** Gated on `localsnapshot` / `localrestore`, so a netgame stream
+never sees them:
 
-Until that audit exists, phase 5 cannot even be planned.
+| what | where |
+|---|---|
+| cmd, oldcmd, SPBdistance, itemscale, enteredGame, faultflash | the extras block a local snapshot adds |
+| `tilt` **skipped** when local (still written for the wire) | beside viewrollangle |
+| per-viewport render flags kept instead of stripped | the mobj archiver |
+| chain order: mobjnum plus blockmap and sector positions | the mobj archiver |
+| precipitation not torn down and rebuilt | the thinker loader |
+| weather not re-switched | the weather step |
+| the cameras | not in the archive at all -- they live beside it, in the ring slot |
+
+**Shared with the wire, and none of it changes the grammar.** The framing --
+field order, sizes, diff masks -- is untouched, so a stock peer parses our
+stream and we parse theirs. What differs is the meaning of three values, and in
+all three cases ours is the correct one:
+
+- `MobjIsArchived` sets fewer diff bits: an object-to-object pointer is written
+  only when its target is going into the save. A stock reader is mask-driven and
+  reads what it is told; the links it no longer receives are the ones that used
+  to be attached to whatever object had inherited that `mobjnum`.
+- `followerskin` went from `WRITEUINT8` to `WRITESINT8`. **The same byte, in the
+  same place.** Only the sign is read differently -- a stock peer sees 255 where
+  we see -1, which is the upstream bug.
+- The `onconveyor` read order. The **writer is untouched**, so the bytes are
+  identical and the reader consumes the same six either way; ours now assigns
+  them the way they were written. A stock reader keeps scrambling them.
+- The item roulette list no longer shrinks on load, so the `cap` we write next
+  describes the block we hold. A stock reader allocates what it is told.
+
+So phase 5 is plannable, and its risk is not framing but semantics: we and a
+stock peer would disagree about three values, always with us correct. The
+honest move is to offer all three upstream -- the `onconveyor` order in
+particular, since it scrambles `timeshit`, `timeshitprev` and `onconveyor` for
+any player who joins a netgame in progress.
