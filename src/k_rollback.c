@@ -575,10 +575,11 @@ static void K_PrintOrder(const char *cmd, const char *when)
 	thinker_t *th;
 	int32_t n = 0;
 	int32_t shown = 0;
+	int32_t counted = 0;
 
 	line[0] = 0;
 
-	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ] && shown < 12; th = th->next)
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
 	{
 		const mobj_t *mo = (const mobj_t *)th;
 
@@ -588,14 +589,21 @@ static void K_PrintOrder(const char *cmd, const char *when)
 		if (mo->mobjnum == 0 || TypeIsNetSynced(mo->type) == false)
 			continue;
 
-		n += snprintf(line + n, sizeof (line) - n, "%u ", mo->mobjnum);
-		shown++;
+		counted++;
 
-		if (n < 0 || (size_t)n >= sizeof (line) - 8)
-			break;
+		if (shown < 12)
+		{
+			n += snprintf(line + n, sizeof (line) - n, "%u ", mo->mobjnum);
+			shown++;
+		}
+
 	}
 
-	CONS_Printf("%s: thinker list %s: %s\n", cmd, when, line);
+	// The population comes first on purpose. An instrument that examined
+	// nothing looks exactly like one that found nothing wrong, and I have
+	// already read the first as the second three times in a day.
+	CONS_Printf("%s: thinker list %s: %d archived objects, first: %s\n",
+		cmd, when, counted, line);
 }
 
 /** Prints who is on the grid.
@@ -833,9 +841,18 @@ static void Command_RollbackTest_f(void)
 
 	afterload = Consistancy();
 
-	CONS_Printf("rollback_test: thinker order %s, blockmap order %s\n",
-		(K_HashOrder(false) == thinkerorder ? "kept" : "CHANGED"),
-		(K_HashOrder(true) == blockmaporder ? "kept" : "CHANGED"));
+	if (thinkerorder == 2166136261u || blockmaporder == 2166136261u)
+	{
+		// The empty hash. Something was measured before it existed.
+		CONS_Printf("rollback_test: the order reading saw no archived objects "
+			"beforehand, so it says nothing about ordering\n");
+	}
+	else
+	{
+		CONS_Printf("rollback_test: thinker order %s, blockmap order %s\n",
+			(K_HashOrder(false) == thinkerorder ? "kept" : "CHANGED"),
+			(K_HashOrder(true) == blockmaporder ? "kept" : "CHANGED"));
+	}
 
 	K_PrintOrder("rollback_test", "after the restore ");
 
