@@ -213,3 +213,29 @@ turns "it stutters for me" into a number the player can report.
 **7. Alpha with people.** Only after the rest. A CI build already exists per
 commit; what is missing is a short list of what to report and a way to collect
 logs.
+
+## Where to pick this up
+
+The crash a soak keeps dying on -- "not enough memory for item roulette list"
+-- is not about how much memory anything takes. player->itemRoulette.itemList is
+a heap-allocated list, and P_NetUnArchivePlayers reallocates it on every
+restore. A soak restores twice per check, so hundreds of checks mean thousands
+of reallocations across sixteen players, and the allocator eventually refuses;
+the roulette is just where it happens to land. Cutting our own footprint from
+30 MB to under 10 changed nothing, as it could not.
+
+Which is a design lesson worth more than the crash: a restored state should not
+contain dynamically allocated sub-objects, or every rollback pays for
+reallocating them. Fixed capacity, or a pool.
+
+Two ways on from here:
+
+1. Read the memory comparison taken at the far end of both passes. The code is
+   in and has never produced a reading, because every run that would have
+   printed one died on the allocator first. It is the last unexamined place for
+   the remaining 2.7 percent.
+2. Or start step 3 and hook the tic loop behind a switch. Snapshots cost 0.8 ms,
+   restores 6 ms, and determinism holds on 97 percent of checks. A real rollback
+   replaying real inputs would also be a better test than the frozen-input one,
+   which demonstrably misfires anything edge-triggered -- ring usage misbehaves
+   visibly when a soak runs under a human player.
