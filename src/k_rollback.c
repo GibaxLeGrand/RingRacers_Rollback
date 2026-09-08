@@ -662,8 +662,20 @@ static void K_ComparePlayers(const char *cmd)
 			// structure sits on a multiple of eight.
 			if ((at % 8) != 0)
 			{
-				CONS_Printf("%s: player %d, %s bytes into player_t: %s bytes differ\n",
-					cmd, i, sizeu1(at), sizeu2(run));
+				char before[32], after[32];
+				size_t k;
+				int32_t nb = 0, na = 0;
+
+				// The values, not just the offset. "three bytes differ" does not say
+				// whether a field was lost, truncated or merely moved.
+				for (k = 0; k < run && k < 8; k++)
+				{
+					nb += snprintf(before + nb, sizeof (before) - nb, "%02x ", was[at + k]);
+					na += snprintf(after + na, sizeof (after) - na, "%02x ", now[at + k]);
+				}
+
+				CONS_Printf("%s: player %d, %s bytes into player_t: %s bytes, %s-> %s\n",
+					cmd, i, sizeu1(at), sizeu2(run), before, after);
 
 				reported++;
 			}
