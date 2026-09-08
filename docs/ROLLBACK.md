@@ -434,8 +434,8 @@ into the tic loop; the game still plays as a stock build.
 | phase | state | what it is waiting on |
 |---|---|---|
 | 1. Restore breakdown | done enough | `P_RelinkPointers` is 3.7 ms of 5.6 and has never been broken down further. Not blocking anything. |
-| 2. Soak the determinism | the machinery is finished; the coverage is one map and one mode | the whip, then breadth |
-| 3. Rollback loop behind a switch | not started | criteria below |
+| 2. Soak the determinism | **done enough** -- three maps, player state clean, residue is scenery | nothing blocking |
+| 3. Rollback loop behind a switch | **started** -- the ring fills during play and a replay runs on real inputs | the packet half, which needs two instances |
 | 4. Two instances with latency | not started | needs 3, and a lag knob the game does not have |
 | 5. Against a stock build | not started | needs 3, and a wire-format audit that has never been done |
 | 6. Capability test in the menus | not started | needs 3 for figures that mean anything |
@@ -482,6 +482,36 @@ everything edge-triggered; a real rollback replaying real inputs is a strictly
 better detector, and the soak becomes the regression net behind it. Phase 2 is
 finished when it stops being the best instrument available, not when it is
 perfect.
+
+### Phase 3, where it stands
+
+**Done.** `rollback_keep` fills the ring during ordinary play, one save a tic,
+off by default. `rollback_replay <n>` rewinds that many tics and runs them again
+with the inputs the netcode recorded -- `netcmds` holds 512 of them -- then
+checks the world arrived where it already was, prices the replay per tic, and
+puts the world back either way. It is the first thing in this project that
+replays real input rather than frozen input, which is the blindness the soak
+could never fix. **Its measurement is still in flight and is not reported here
+yet.**
+
+**The packet half, located.** In the client's reception path (d_clisrv.c:5925)
+the server's tics are copied into `netcmds[i % BACKUPTICS]`, and the code
+already carries the line `if (i >= gametic) // Don't copy old net commands`. So
+receiving a tic older than the present is a case the netcode has already thought
+about; today it is harmless because a client never runs ahead. That is exactly
+where a correction belongs. Three gestures, all inside functions that exist:
+
+1. **Predict** -- relax `while (neededtic > gametic)` in `TryRunTics` so the
+   client advances on the last inputs it knows.
+2. **Detect** -- in that copy loop, compare what arrives for `i < gametic`
+   against what was used, and keep the oldest tic that disagrees.
+3. **Correct** -- `K_LoadGameState` that tic and replay to the present, which is
+   what `rollback_replay` already does.
+
+**The harness for testing it**, written and not yet run: `netserver.cfg` and
+`netclient.cfg`, a scripted server and client on one machine, the client given
+its own `-home` so the two do not overwrite each other's log. That was the
+phase 4 prerequisite; it turns out phase 3's second half needs it first.
 
 ### Phase 3, as the code actually presents it
 
