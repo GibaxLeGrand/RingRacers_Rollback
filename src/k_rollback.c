@@ -313,10 +313,12 @@ static void K_ReportTrace(const char *cmd)
 			&& a->inflictor == b->inflictor && a->source == b->source)
 			continue;
 
-		CONS_Printf("%s: hit %u differs -- live: tic %u, player %u, by %s\n",
-			cmd, i, a->when, a->victim, K_MobjTypeName((mobjtype_t)a->inflictor));
-		CONS_Printf("%s: hit %u differs -- replay: tic %u, player %u, by %s\n",
-			cmd, i, b->when, b->victim, K_MobjTypeName((mobjtype_t)b->inflictor));
+		// kind 0 is a hit counted, 1 one taken back, 2 a judgement: bit 1 means
+		// invincible, bit 4 inside hitlag.
+		CONS_Printf("%s: event %u differs -- live: tic %u, player %u, kind %u, flags %u\n",
+			cmd, i, a->when, a->victim, a->inflictor, a->source);
+		CONS_Printf("%s: event %u differs -- replay: tic %u, player %u, kind %u, flags %u\n",
+			cmd, i, b->when, b->victim, b->inflictor, b->source);
 		return;
 	}
 

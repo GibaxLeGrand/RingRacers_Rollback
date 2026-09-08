@@ -3144,6 +3144,13 @@ static dboolean P_DamageMobjCompat(mobj_t *target, mobj_t *inflictor, mobj_t *so
 					invincible = false;
 				}
 
+				// Which way this damage went, for a resimulation check to compare.
+				// Two passes landing the same hits but judging invincibility
+				// differently is the whole question.
+				K_RollbackTraceHit(player - players, 2,
+					(uint16_t)((invincible ? 1 : 0)
+						| ((target->eflags & MFE_PAUSED) ? 4 : 0)));
+
 				if (player->pflags2 & PF2_ALWAYSDAMAGED)
 				{
 					invincible = false;
@@ -3975,6 +3982,13 @@ dboolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t
 				{
 					invincible = false;
 				}
+
+				// Which way this damage went, for a resimulation check to compare.
+				// Two passes landing the same hits but judging invincibility
+				// differently is the whole question.
+				K_RollbackTraceHit(player - players, 2,
+					(uint16_t)((invincible ? 1 : 0)
+						| ((target->eflags & MFE_PAUSED) ? 4 : 0)));
 
 				if (player->pflags2 & PF2_ALWAYSDAMAGED)
 				{
