@@ -398,43 +398,86 @@ logs.
 
 ## Where to pick this up
 
-The crash a soak keeps dying on -- "not enough memory for item roulette list"
--- is not about how much memory anything takes. player->itemRoulette.itemList is
-a heap-allocated list, and P_NetUnArchivePlayers reallocates it on every
-restore. A soak restores twice per check, so hundreds of checks mean thousands
-of reallocations across sixteen players, and the allocator eventually refuses;
-the roulette is just where it happens to land. Cutting our own footprint from
-30 MB to under 10 changed nothing, as it could not.
+Measured on one configuration -- RR_NorthernDistrict, Match Race, sixteen karts,
+one human and fifteen bots. **Idle: 2 failures in 500. Driving: 2 in 500.** Both
+0.4 percent, no crash over a full run, no unrepeatable replay. Nothing is wired
+into the tic loop; the game still plays as a stock build.
 
-Which is a design lesson worth more than the crash: a restored state should not
-contain dynamically allocated sub-objects, or every rollback pays for
-reallocating them. Fixed capacity, or a pool.
+### Where each phase stands
 
-The comparison at the far end of both passes has now been read, and the
-instrument that was hiding it has been fixed: it no longer discards a finding
-without counting it, it starts at the player the archive comparison blamed, and
-`P_NamePlayerField` names the field rather than giving its distance into a
-record. What that reading found is above -- `tilt` and `timeshitprev`.
+| phase | state | what it is waiting on |
+|---|---|---|
+| 1. Restore breakdown | done enough | `P_RelinkPointers` is 3.7 ms of 5.6 and has never been broken down further. Not blocking anything. |
+| 2. Soak the determinism | the machinery is finished; the coverage is one map and one mode | the whip, then breadth |
+| 3. Rollback loop behind a switch | not started | criteria below |
+| 4. Two instances with latency | not started | needs 3, and a lag knob the game does not have |
+| 5. Against a stock build | not started | needs 3, and a wire-format audit that has never been done |
+| 6. Capability test in the menus | not started | needs 3 for figures that mean anything |
+| 7. Alpha with people | not started | needs 3 through 6 |
 
-Three ways on from here:
+### What is left in phase 2
 
-1. Run a soak on the build that names fields and read the list. Everything so
-   far was decoded by hand out of one log; the tool should now produce the same
-   answer by itself, on every failing check, for every player. That is also the
-   check on the naming table, which is a copy of the archiver and can drift from
-   it: if it names a field whose value makes no sense, it has drifted.
-2. Decide what to do about `tilt`. Nothing in the simulation reads it, so the
-   honest fix is to keep local view state out of what a local snapshot compares,
-   the way the render flags were handled -- but that is treating a symptom until
-   it is understood why two passes with no frame drawn between them, and with
-   identical objects, arrive at different values. `viewx` and `viewy` cannot
-   move during a resimulation. Something else does.
-3. `timeshitprev` is the one that matters: a hit landed in one pass and not in
-   the other, which is a real divergence and not a cosmetic one. The hit trace
-   already exists and already agrees on every event the passes share, so what to
-   trace is the attempt that only one pass makes.
+**One open defect.** The last two failures of a played race are a bit in the
+player record's `flags` word -- `WHIP` -- so the whip object is attached on one
+pass and not the other. Every survivor before it was presentation: shadows,
+interpolation angles, camera lean. This one is an attack, so it is worth
+explaining rather than excluding.
 
-Step 3 -- hooking the tic loop behind a switch -- remains available and may be
-the better revealer: snapshots cost 0.8 ms, restores 6 ms, determinism holds on
-97 percent of checks, and a real rollback replaying real inputs would not
-misfire everything edge-triggered the way the frozen-input test does.
+**Breadth, which is the real gap.** Everything above is one map and one mode.
+What has never been soaked at all:
+
+- **Other maps.** At least three, chosen for geometry the current one does not
+  have: steep slopes, water, a big drop.
+- **Grand Prix.** Its grid is hardcoded to eight karts and it runs bots
+  differently -- `map <name>` without `-match` is enough to get one.
+- **Battle**, and **Encore**.
+- **A full race, start to finish**, rather than a soak dropped into the middle
+  of one: the grid, the finish line, the results screen.
+- **Respawns and item use**, deliberately, since the frozen-input test misfires
+  anything edge-triggered and cannot exercise them on its own.
+
+Target for each: 300 checks or more, zero failures or only ones that have been
+read and understood.
+
+**And a re-measurement.** Every cost in this document is an opening-lap figure.
+A snapshot was 120 KiB seconds after the start and 318 KiB three minutes in,
+because the world accumulates objects, so the 11 ms restore wants taking again
+late in a long race. That number is the whole budget question.
+
+### Before phase 3 -- the rollback loop
+
+1. The whip explained, or shown to be presentation and excluded on purpose.
+2. Two more maps and Battle, at 300 checks each, with nothing unexplained.
+3. The restore cost re-measured late in a race, because that is what decides
+   whether a rollback fits in a tic at all.
+
+Not more than that. A soak replays frozen inputs, which is structurally blind to
+everything edge-triggered; a real rollback replaying real inputs is a strictly
+better detector, and the soak becomes the regression net behind it. Phase 2 is
+finished when it stops being the best instrument available, not when it is
+perfect.
+
+### Before phase 4 -- two instances with latency
+
+- Phase 3 working behind its switch, with the soak still passing.
+- An artificial latency knob. The game has none: a dozen lines, off by default,
+  or an external shaper.
+- A scripted server and client on one machine (`-server` and `connect` exist).
+
+### Before phase 5 -- against a stock build
+
+This one has a prerequisite nobody has done yet: **an audit of what we changed
+in the wire format**. The compatibility claim is currently an assertion. Every
+change to `p_saveg` needs sorting into one of two piles:
+
+- **Local only**, and therefore harmless to a stock server: the `local` flag on
+  `P_SaveNetGame`, the per-viewport render flags, `tilt` and the cameras being
+  skipped in a local snapshot, `oldcmd` and the other fields a local snapshot
+  adds.
+- **Shared with the wire**, and therefore needing thought: `MobjIsArchived`
+  changes which object-to-object pointers are written at all; the `onconveyor`
+  read order is a fix to a stock bug, which means our reader now disagrees with
+  a stock writer's reader on purpose. Both need a decision -- fix upstream,
+  gate on a version, or accept the incompatibility.
+
+Until that audit exists, phase 5 cannot even be planned.
