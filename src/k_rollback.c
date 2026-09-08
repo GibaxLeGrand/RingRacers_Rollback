@@ -834,8 +834,8 @@ static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
   */
 static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 {
-	rollbackslot_t *first, *second;
-	diagset_t recsfirst = {0}, recssecond = {0};
+	rollbackslot_t *first, *second, *third;
+	diagset_t recsfirst = {0}, recssecond = {0}, recsthird = {0};
 	ticcmd_t frozen[MAXPLAYERS];
 	precise_t started;
 	uint32_t firstus, secondus;
@@ -843,6 +843,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	int32_t i;
 	dboolean records;
 	dboolean identical = false;
+	dboolean repeatable = false;
 
 	if (gamestate != GS_LEVEL)
 	{
@@ -862,13 +863,17 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 	second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+	third = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 
 	recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
 	recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
 	recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
 	recssecond.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+	recsthird.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+	recsthird.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
 
-	records = (recsfirst.bytes && recsfirst.recs && recssecond.bytes && recssecond.recs);
+	records = (recsfirst.bytes && recsfirst.recs && recssecond.bytes && recssecond.recs
+		&& recsthird.bytes && recsthird.recs);
 
 	// The inputs of the tic the game is sitting on, reused for every replayed
 	// tic of both passes. Not what really happened over those tics, but the
@@ -937,6 +942,22 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	if (records)
 		K_CaptureRecords(&recssecond);
 
+	// A third pass, from a restored state like the second. The first pass ran
+	// from the live world, and what the archive does not carry -- decoration,
+	// the C library's generator, anything nobody saves -- is left wherever the
+	// pass before put it. So first against second answers "does a restored
+	// world behave like the live one", while second against third answers "is
+	// the replay repeatable at all". The two failures need different fixes and
+	// look identical without this.
+	if (K_LoadGameState(gametic))
+	{
+		srand((unsigned int)gametic);
+		K_RunFrozenTics(tics, frozen);
+
+		if (K_WriteSnapshot(third, gametic) && records)
+			K_CaptureRecords(&recsthird);
+	}
+
 	if (verbose)
 	{
 		CONS_Printf("rollback_resim: %d tics took %u us, then %u us -- %u us per tic\n",
@@ -945,6 +966,9 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	identical = (first->used == second->used
 		&& memcmp(first->buffer, second->buffer, first->used) == 0);
+
+	repeatable = (second->used == third->used
+		&& memcmp(second->buffer, third->buffer, second->used) == 0);
 
 	// Silence is the point of a soak: thousands of passes should say nothing,
 	// so that the one failure is impossible to miss.
@@ -956,6 +980,24 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 		K_ReportComparison("rollback_resim", "resimulation",
 			first, "first pass", second, "second pass",
 			&recsfirst, &recssecond, records);
+
+		if (identical == false)
+		{
+			if (repeatable)
+			{
+				CONS_Printf("rollback_resim: but the two restored passes agree with each "
+					"other, so the replay is repeatable and it is the restore that loses "
+					"something the simulation uses\n");
+			}
+			else
+			{
+				CONS_Printf("rollback_resim: the two restored passes disagree as well, so "
+					"the replay is not repeatable regardless of the restore\n");
+				K_ReportComparison("rollback_resim", "replay",
+					second, "second pass", third, "third pass",
+					&recssecond, &recsthird, records);
+			}
+		}
 	}
 
 	// Back to where this found the world.
@@ -968,8 +1010,10 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 done:
 	Z_Free(first);
 	Z_Free(second);
+	Z_Free(third);
 	K_FreeDiagSet(&recsfirst);
 	K_FreeDiagSet(&recssecond);
+	K_FreeDiagSet(&recsthird);
 
 	return identical;
 }
