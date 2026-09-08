@@ -36,7 +36,8 @@
 #include "k_rollback.h"
 
 #include "command.h"
-#include "d_clisrv.h" // Consistancy()
+#include "d_clisrv.h" // Consistancy(), playerdelaytable
+#include "d_netcmd.h" // cv_mindelay
 #include "deh_tables.h" // MOBJTYPE_LIST, FREE_MOBJS
 #include "doomdef.h"
 #include "doomstat.h"
@@ -72,6 +73,11 @@ typedef struct
 } rollbackslot_t;
 
 static rollbackslot_t *rollbackring = NULL;
+
+// What the tests last measured on this machine, so rollback_delay can price a
+// rollback from real figures rather than from memory. Zero until then.
+static uint32_t g_lastrestoreus;
+static uint32_t g_lastresimus;
 
 void K_InitRollback(void)
 {
@@ -699,6 +705,7 @@ static void Command_RollbackTest_f(void)
 		return;
 	}
 	loadus = K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_lastrestoreus = loadus;
 
 	afterload = Consistancy();
 
@@ -891,6 +898,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	started = I_GetPreciseTime();
 	K_RunFrozenTics(tics, frozen);
 	secondus = K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_lastresimus = secondus / (uint32_t)tics;
 
 	if (!K_WriteSnapshot(second, gametic))
 	{
@@ -1051,6 +1059,119 @@ void K_RollbackSoakTicker(void)
 	g_soakbusy = false;
 }
 
+// ----------------------------------------------------------------------------
+// Input delay and rollback depth
+//
+// These two settings are the same trade seen from both ends, and the game
+// already owns one of them.
+//
+// Ring Racers runs a delay-based netcode with what it calls a gentleman's
+// delay: your own inputs are held back so that everyone applies them on the
+// same tic, and the amount adapts to the connection. cv_mindelay is the floor
+// you choose, target_lag raises it to cover the fastest opponent's ping, and
+// MAXGENTLEMENDELAY caps the whole thing at a second. That is exactly what
+// GGPO calls input delay, adaptive on top.
+//
+// Rollback does not replace it -- it changes what it has to cover. Delay pays
+// for latency up front, in input lag, on every single tic. Rollback pays for it
+// after the fact, in a restore and a replay, and only when a prediction turns
+// out wrong. The useful arrangement is a small fixed delay to absorb jitter
+// cheaply, with rollback covering the rest up to a depth we are willing to pay
+// for -- and past that depth, the delay has to rise again, because a rollback
+// deeper than a frame's budget would cost more than it saves.
+//
+// K_RollbackMaxDepth is that ceiling. Nothing enforces it yet: the tic loop
+// hook that will read it does not exist. It lives here so the policy has one
+// home, and so the number can be argued about against measurements rather than
+// discovered by accident later.
+// ----------------------------------------------------------------------------
+
+static int32_t g_maxdepth = ROLLBACK_TICS;
+
+int32_t K_RollbackMaxDepth(void)
+{
+	return g_maxdepth;
+}
+
+/** Console command: rollback_maxdepth [tics]
+  *
+  * How far back a rollback may rewind. Latency beyond this has to be paid for
+  * with input delay instead.
+  */
+static void Command_RollbackMaxDepth_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		int32_t depth = atoi(COM_Argv(1));
+
+		if (depth < 1)
+			depth = 1;
+
+		// The ring only holds so many tics; asking to rewind past its oldest
+		// slot would find a stale state, not an old one.
+		if (depth > ROLLBACK_TICS)
+		{
+			CONS_Printf("rollback_maxdepth: capped at %d, the depth of the snapshot ring\n",
+				ROLLBACK_TICS);
+			depth = ROLLBACK_TICS;
+		}
+
+		g_maxdepth = depth;
+	}
+
+	CONS_Printf("rollback_maxdepth: %d tics (%d ms of latency covered without input delay)\n",
+		g_maxdepth, (g_maxdepth * 1000) / TICRATE);
+}
+
+/** Console command: rollback_delay
+  *
+  * Reports the two halves of the latency trade: what the game's own input
+  * delay is doing right now, and what a rollback of the current depth would
+  * cost against a tic's budget.
+  */
+static void Command_RollbackDelay_f(void)
+{
+	const uint32_t ticus = 1000000 / TICRATE;
+
+	CONS_Printf("rollback_delay: input delay -- mindelay %d tics (your floor), "
+		"engine ceiling %d\n",
+		cv_mindelay.value, MAXGENTLEMENDELAY);
+
+	if (netgame)
+	{
+		CONS_Printf("rollback_delay: this player is currently delayed %u tics%s\n",
+			playerdelaytable[consoleplayer],
+			(server_lagless ? ", server is lagless" : ""));
+	}
+	else
+	{
+		CONS_Printf("rollback_delay: offline, so nothing is being delayed\n");
+	}
+
+	CONS_Printf("rollback_delay: rollback depth %d tics (%d ms), tic budget %u us\n",
+		g_maxdepth, (g_maxdepth * 1000) / TICRATE, ticus);
+
+	if (g_lastrestoreus == 0 || g_lastresimus == 0)
+	{
+		CONS_Printf("rollback_delay: run rollback_test and rollback_resim to price a rollback "
+			"on this machine\n");
+	}
+	else
+	{
+		const uint32_t worst = g_lastrestoreus + (g_lastresimus * (uint32_t)g_maxdepth);
+
+		CONS_Printf("rollback_delay: measured here -- restore %u us, resimulation %u us per tic, "
+			"so a full-depth rollback costs %u us, %u%% of a tic\n",
+			g_lastrestoreus, g_lastresimus, worst, (worst * 100) / ticus);
+
+		if (worst > ticus)
+		{
+			CONS_Printf("rollback_delay: that is over budget -- either lower the depth and "
+				"raise mindelay to cover the difference, or make the restore cheaper\n");
+		}
+	}
+}
+
 void K_RegisterRollbackStuff(void)
 {
 	// Debug commands rather than plain ones: they are diagnostics, and being
@@ -1059,4 +1180,6 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_test", Command_RollbackTest_f);
 	COM_AddDebugCommand("rollback_resim", Command_RollbackResim_f);
 	COM_AddDebugCommand("rollback_soak", Command_RollbackSoak_f);
+	COM_AddDebugCommand("rollback_maxdepth", Command_RollbackMaxDepth_f);
+	COM_AddDebugCommand("rollback_delay", Command_RollbackDelay_f);
 }

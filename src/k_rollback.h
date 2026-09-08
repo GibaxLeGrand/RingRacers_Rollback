@@ -36,6 +36,10 @@ void K_RegisterRollbackStuff(void);
 // per tic; does nothing at all unless rollback_soak has been turned on.
 void K_RollbackSoakTicker(void);
 
+// How far back a rollback may rewind before the latency has to be paid for
+// with input delay instead. Set by rollback_maxdepth.
+int32_t K_RollbackMaxDepth(void);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
