@@ -355,6 +355,21 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 		WRITEUINT8(save->p, players[i].splitscreenindex);
 
+		// The inputs of this tic and the one before it. oldcmd is what the
+		// gameplay code compares against to find a button *press* rather than a
+		// button held -- using an item, e-braking, tricks and the bots all turn
+		// on that edge. A restore that does not bring it back mistakes held for
+		// pressed, or the reverse, on its first replayed tic, and the world goes
+		// somewhere else from there.
+		//
+		// ticcmd_t is packed and this snapshot never leaves the machine that
+		// wrote it, so it goes out whole.
+		if (localsnapshot)
+		{
+			WRITEMEM(save->p, &players[i].cmd, sizeof (ticcmd_t));
+			WRITEMEM(save->p, &players[i].oldcmd, sizeof (ticcmd_t));
+		}
+
 		if (players[i].awayview.mobj)
 			flags |= AWAYVIEW;
 
@@ -1097,6 +1112,12 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].griefWarned = READUINT8(save->p);
 
 		players[i].splitscreenindex = READUINT8(save->p);
+
+		if (localrestore)
+		{
+			READMEM(save->p, &players[i].cmd, sizeof (ticcmd_t));
+			READMEM(save->p, &players[i].oldcmd, sizeof (ticcmd_t));
+		}
 
 		flags = READUINT32(save->p);
 
