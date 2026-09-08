@@ -43,6 +43,7 @@
 #include "g_game.h" // players, playeringame
 #include "i_system.h" // I_GetPreciseTime()
 #include "info.h"
+#include "k_grandprix.h" // grandprixinfo
 #include "m_random.h" // P_RandomFixed()
 #include "p_local.h" // thlist, P_Ticker()
 #include "p_mobj.h"
@@ -469,6 +470,37 @@ static void K_PrintSnapshotContext(const char *label, const uint8_t *buffer, siz
 	CONS_Printf("rollback_test: %s from byte %s: %s\n", label, sizeu1(start), line);
 }
 
+/** Prints who is on the grid.
+  *
+  * Every measurement below scales with this, and it is not something to be
+  * counted off a screenshot: a Grand Prix grid is a fixed eight, a Match Race
+  * fills to maxplayers, and the two are easy to mistake for each other.
+  */
+static void K_PrintGrid(const char *cmd)
+{
+	uint32_t racers = 0, bots = 0, spectators = 0;
+	int32_t i;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (playeringame[i] == false)
+			continue;
+
+		if (players[i].spectator)
+			spectators++;
+		else
+		{
+			racers++;
+			if (players[i].bot)
+				bots++;
+		}
+	}
+
+	CONS_Printf("%s: %u racers (%u of them bots), %u spectators, %s\n",
+		cmd, racers, bots, spectators,
+		(grandprixinfo.gp ? "Grand Prix" : "not a Grand Prix"));
+}
+
 /** Says how two snapshots of what ought to be the same state compare.
   *
   * Shared by both tests: one puts a state through the archive and back, the
@@ -585,6 +617,8 @@ static void Command_RollbackTest_f(void)
 		CONS_Printf("You must be in a level to use this.\n");
 		return;
 	}
+
+	K_PrintGrid("rollback_test");
 
 	// Somewhere to put the second snapshot that is not part of the ring.
 	// Transient: a megabyte is not worth holding on to between invocations of
@@ -777,6 +811,8 @@ static void Command_RollbackResim_f(void)
 		if (tics > ROLLBACK_TICS)
 			tics = ROLLBACK_TICS;
 	}
+
+	K_PrintGrid("rollback_resim");
 
 	first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 	second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
