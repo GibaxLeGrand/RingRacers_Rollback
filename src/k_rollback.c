@@ -40,12 +40,14 @@
 #include "deh_tables.h" // MOBJTYPE_LIST, FREE_MOBJS
 #include "doomdef.h"
 #include "doomstat.h"
+#include "g_game.h" // players, playeringame
 #include "i_system.h" // I_GetPreciseTime()
 #include "info.h"
 #include "m_random.h" // P_RandomFixed()
-#include "p_local.h" // thlist
+#include "p_local.h" // thlist, P_Ticker()
 #include "p_mobj.h"
 #include "p_saveg.h"
+#include "p_tick.h" // leveltime
 #include "z_zone.h"
 
 // Nominal snapshot size: the same figure the engine already trusts for a full
@@ -467,6 +469,70 @@ static void K_PrintSnapshotContext(const char *label, const uint8_t *buffer, siz
 	CONS_Printf("rollback_test: %s from byte %s: %s\n", label, sizeu1(start), line);
 }
 
+/** Says how two snapshots of what ought to be the same state compare.
+  *
+  * Shared by both tests: one puts a state through the archive and back, the
+  * other runs the same tics twice, and both then ask the same question.
+  *
+  * eturn true when the two are byte for byte the same.
+  */
+static dboolean K_ReportComparison(const char *cmd, const char *what,
+	const rollbackslot_t *a, const char *labela,
+	const rollbackslot_t *b, const char *labelb,
+	const diagset_t *recsa, const diagset_t *recsb, dboolean records)
+{
+	// Walk the shorter of the two first, so a length mismatch still reports
+	// where they stopped agreeing rather than only that they differ.
+	const size_t shared = (a->used < b->used) ? a->used : b->used;
+	size_t at;
+
+	for (at = 0; at < shared; at++)
+	{
+		if (a->buffer[at] != b->buffer[at])
+			break;
+	}
+
+	if (a->used == b->used && at == shared)
+	{
+		CONS_Printf("%s: %s IDENTICAL over all %s bytes\n",
+			cmd, what, sizeu1(a->used));
+		return true;
+	}
+
+	if (a->used != b->used)
+	{
+		CONS_Printf("%s: %s DIFFERS -- %s is %s bytes, %s was %s\n",
+			cmd, what, labelb, sizeu1(b->used), labela, sizeu2(a->used));
+	}
+
+	if (at < shared)
+	{
+		CONS_Printf("%s: first difference at byte %s, in the '%s' block "
+			"(0x%02x became 0x%02x)\n",
+			cmd, sizeu1(at),
+			P_LocateSnapshotBlock(a->buffer, a->used, at),
+			a->buffer[at], b->buffer[at]);
+
+		K_PrintSnapshotContext(labela, a->buffer, a->used, at);
+		K_PrintSnapshotContext(labelb, b->buffer, b->used, at);
+	}
+	else
+	{
+		CONS_Printf("%s: the shorter one is a prefix of the longer, so what changed "
+			"sits at the end -- in the '%s' block\n",
+			cmd, P_LocateSnapshotBlock(a->buffer, a->used, shared));
+	}
+
+	// Which object, and which of its fields -- the byte offset above says
+	// neither on its own.
+	if (records)
+		K_ReportRecordDifferences(recsa, recsb);
+	else
+		CONS_Printf("%s: no memory for the per-object comparison\n", cmd);
+
+	return false;
+}
+
 static void K_FreeDiagSet(diagset_t *set)
 {
 	Z_Free(set->bytes);
@@ -513,8 +579,6 @@ static void Command_RollbackTest_f(void)
 	precise_t started;
 	uint32_t saveus, loadus, resaveus;
 	int16_t before, afterperturb, afterload;
-	size_t common, at;
-	dboolean identical;
 
 	if (gamestate != GS_LEVEL)
 	{
@@ -595,17 +659,6 @@ static void Command_RollbackTest_f(void)
 	}
 	resaveus = K_PreciseToMicros(I_GetPreciseTime() - started);
 
-	// Compare the common prefix first, so a size mismatch still reports where
-	// the two snapshots stopped agreeing rather than only that they differ.
-	common = (original->used < resaved->used) ? original->used : resaved->used;
-	for (at = 0; at < common; at++)
-	{
-		if (original->buffer[at] != resaved->buffer[at])
-			break;
-	}
-
-	identical = (original->used == resaved->used && at == common);
-
 	CONS_Printf("rollback_test: snapshot %s bytes, %s%% of the %s byte slot\n",
 		sizeu1(original->used),
 		sizeu2((original->used * 100) / ROLLBACK_BUFSIZE),
@@ -614,45 +667,9 @@ static void Command_RollbackTest_f(void)
 	CONS_Printf("rollback_test: save %u us, load %u us, re-save %u us\n",
 		saveus, loadus, resaveus);
 
-	if (identical)
-	{
-		CONS_Printf("rollback_test: round-trip IDENTICAL over all %s bytes\n",
-			sizeu1(original->used));
-	}
-	else
-	{
-		if (original->used != resaved->used)
-		{
-			CONS_Printf("rollback_test: round-trip DIFFERS -- re-saved state is %s bytes, "
-				"original was %s\n", sizeu1(resaved->used), sizeu2(original->used));
-		}
-
-		if (at < common)
-		{
-			CONS_Printf("rollback_test: first difference at byte %s, in the '%s' block "
-				"(0x%02x became 0x%02x)\n",
-				sizeu1(at),
-				P_LocateSnapshotBlock(original->buffer, original->used, at),
-				original->buffer[at], resaved->buffer[at]);
-
-			K_PrintSnapshotContext("original", original->buffer, original->used, at);
-			K_PrintSnapshotContext("re-saved", resaved->buffer, resaved->used, at);
-		}
-
-		else
-		{
-			CONS_Printf("rollback_test: the shorter snapshot is a prefix of the longer one, "
-				"so what changed is at the end -- in the '%s' block\n",
-				P_LocateSnapshotBlock(original->buffer, original->used, common));
-		}
-
-		// Which object, and which of its fields -- the byte offset above says
-		// neither on its own.
-		if (records)
-			K_ReportRecordDifferences(&recsbefore, &recsafter);
-		else
-			CONS_Printf("rollback_test: no memory for the per-object comparison\n");
-	}
+	K_ReportComparison("rollback_test", "round-trip",
+		original, "original", resaved, "re-saved",
+		&recsbefore, &recsafter, records);
 
 	CONS_Printf("rollback_test: consistancy before=%d perturbed=%d afterload=%d -- %s\n",
 		before, afterperturb, afterload,
@@ -677,10 +694,182 @@ static void Command_RollbackTest_f(void)
 	K_FreeDiagSet(&recsafter);
 }
 
+// ----------------------------------------------------------------------------
+// rollback_resim
+// ----------------------------------------------------------------------------
+
+/** Runs a number of tics with the inputs held fixed.
+  *
+  * P_Ticker is the whole of a game tic: everything the world does in a
+  * thirty-fifth of a second. What it does not do is fetch inputs -- G_Ticker
+  * copies those out of netcmds beforehand, and netcmds holds the tic the game
+  * is about to run, not the tics being replayed. So the caller freezes the
+  * inputs once and they are re-applied here before every tic, which is what
+  * makes two runs of the same tics comparable.
+  *
+  * Bots need nothing special: their commands are built by the netcode rather
+  * than by P_Ticker, so through a replay they carry on with the frozen ones.
+  * That is deterministic, which is all this asks of them.
+  */
+static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
+{
+	int32_t n, i;
+
+	for (n = 0; n < tics; n++)
+	{
+		for (i = 0; i < MAXPLAYERS; i++)
+		{
+			if (playeringame[i])
+				players[i].cmd = frozen[i];
+		}
+
+		P_Ticker(true);
+	}
+}
+
+/** Console command: rollback_resim [tics]
+  *
+  * Runs the same tics twice from the same state and compares where they end
+  * up: snapshot, play N tics, snapshot, restore, play the same N tics again,
+  * snapshot, compare the two endings byte for byte.
+  *
+  * This is the question rollback_test cannot answer. That one proves the
+  * archive can read back what it wrote; this one proves the archive carries
+  * everything the simulation needs. A field nobody archives is missing from
+  * both sides of a round trip and compares equal, but a resimulation starting
+  * from a state that lost it goes somewhere else -- which is the failure that
+  * would end this approach, so it is worth finding early.
+  *
+  * It also measures a tic of simulation, which together with the restore cost
+  * is what says how many tics of rollback fit in a frame.
+  *
+  * The world is put back where the command found it, so running this does not
+  * leave the level ahead of the tic the netcode believes it is on. Sounds and
+  * screen effects from both passes do play, though: they are not part of the
+  * state, so nothing rewinds them.
+  */
+static void Command_RollbackResim_f(void)
+{
+	rollbackslot_t *first, *second;
+	diagset_t recsfirst = {0}, recssecond = {0};
+	ticcmd_t frozen[MAXPLAYERS];
+	precise_t started;
+	uint32_t firstus, secondus;
+	tic_t startedat;
+	int32_t tics = 4;
+	int32_t i;
+	dboolean records;
+
+	if (gamestate != GS_LEVEL)
+	{
+		CONS_Printf("You must be in a level to use this.\n");
+		return;
+	}
+
+	if (COM_Argc() > 1)
+	{
+		tics = atoi(COM_Argv(1));
+
+		if (tics < 1)
+			tics = 1;
+
+		// Past the ring's depth the exercise stops resembling a rollback.
+		if (tics > ROLLBACK_TICS)
+			tics = ROLLBACK_TICS;
+	}
+
+	first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+	second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+
+	recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+	recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+	recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+	recssecond.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+
+	records = (recsfirst.bytes && recsfirst.recs && recssecond.bytes && recssecond.recs);
+
+	// The inputs of the tic the game is sitting on, reused for every replayed
+	// tic of both passes. Not what really happened over those tics, but the
+	// same thing twice, which is what the comparison needs.
+	for (i = 0; i < MAXPLAYERS; i++)
+		frozen[i] = players[i].cmd;
+
+	if (!K_SaveGameState(gametic))
+	{
+		CONS_Printf("rollback_resim: K_SaveGameState failed\n");
+		goto done;
+	}
+
+	startedat = leveltime;
+
+	started = I_GetPreciseTime();
+	K_RunFrozenTics(tics, frozen);
+	firstus = K_PreciseToMicros(I_GetPreciseTime() - started);
+
+	// P_Ticker returns without doing anything while the game is paused, and
+	// two passes of nothing compare equal. Say so instead of reporting a pass.
+	if (leveltime == startedat)
+	{
+		CONS_Printf("rollback_resim: the world did not advance -- the game is paused, "
+			"or the window is unfocused and pauseifunfocused is on\n");
+		goto done;
+	}
+
+	if (!K_WriteSnapshot(first, gametic))
+	{
+		CONS_Printf("rollback_resim: could not snapshot the first pass\n");
+		goto done;
+	}
+
+	if (records)
+		K_CaptureRecords(&recsfirst);
+
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_resim: could not get back to the starting state -- "
+			"the level is left where the first pass ended\n");
+		goto done;
+	}
+
+	started = I_GetPreciseTime();
+	K_RunFrozenTics(tics, frozen);
+	secondus = K_PreciseToMicros(I_GetPreciseTime() - started);
+
+	if (!K_WriteSnapshot(second, gametic))
+	{
+		CONS_Printf("rollback_resim: could not snapshot the second pass\n");
+		goto done;
+	}
+
+	if (records)
+		K_CaptureRecords(&recssecond);
+
+	CONS_Printf("rollback_resim: %d tics took %u us, then %u us -- %u us per tic\n",
+		tics, firstus, secondus, secondus / (uint32_t)tics);
+
+	K_ReportComparison("rollback_resim", "resimulation",
+		first, "first pass", second, "second pass",
+		&recsfirst, &recssecond, records);
+
+	// Back to where the command found the world.
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_resim: WARNING - could not restore the starting state, "
+			"so the level is now %d tics ahead of where it was\n", tics);
+	}
+
+done:
+	Z_Free(first);
+	Z_Free(second);
+	K_FreeDiagSet(&recsfirst);
+	K_FreeDiagSet(&recssecond);
+}
+
 void K_RegisterRollbackStuff(void)
 {
-	// A debug command rather than a plain one: it is a diagnostic, and being
-	// one lists it in the pause menu's command list, which is where it can be
-	// reached without typing into the console.
+	// Debug commands rather than plain ones: they are diagnostics, and being
+	// so lists them in the pause menu's command list, which is where they can
+	// be reached without typing into the console.
 	COM_AddDebugCommand("rollback_test", Command_RollbackTest_f);
+	COM_AddDebugCommand("rollback_resim", Command_RollbackResim_f);
 }
