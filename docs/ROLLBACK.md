@@ -263,6 +263,29 @@ should record `viewx`, `viewy` and the camera at the moment `DoABarrelRoll`
 runs, in both passes, rather than reasoning about which of them could have
 moved.
 
+### Zero
+
+Taking tilt out of a local snapshot, and the cameras with it, ends the
+sequence: **470 checks, 0 failures, in a played race.**
+
+The four steps that got there, each measured on a played race of its own:
+
+| | failures | replay not repeatable |
+|---|---|---|
+| before any of it | 144 / 550 | 121 |
+| cameras archived | 149 / 530 | 14 |
+| tilt only for the player being looked at | 23 / 530 | 21 |
+| tilt and cameras out of the snapshot | **0 / 470** | **0** |
+
+The middle two are the same mistake at two levels: archiving one piece of
+presentation to stabilise another. The camera was archived so tilt would
+reproduce; then the cameras themselves became 43 of the 44 remaining
+differences, because a camera is driven by a local view that nothing archives
+either. What ended it was deciding that neither belongs in a snapshot at all.
+
+The check that says the run counted: no "the world did not advance", the soak
+counting its way up from ten, and the commit's own sha in the binary that ran.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive
