@@ -70,6 +70,10 @@ static dboolean localsnapshot;
 // alone instead of being torn down and rebuilt.
 static dboolean localrestore;
 
+// Defined with the rest of the load profiling, further down, but called from
+// the unarchiving functions above it.
+static void P_ProfileStep(const char *name);
+
 // Block UINT32s to attempt to ensure that the correct data is
 // being sent and received
 #define ARCHIVEBLOCK_MISC			0x7FEEDEED
@@ -5886,6 +5890,11 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 			}
 		}
 	}
+
+	// Split out because the purge is a suspect in its own right: every mobj it
+	// removes costs a linear scan of the renderer's interpolator list, which
+	// is quadratic in the number of objects on the map.
+	P_ProfileStep("thinkers purge");
 
 	// we don't want the removed mobjs to come back
 	P_InitThinkers();
