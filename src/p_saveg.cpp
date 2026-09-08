@@ -74,6 +74,16 @@ static dboolean localrestore;
 // the unarchiving functions above it.
 static void P_ProfileStep(const char *name);
 
+// Where each object sits in the chains collision walks. Declared here
+// because SaveMobjThinker, further up the file than the rest of this, is
+// what writes them out.
+#define CHAINORDER_MAX 16384
+
+static uint16_t chainorder_block[CHAINORDER_MAX];
+static uint16_t chainorder_sector[CHAINORDER_MAX];
+static dboolean chainorder_ready;
+
+
 // Where each player's record started, in the last archive written. The players
 // block is written as one run of fields with no markers inside it, so without
 // this a difference reported there is a bare offset into 16 records.
@@ -3770,6 +3780,16 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 	}
 
 	WRITEUINT32(save->p, mobj->mobjnum);
+
+	// Where this object sits in the chains collision walks. Local snapshots
+	// only: a save going over the wire keeps the format it has.
+	if (localsnapshot)
+	{
+		const uint32_t num = mobj->mobjnum;
+
+		WRITEUINT16(save->p, (num < CHAINORDER_MAX) ? chainorder_block[num] : 0);
+		WRITEUINT16(save->p, (num < CHAINORDER_MAX) ? chainorder_sector[num] : 0);
+	}
 }
 
 static void SaveNoEnemiesThinker(savebuffer_t *save, const thinker_t *th, const uint8_t type)
@@ -4267,6 +4287,231 @@ static void SavePolyfadeThinker(savebuffer_t *save, const thinker_t *th, const u
 static void WriteMobjPointer(mobj_t *mobj)
 {
 	WRITEUINT32(current_savebuffer->p, SaveMobjnum(mobj));
+}
+
+// ----------------------------------------------------------------------------
+// Chain order
+//
+// A restore recreates every object from the archive and P_SetThingPosition
+// pushes each onto the head of its blockmap cell and its sector list. The
+// chains that come out are therefore in archive order, while the live ones hold
+// the order the world arrived at by moving through those cells. Collision
+// detection walks them, so two worlds holding identical objects resolve a hit
+// differently -- measured, and the reason the soak sees a kart hit on one pass
+// and not on the replay.
+//
+// The archive can carry the order: each object's depth in its chains, two bytes
+// each. Rebuilding then means relinking deepest first, since head insertion
+// puts the last one linked at the front.
+//
+// Local snapshots only. A save going over the wire keeps the format it has, and
+// the receiving machine cannot use our order anyway -- it is rebuilding from a
+// state that was never its own. That leaves the same defect in place for
+// resynchronisation, which is upstream's to have and worth reporting.
+// ----------------------------------------------------------------------------
+
+/** Notes how deep each object sits in its chains.
+  *
+  * Call after P_SaveNetGame has handed out the mobjnums this indexes by, and
+  * before any object is written.
+  */
+static void P_StampChainOrder(void)
+{
+	int32_t cell;
+	size_t s;
+
+	memset(chainorder_block, 0, sizeof (chainorder_block));
+	memset(chainorder_sector, 0, sizeof (chainorder_sector));
+	chainorder_ready = false;
+
+	if (blocklinks == NULL || sectors == NULL)
+		return;
+
+	for (cell = 0; cell < bmapwidth * bmapheight; cell++)
+	{
+		const mobj_t *mo;
+		uint32_t depth = 0;
+
+		for (mo = blocklinks[cell]; mo != NULL; mo = mo->bnext, depth++)
+		{
+			if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX || depth > UINT16_MAX)
+				continue;
+
+			chainorder_block[mo->mobjnum] = (uint16_t)depth;
+		}
+	}
+
+	for (s = 0; s < numsectors; s++)
+	{
+		const mobj_t *mo;
+		uint32_t depth = 0;
+
+		for (mo = sectors[s].thinglist; mo != NULL; mo = mo->snext, depth++)
+		{
+			if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX || depth > UINT16_MAX)
+				continue;
+
+			chainorder_sector[mo->mobjnum] = (uint16_t)depth;
+		}
+	}
+
+	chainorder_ready = true;
+}
+
+static void P_UnlinkFromBlockmap(mobj_t *mo)
+{
+	if (mo->bprev != NULL)
+	{
+		*mo->bprev = mo->bnext;
+
+		if (mo->bnext != NULL)
+			mo->bnext->bprev = mo->bprev;
+	}
+
+	mo->bnext = NULL;
+	mo->bprev = NULL;
+}
+
+static void P_UnlinkFromSector(mobj_t *mo)
+{
+	if (mo->sprev != NULL)
+	{
+		*mo->sprev = mo->snext;
+
+		if (mo->snext != NULL)
+			mo->snext->sprev = mo->sprev;
+	}
+
+	mo->snext = NULL;
+	mo->sprev = NULL;
+}
+
+/** Puts every archived object back in the order it was saved in.
+  *
+  * Relinks deepest first: each link goes to the head, so the object linked last
+  * ends up first, which is the one that was at depth zero.
+  *
+  * Called after everything is loaded and positioned, and only for a local
+  * restore.
+  */
+static void P_RestoreChainOrder(void)
+{
+	thinker_t *th;
+	mobj_t **ordered;
+	uint32_t count = 0;
+	uint32_t deepest = 0;
+	uint32_t depth;
+	uint32_t i;
+
+	if (chainorder_ready == false || blocklinks == NULL)
+		return;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX)
+			continue;
+
+		count++;
+	}
+
+	if (count == 0)
+		return;
+
+	ordered = (mobj_t **)Z_Malloc(sizeof (mobj_t *) * count, PU_STATIC, NULL);
+	if (ordered == NULL)
+		return;
+
+	count = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mo = (mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX)
+			continue;
+
+		ordered[count++] = mo;
+
+		if (chainorder_block[mo->mobjnum] > deepest)
+			deepest = chainorder_block[mo->mobjnum];
+
+		if (chainorder_sector[mo->mobjnum] > deepest)
+			deepest = chainorder_sector[mo->mobjnum];
+	}
+
+	// Deepest first, so that the head of each chain is the last one linked.
+	// Chains are short, so walking the set once per depth costs less than
+	// sorting it would.
+	for (depth = deepest + 1; depth-- > 0; )
+	{
+		for (i = 0; i < count; i++)
+		{
+			mobj_t *mo = ordered[i];
+
+			if (chainorder_block[mo->mobjnum] != depth)
+				continue;
+
+			// An object off the map, or one that never linked, stays that way.
+			if (mo->bprev == NULL && mo->bnext == NULL)
+				continue;
+
+			P_UnlinkFromBlockmap(mo);
+
+			// The same linking P_LinkToBlockMap does, which is static in
+			// p_maputl.c and so cannot be called from here.
+			{
+				const int32_t blockx = (unsigned)(mo->x - bmaporgx) >> MAPBLOCKSHIFT;
+				const int32_t blocky = (unsigned)(mo->y - bmaporgy) >> MAPBLOCKSHIFT;
+
+				if (blockx >= 0 && blockx < bmapwidth
+					&& blocky >= 0 && blocky < bmapheight)
+				{
+					mobj_t **link = &blocklinks[(blocky * bmapwidth) + blockx];
+
+					mo->bnext = *link;
+
+					if (mo->bnext != NULL)
+						mo->bnext->bprev = &mo->bnext;
+
+					mo->bprev = link;
+					*link = mo;
+				}
+			}
+		}
+
+		for (i = 0; i < count; i++)
+		{
+			mobj_t *mo = ordered[i];
+			mobj_t **link;
+
+			if (chainorder_sector[mo->mobjnum] != depth)
+				continue;
+
+			if (mo->subsector == NULL || (mo->sprev == NULL && mo->snext == NULL))
+				continue;
+
+			P_UnlinkFromSector(mo);
+
+			link = &mo->subsector->sector->thinglist;
+			mo->snext = *link;
+
+			if (mo->snext != NULL)
+				mo->snext->sprev = &mo->snext;
+
+			mo->sprev = link;
+			*link = mo;
+		}
+	}
+
+	Z_Free(ordered);
 }
 
 /** Archives one mobj on its own, for diagnostics.
@@ -5139,6 +5384,18 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 	P_SetThingPosition(mobj);
 
 	mobj->mobjnum = READUINT32(save->p);
+
+	if (localrestore)
+	{
+		const uint16_t inblock = READUINT16(save->p);
+		const uint16_t insector = READUINT16(save->p);
+
+		if (mobj->mobjnum < CHAINORDER_MAX)
+		{
+			chainorder_block[mobj->mobjnum] = inblock;
+			chainorder_sector[mobj->mobjnum] = insector;
+		}
+	}
 
 	if (mobj->player)
 	{
@@ -7658,6 +7915,10 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 		}
 	}
 
+	// After the numbering above, which the stamp indexes by.
+	if (local)
+		P_StampChainOrder();
+
 	K_SaveEndCamera(save);
 	WriteMobjPointer(g_endcam.panMobj);
 
@@ -7766,6 +8027,13 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 	current_savebuffer = save;
 	localrestore = local;
 
+	if (local)
+	{
+		memset(chainorder_block, 0, sizeof (chainorder_block));
+		memset(chainorder_sector, 0, sizeof (chainorder_sector));
+		chainorder_ready = true;
+	}
+
 	P_ProfileReset();
 
 	save->p += CV_LoadNetVars(save->p);
@@ -7809,6 +8077,12 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 
 		P_RelinkPointers();
 		P_ProfileStep("relink pointers");
+
+		if (local)
+		{
+			P_RestoreChainOrder();
+			P_ProfileStep("chain order");
+		}
 	}
 
 	ACS_UnArchive(save);
