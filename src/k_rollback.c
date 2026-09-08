@@ -222,6 +222,37 @@ static const char *K_MobjTypeName(mobjtype_t type)
 	return (name != NULL) ? name : "(unnamed type)";
 }
 
+// A comparison run inside a resimulation check cannot print as it goes: at
+// that point nobody knows yet whether the check will fail, and a clean
+// restore reports the same interpolation fields every time. So the findings
+// wait here and are printed only if the check does fail.
+#define HELD_MAX 6
+static char g_held[HELD_MAX][160];
+static uint32_t g_heldcount;
+static dboolean g_holdfindings;
+
+static void K_Finding(const char *text)
+{
+	if (g_holdfindings == false)
+	{
+		CONS_Printf("%s\n", text);
+		return;
+	}
+
+	if (g_heldcount < HELD_MAX)
+		strlcpy(g_held[g_heldcount++], text, sizeof (g_held[0]));
+}
+
+static void K_ReleaseFindings(void)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_heldcount; i++)
+		CONS_Printf("%s\n", g_held[i]);
+
+	g_heldcount = 0;
+}
+
 // ----------------------------------------------------------------------------
 // The hit trace
 //
@@ -420,17 +451,26 @@ static void K_CompareMobjs(const char *cmd)
 				na += snprintf(after + na, sizeof (after) - na, "%02x ", now[at + k]);
 			}
 
-			CONS_Printf("%s: %s #%u, %s bytes into mobj_t: %s bytes, %s-> %s\n",
-				cmd, K_MobjTypeName(mo->type), mo->mobjnum,
-				sizeu1(at), sizeu2(run), before, after);
+			{
+				char text[160];
+
+				snprintf(text, sizeof (text),
+					"%s: %s #%u, %s bytes into mobj_t: %s bytes, %s-> %s",
+					cmd, K_MobjTypeName(mo->type), mo->mobjnum,
+					sizeu1(at), sizeu2(run), before, after);
+				K_Finding(text);
+			}
 
 			reported++;
 			at += run;
 		}
 	}
 
-	CONS_Printf("%s: %u objects compared, %u appeared from nowhere, %u differences shown\n",
-		cmd, compared, missing, reported);
+	if (g_holdfindings == false || missing > 0)
+	{
+		CONS_Printf("%s: %u objects compared, %u appeared from nowhere, %u differences shown\n",
+			cmd, compared, missing, reported);
+	}
 }
 
 /** Reports one mobj reference that the archive will not preserve.
@@ -885,8 +925,14 @@ static void K_ComparePlayers(const char *cmd)
 					na += snprintf(after + na, sizeof (after) - na, "%02x ", now[at + k]);
 				}
 
-				CONS_Printf("%s: player %d, %s bytes into player_t: %s bytes, %s-> %s\n",
-					cmd, i, sizeu1(at), sizeu2(run), before, after);
+				{
+					char text[160];
+
+					snprintf(text, sizeof (text),
+						"%s: player %d, %s bytes into player_t: %s bytes, %s-> %s",
+						cmd, i, sizeu1(at), sizeu2(run), before, after);
+					K_Finding(text);
+				}
 
 				reported++;
 			}
@@ -1360,6 +1406,14 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	startedat = leveltime;
 
+	// The state as it stands, to be compared against the restored one. Held
+	// back rather than printed: a clean restore reports its interpolation
+	// fields every time, and only a failing check makes them worth reading.
+	g_holdfindings = true;
+	g_heldcount = 0;
+	K_CopyPlayers();
+	K_CopyMobjs();
+
 	// M_Random draws from the C library, whose state no archive can hold, and
 	// the game uses it for decoration -- item debris picks its rollangle that
 	// way. Two replays would then differ over something that is local by
@@ -1400,6 +1454,9 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	}
 
 	srand((unsigned int)gametic);
+	K_ComparePlayers("rollback_resim");
+	K_CompareMobjs("rollback_resim");
+
 	g_hittracing = 1;
 
 	started = I_GetPreciseTime();
@@ -1457,6 +1514,10 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 		K_ReportTrace("rollback_resim");
 
+		// What the restore itself did to the world, gathered before the replay
+		// ran and worth reading now that it went somewhere else.
+		K_ReleaseFindings();
+
 		if (identical == false)
 		{
 			if (repeatable)
@@ -1485,6 +1546,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 done:
 	g_hittracing = -1;
+	g_holdfindings = false;
 
 	Z_Free(first);
 	Z_Free(second);
