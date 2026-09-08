@@ -18,6 +18,7 @@
 #include "d_main.h"
 #include "doomstat.h"
 #include "g_game.h"
+#include "i_system.h" // I_GetPreciseTime(), for the load profile
 #include "m_random.h"
 #include "m_misc.h"
 #include "p_local.h"
