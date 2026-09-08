@@ -46,6 +46,7 @@ Northern District, Match Race, on a client that is drawing the game.
 | save | 0.8 ms | 0.9 ms |
 | restore, before the precipitation fix | 10.5 ms | 12.0 ms |
 | restore, after it | — | **5.6 ms** |
+| restore, with the chain order carried | — | 7.1 ms |
 | resimulation | 0.9 ms/tic | 1.7-2.1 ms/tic |
 
 Most of a snapshot is the map, about 1.2 KB per kart on top. Doubling the grid
@@ -81,6 +82,35 @@ diverging between two replays: `rotate3d` picks its rollangle with
 and is never archived. That is not a desync — nothing else agreed on that angle
 either — but it made the oracle cry wolf, so both passes now seed the C library
 identically. A real rollback will respin debris that was already in flight.
+
+**Determinism is not closed.** The soak, resimulating one tic and checking
+every ten, fails on roughly 5 percent of checks: a kart is hit on the live pass
+and not on the replay, and the two restored passes agree with each other, so the
+replay repeats and the restore is what loses something. Established so far:
+
+- Not randomness, not the thinker list, not the blockmap or sector chains. The
+  chain order genuinely changed across a restore and now does not; the failure
+  rate did not move, so ordering was a real difference but not the cause.
+- `oldcmd` was missing from the archive, which the gameplay code reads to tell a
+  button press from a button held. Carrying it helped, but a sample worth
+  trusting puts the rate at 5.5 percent against 7.6 before, so it was not the
+  dominant cause either.
+- The player structures come back correct. Comparing player_t in memory either
+  side of a restore -- which sees what comparing two archives cannot, since a
+  field the archive skips is equal on both sides by construction -- leaves only
+  alignment padding and the drawing angles.
+
+So the remaining cause is in the objects or in module globals, and the next step
+is the same memory comparison applied to mobjs, matched by mobjnum.
+
+Two techniques worth keeping:
+
+- Compare structures in memory, not archives, when hunting for state the archive
+  does not carry. Pointers differ legitimately; they sit on multiples of eight.
+- Field offsets come from the compiler, not from counting: one deliberately
+  invalid declaration per field (`char (*p)[offsetof(player_t, x)] = 1;`) makes
+  it report every offset in its error messages. 350 fields mapped at once,
+  without a local build of the game.
 
 ## Traps that have cost time
 
