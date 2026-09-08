@@ -55,16 +55,23 @@
 #include "r_state.h" // sectors
 #include "z_zone.h"
 
-// Nominal snapshot size: the same figure the engine already trusts for a full
-// netgame savegame of the same content.
-#define ROLLBACK_BUFSIZE (NETSAVEGAMESIZE)
+// Nominal snapshot size. NETSAVEGAMESIZE, which the netcode uses, is 768 KiB
+// and sized for the worst a netgame savegame can be. Measured snapshots of a
+// full sixteen-kart race come to 120 KiB, so the ring was reserving twenty
+// megabytes to carry two and a half -- enough of the zone that an unrelated
+// allocation failed and took the game down with "not enough memory for item
+// roulette list".
+//
+// A quarter of that, still twice the largest snapshot seen, and the slack
+// below still catches an overrun before it can reach the next slot.
+#define ROLLBACK_BUFSIZE (256*1024)
 
 // P_SaveNetGame writes through raw pointer macros with no bounds checking, so
 // an oversized state cannot be stopped mid-write. Each slot therefore carries
 // slack past its nominal size: a state that overruns ROLLBACK_BUFSIZE lands in
 // the slack instead of in the next slot, and is caught before anything else
 // has been corrupted.
-#define ROLLBACK_SLACK (256*1024)
+#define ROLLBACK_SLACK (64*1024)
 
 typedef struct
 {
@@ -392,7 +399,7 @@ static void K_CopyMobjs(void)
 
 	if (g_mobjcopy == NULL)
 	{
-		g_mobjcopy = (uint8_t *)Z_Malloc(sizeof (mobj_t) * 4096, PU_STATIC, NULL);
+		g_mobjcopy = (uint8_t *)Z_Malloc(sizeof (mobj_t) * 2048, PU_STATIC, NULL);
 		g_mobjslot = (uint16_t *)Z_Malloc(sizeof (uint16_t) * MOBJCOPY_MAX, PU_STATIC, NULL);
 	}
 
@@ -412,7 +419,7 @@ static void K_CopyMobjs(void)
 		if (mo->mobjnum == 0 || mo->mobjnum >= MOBJCOPY_MAX)
 			continue;
 
-		if (g_mobjcopies >= 4096)
+		if (g_mobjcopies >= 2048)
 			break;
 
 		memcpy(g_mobjcopy + (sizeof (mobj_t) * g_mobjcopies), mo, sizeof (mobj_t));
@@ -595,7 +602,7 @@ static void K_ReportLostReferences(void)
 // can be reported as an object and a diff bit instead of a number.
 // ----------------------------------------------------------------------------
 
-#define ROLLBACK_DIAGBYTES (1024*1024)
+#define ROLLBACK_DIAGBYTES (256*1024)
 #define ROLLBACK_DIAGRECS 8192
 
 typedef struct
@@ -1455,13 +1462,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	startedat = leveltime;
 
-	// The state as it stands, to be compared against the restored one. Held
-	// back rather than printed: a clean restore reports its interpolation
-	// fields every time, and only a failing check makes them worth reading.
 	g_holdfindings = true;
 	g_heldcount = 0;
-	K_CopyPlayers();
-	K_CopyMobjs();
 
 	// M_Random draws from the C library, whose state no archive can hold, and
 	// the game uses it for decoration -- item debris picks its rollangle that
@@ -1497,6 +1499,13 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	if (records)
 		K_CaptureRecords(&recsfirst);
 
+	// The world as the first pass left it. The restore itself has been shown
+	// clean often enough; what is unexplained is what the tic computes, so the
+	// two ends are what to compare -- and this sees the fields the archive
+	// does not carry, which a snapshot comparison never will.
+	K_CopyPlayers();
+	K_CopyMobjs();
+
 	if (!K_LoadGameState(gametic))
 	{
 		CONS_Printf("rollback_resim: could not get back to the starting state -- "
@@ -1505,9 +1514,6 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	}
 
 	srand((unsigned int)gametic);
-	K_ComparePlayers("rollback_resim");
-	K_CompareMobjs("rollback_resim");
-
 	g_hittracing = 1;
 
 	started = I_GetPreciseTime();
@@ -1523,6 +1529,9 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	if (records)
 		K_CaptureRecords(&recssecond);
+
+	K_ComparePlayers("rollback_resim");
+	K_CompareMobjs("rollback_resim");
 
 	// A third pass, from a restored state like the second. The first pass ran
 	// from the live world, and what the archive does not carry -- decoration,
