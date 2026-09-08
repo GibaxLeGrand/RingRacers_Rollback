@@ -534,6 +534,12 @@ static uint32_t K_HashOrder(dboolean blockmap)
 
 			for (mo = blocklinks[cell]; mo != NULL; mo = mo->bnext)
 			{
+				// Only what the archive carries. A restore does not recreate the
+				// rest, so counting it would report a different set as a different
+				// order, which is a different problem with a different fix.
+				if (mo->mobjnum == 0 || TypeIsNetSynced(mo->type) == false)
+					continue;
+
 				hash = (hash ^ mo->mobjnum) * 16777619u;
 			}
 		}
@@ -543,10 +549,15 @@ static uint32_t K_HashOrder(dboolean blockmap)
 
 	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
 	{
+		const mobj_t *mo = (const mobj_t *)th;
+
 		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
 			continue;
 
-		hash = (hash ^ ((const mobj_t *)th)->mobjnum) * 16777619u;
+		if (mo->mobjnum == 0 || TypeIsNetSynced(mo->type) == false)
+			continue;
+
+		hash = (hash ^ mo->mobjnum) * 16777619u;
 	}
 
 	return hash;
