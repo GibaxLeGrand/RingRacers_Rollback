@@ -4184,6 +4184,36 @@ DoABarrelRoll (player_t *player)
 
 	fixed_t smoothing;
 
+	// Only for a player somebody is looking at.
+	//
+	// tilt is read in exactly one place -- R_ViewRollAngle, for the view player
+	// -- so computing it for the other fifteen karts is wasted work. Worse, it
+	// is not deterministic: R_PointToAnglePlayer answers from the local camera
+	// for a display player and from viewx/viewy for everybody else, and those
+	// two are the renderer's interpolated view, rewritten once per drawn frame.
+	// The simulation runs at 35 tics a second; interpolation exists only to draw
+	// above that rate, and a tic reading it makes the world depend on when a
+	// frame happened to land. Measured: a replayed tic reads the value the pass
+	// before it left behind, and tilt is archived, so the check fails.
+	{
+		uint8_t view;
+		dboolean drawn = false;
+
+		for (view = 0; view <= r_splitscreen; view++)
+		{
+			if (player == &players[displayplayers[view]])
+			{
+				drawn = true;
+				break;
+			}
+		}
+
+		if (drawn == false)
+		{
+			return;
+		}
+	}
+
 	if (player->exiting || F_CreditsDemoExitFade() >= 0)
 	{
 		return;
