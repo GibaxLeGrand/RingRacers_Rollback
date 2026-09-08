@@ -268,7 +268,10 @@ static const char *K_MobjTypeName(mobjtype_t type)
 // in the table -- whose interpolation and HUD counters differ on every check,
 // failing or not -- so the player the check was actually about never got a
 // line.
-#define HELD_MAX 40
+// Forty was not enough either: a failing check dropped eleven to thirteen, and
+// the ones it dropped were the short, useful lines that come last. Raised, and
+// the report reordered so the cheap conclusions go in before the byte dumps.
+#define HELD_MAX 64
 static char g_held[HELD_MAX][160];
 static uint32_t g_heldcount;
 static uint32_t g_helddropped;
@@ -2110,9 +2113,11 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 		// The player structures at the end of both passes, now that the
 		// comparison above has named the player worth starting with.
+		// Attachments first: one line that names an object, ahead of two dozen
+		// lines of offsets and bytes.
+		K_ReportAttachments("rollback_resim", g_playercopy[0], g_playercopy[1]);
 		K_ComparePlayers("rollback_resim", g_playercopy[0], g_playercopy[1],
 			g_blamedplayer);
-		K_ReportAttachments("rollback_resim", g_playercopy[0], g_playercopy[1]);
 
 		// What the restore itself did to the world, gathered before the replay
 		// ran and worth reading now that it went somewhere else.

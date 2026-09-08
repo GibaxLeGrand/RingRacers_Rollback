@@ -70,6 +70,11 @@ static dboolean localsnapshot;
 // alone instead of being torn down and rebuilt.
 static dboolean localrestore;
 
+// Defined further down, next to the object archiver it was written for. The
+// players archiver needs it too: a player's pointer to an object is written
+// under the same rule as an object's pointer to another one.
+static inline dboolean MobjIsArchived(const mobj_t *mobj);
+
 // Defined with the rest of the load profiling, further down, but called from
 // the unarchiving functions above it.
 static void P_ProfileStep(const char *name);
@@ -393,61 +398,61 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 			WRITEUINT8(save->p, players[i].faultflash);
 		}
 
-		if (players[i].awayview.mobj)
+		if (MobjIsArchived(players[i].awayview.mobj))
 			flags |= AWAYVIEW;
 
-		if (players[i].followmobj)
+		if (MobjIsArchived(players[i].followmobj))
 			flags |= FOLLOWITEM;
 
-		if (players[i].follower)
+		if (MobjIsArchived(players[i].follower))
 			flags |= FOLLOWER;
 
-		if (players[i].skybox.viewpoint)
+		if (MobjIsArchived(players[i].skybox.viewpoint))
 			flags |= SKYBOXVIEW;
 
-		if (players[i].skybox.centerpoint)
+		if (MobjIsArchived(players[i].skybox.centerpoint))
 			flags |= SKYBOXCENTER;
 
-		if (players[i].hoverhyudoro)
+		if (MobjIsArchived(players[i].hoverhyudoro))
 			flags |= HOVERHYUDORO;
 
-		if (players[i].ballhogreticule)
+		if (MobjIsArchived(players[i].ballhogreticule))
 			flags |= BALLHOGRETICULE;
 
-		if (players[i].stumbleIndicator)
+		if (MobjIsArchived(players[i].stumbleIndicator))
 			flags |= STUMBLE;
 
-		if (players[i].wavedashIndicator)
+		if (MobjIsArchived(players[i].wavedashIndicator))
 			flags |= WAVEDASH;
 
-		if (players[i].trickIndicator)
+		if (MobjIsArchived(players[i].trickIndicator))
 			flags |= TRICKINDICATOR;
 
-		if (players[i].whip)
+		if (MobjIsArchived(players[i].whip))
 			flags |= WHIP;
 
-		if (players[i].hand)
+		if (MobjIsArchived(players[i].hand))
 			flags |= HAND;
 
-		if (players[i].ringShooter)
+		if (MobjIsArchived(players[i].ringShooter))
 			flags |= RINGSHOOTER;
 
-		if (players[i].flickyAttacker)
+		if (MobjIsArchived(players[i].flickyAttacker))
 			flags |= FLICKYATTACKER;
 
-		if (players[i].powerup.flickyController)
+		if (MobjIsArchived(players[i].powerup.flickyController))
 			flags |= FLICKYCONTROLLER;
 
-		if (players[i].powerup.barrier)
+		if (MobjIsArchived(players[i].powerup.barrier))
 			flags |= BARRIER;
 
-		if (players[i].stoneShoe)
+		if (MobjIsArchived(players[i].stoneShoe))
 			flags |= STONESHOE;
 
-		if (players[i].toxomisterCloud)
+		if (MobjIsArchived(players[i].toxomisterCloud))
 			flags |= TOXOMISTERCLOUD;
 
-		if (players[i].flybot)
+		if (MobjIsArchived(players[i].flybot))
 			flags |= FLYBOT;
 
 		WRITEUINT32(save->p, flags);
@@ -1177,57 +1182,93 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 
 		if (flags & SKYBOXVIEW)
 			players[i].skybox.viewpoint = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].skybox.viewpoint = NULL;
 
 		if (flags & SKYBOXCENTER)
 			players[i].skybox.centerpoint = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].skybox.centerpoint = NULL;
 
 		if (flags & AWAYVIEW)
 			players[i].awayview.mobj = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].awayview.mobj = NULL;
 
 		if (flags & FOLLOWITEM)
 			players[i].followmobj = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].followmobj = NULL;
 
 		if (flags & HOVERHYUDORO)
 			players[i].hoverhyudoro = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].hoverhyudoro = NULL;
 
 		if (flags & BALLHOGRETICULE)
 			players[i].ballhogreticule = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].ballhogreticule = NULL;
 
 		if (flags & STUMBLE)
 			players[i].stumbleIndicator = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].stumbleIndicator = NULL;
 
 		if (flags & WAVEDASH)
 			players[i].wavedashIndicator = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].wavedashIndicator = NULL;
 
 		if (flags & TRICKINDICATOR)
 			players[i].trickIndicator = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].trickIndicator = NULL;
 
 		if (flags & WHIP)
 			players[i].whip = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].whip = NULL;
 
 		if (flags & HAND)
 			players[i].hand = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].hand = NULL;
 
 		if (flags & RINGSHOOTER)
 			players[i].ringShooter = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].ringShooter = NULL;
 
 		if (flags & FLICKYATTACKER)
 			players[i].flickyAttacker = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].flickyAttacker = NULL;
 
 		if (flags & FLICKYCONTROLLER)
 			players[i].powerup.flickyController = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].powerup.flickyController = NULL;
 
 		if (flags & BARRIER)
 			players[i].powerup.barrier = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].powerup.barrier = NULL;
 
 		if (flags & STONESHOE)
 			players[i].stoneShoe = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].stoneShoe = NULL;
 
 		if (flags & TOXOMISTERCLOUD)
 			players[i].toxomisterCloud = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].toxomisterCloud = NULL;
 
 		if (flags & FLYBOT)
 			players[i].flybot = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].flybot = NULL;
 
 		players[i].followitem = (mobjtype_t)READUINT32(save->p);
 
