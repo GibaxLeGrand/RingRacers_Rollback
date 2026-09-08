@@ -46,7 +46,8 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source);
 
 // Records the end-of-tic copy of timeshit into timeshitprev, taken or not, with
 // the two values that decide it. Does nothing outside a check.
-void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag);
+void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag,
+	uint8_t timeshit, uint8_t timeshitprev);
 
 // Counts a pair of objects being tested against each other, while a check has
 // two passes to compare. Does nothing the rest of the time.

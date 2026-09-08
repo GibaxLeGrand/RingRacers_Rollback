@@ -176,6 +176,44 @@ That run also priced two things nobody had measured:
   know where the players block ends, so a difference in the thinkers block was
   reported as "player 15, 128934 bytes into their record". Both fixed.
 
+### What three soaks then settled
+
+Three 500-check soaks on RR_NorthernDistrict, sixteen karts, told apart by one
+thing: whether a person was driving.
+
+| | idle | **driving** | idle, cameras archived |
+|---|---|---|---|
+| failures | 34 / 500 | 144 / 550 | 36 / 500 |
+| replay not repeatable | 0 | **121** | 0 |
+| `tilt` named | 0 | **242** | **0** |
+| crash | the ring's size guard | -- | none |
+
+Driving makes the failure rate quadruple and turns almost every failure into a
+replay that is not repeatable -- two restored passes disagreeing with each
+other, which no amount of *archived* state can explain. Idle, it never happens.
+
+The difference is the camera. `player->tilt` is archived and is computed during
+the tic by `DoABarrelRoll`, through `R_PointToAnglePlayer`, which answers from
+the local camera; the camera is moved by the tic and was restored by nothing, so
+each pass started from wherever the pass before had left it. Standing still the
+camera does not move and nothing diverges. So the cameras now go into a local
+snapshot -- not into a netgame savegame, where no other machine has any use for
+them, but the tic reads them, which makes them state.
+
+The same runs fixed the crash that had been ending soaks all along. It was never
+about how much memory anything takes: `P_NetUnArchivePlayers` read the archived
+capacity of the item roulette list straight into the structure, destroying the
+size of the block the player already held, and then called `Z_Realloc`
+unconditionally. Sixteen lists, two restores per check, hundreds of checks. The
+list only grows now, and a 500-check soak finishes without dying.
+
+What is left is `timeshitprev`, 31 of the 36 remaining failures, and always the
+same shape: `timeshit` zero on both sides, `timeshitprev` 1 on the live pass and
+0 on the replay, across a dozen different players. Both passes agree on all
+sixteen traced copy decisions, hitlag and nullHitlag included -- so they differ
+over *what was copied*, not over whether to copy, and the trace now carries the
+values as well as the decision.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive

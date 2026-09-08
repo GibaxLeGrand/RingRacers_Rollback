@@ -4887,7 +4887,7 @@ void P_PlayerAfterThink(player_t *player)
 
 		K_RollbackTraceHitCopy((int32_t)(player - players), copied,
 			P_MobjWasRemoved(player->mo) ? 0 : player->mo->hitlag,
-			player->nullHitlag);
+			player->nullHitlag, player->timeshit, player->timeshitprev);
 
 		if (copied)
 		{

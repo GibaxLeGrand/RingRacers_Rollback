@@ -308,6 +308,8 @@ typedef struct
 	uint16_t source;
 	uint16_t a;
 	uint16_t b;
+	uint16_t c;
+	uint16_t d;
 } tracehit_t;
 
 static tracehit_t g_hittrace[2][TRACE_MAX];
@@ -367,6 +369,8 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
 	hit->source = source;
 	hit->a = 0;
 	hit->b = 0;
+	hit->c = 0;
+	hit->d = 0;
 }
 
 /** Records the end-of-tic copy of timeshit into timeshitprev, taken or not.
@@ -382,7 +386,8 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source)
   * decisions in both traces the entries line up and the report shows hitlag and
   * nullHitlag on each side of the disagreement.
   */
-void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag)
+void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag,
+	uint8_t timeshit, uint8_t timeshitprev)
 {
 	tracehit_t *hit;
 
@@ -403,6 +408,13 @@ void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int
 	hit->source = (copied ? 0 : 1); // 1 means the copy was skipped
 	hit->a = (uint16_t)((hitlag < 0) ? 0 : ((hitlag > 65535) ? 65535 : hitlag));
 	hit->b = (uint16_t)((nullhitlag < 0) ? 0 : ((nullhitlag > 65535) ? 65535 : nullhitlag));
+
+	// The values as well as the decision. Two passes that agree on every
+	// decision and still end the tic with different timeshitprev differ over
+	// what was copied, not over whether to copy -- and with only the decision
+	// recorded there was no way to tell those apart.
+	hit->c = timeshit;
+	hit->d = timeshitprev;
 }
 
 /** Says where two passes stopped agreeing about who got hit. */
@@ -429,15 +441,19 @@ static void K_ReportTrace(const char *cmd)
 
 		if (a->when == b->when && a->victim == b->victim
 			&& a->inflictor == b->inflictor && a->source == b->source
-			&& a->a == b->a && a->b == b->b)
+			&& a->a == b->a && a->b == b->b && a->c == b->c && a->d == b->d)
 			continue;
 
 		// For a judgement, flags bit 1 means invincible and bit 4 inside
 		// hitlag. For a skipped copy, the detail is hitlag and nullHitlag.
-		CONS_Printf("%s: event %u differs -- live: tic %u, player %u, %s, flags %u, detail %u/%u\n",
-			cmd, i, a->when, a->victim, K_TraceKindName(a->inflictor), a->source, a->a, a->b);
-		CONS_Printf("%s: event %u differs -- replay: tic %u, player %u, %s, flags %u, detail %u/%u\n",
-			cmd, i, b->when, b->victim, K_TraceKindName(b->inflictor), b->source, b->a, b->b);
+		CONS_Printf("%s: event %u differs -- live: tic %u, player %u, %s, flags %u, "
+			"hitlag %u/%u, timeshit %u/%u\n",
+			cmd, i, a->when, a->victim, K_TraceKindName(a->inflictor), a->source,
+			a->a, a->b, a->c, a->d);
+		CONS_Printf("%s: event %u differs -- replay: tic %u, player %u, %s, flags %u, "
+			"hitlag %u/%u, timeshit %u/%u\n",
+			cmd, i, b->when, b->victim, K_TraceKindName(b->inflictor), b->source,
+			b->a, b->b, b->c, b->d);
 		return;
 	}
 
@@ -449,11 +465,11 @@ static void K_ReportTrace(const char *cmd)
 		// Not a mobj type: the kind is what this field carries, and printing it
 		// as a type named an object that had nothing to do with anything.
 		CONS_Printf("%s: %u events live against %u on the replay -- the %s has %s at "
-			"tic %u on player %u, detail %u/%u\n",
+			"tic %u on player %u, hitlag %u/%u, timeshit %u/%u\n",
 			cmd, g_hittracecount[0], g_hittracecount[1],
 			(extra == 0 ? "live pass" : "replay"),
 			K_TraceKindName(only->inflictor),
-			only->when, only->victim, only->a, only->b);
+			only->when, only->victim, only->a, only->b, only->c, only->d);
 	}
 	else if (common > 0)
 	{
