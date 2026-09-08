@@ -181,7 +181,7 @@ dboolean K_LoadGameState(tic_t tic)
 	// reloading: keep the level in place, and keep the RNG seeds the archive
 	// restores instead of resetting them. Both are required for a rollback --
 	// replaying the same tics has to produce the same result.
-	return P_LoadNetGame(&save, true);
+	return P_LoadNetGame(&save, true, true);
 }
 
 // ----------------------------------------------------------------------------
@@ -535,7 +535,7 @@ static void K_PrintGrid(const char *cmd)
   * Shared by both tests: one puts a state through the archive and back, the
   * other runs the same tics twice, and both then ask the same question.
   *
-  * eturn true when the two are byte for byte the same.
+  * \return true when the two are byte for byte the same.
   */
 static dboolean K_ReportComparison(const char *cmd, const char *what,
 	const rollbackslot_t *a, const char *labela,

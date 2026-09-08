@@ -39,7 +39,9 @@ void P_GetBackupCupData(savebuffer_t *save);
 // does. It keeps the per-viewport visibility flags, which are stripped from
 // anything sent to another machine.
 void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local);
-dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading);
+// `local` says this restore is a rollback putting back a state this machine
+// took itself, so decoration local to the machine can be left in place.
+dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local);
 
 // Names the archive block that a byte offset of a P_SaveNetGame buffer falls
 // in. Diagnostic aid for comparing two snapshots of the same state.

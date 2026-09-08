@@ -1453,7 +1453,7 @@ static void CL_LoadReceivedSavegame(dboolean reloading)
 	automapactive = false;
 
 	// load a base level
-	if (P_LoadNetGame(&save, reloading))
+	if (P_LoadNetGame(&save, reloading, false))
 	{
 		if (!reloading)
 		{

@@ -64,6 +64,12 @@ static savebuffer_t *current_savebuffer;
 // the last snapshot did.
 static dboolean localsnapshot;
 
+// Set by P_LoadNetGame for a restore that stays on this machine: a rollback
+// putting back a state it took itself, rather than a gamestate arriving from
+// the network. Decoration that is local to this machine can then be left
+// alone instead of being torn down and rebuilt.
+static dboolean localrestore;
+
 // Block UINT32s to attempt to ensure that the correct data is
 // being sent and received
 #define ARCHIVEBLOCK_MISC			0x7FEEDEED
@@ -5850,6 +5856,13 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 	// remove all the current thinkers
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
+		// Precipitation is never archived, so purging it here means it can only
+		// come back by being respawned wholesale. A local restore keeps what it
+		// already has: rain that carries on falling across a rollback is both
+		// free and less noticeable than rain that restarts.
+		if (localrestore && i == THINK_PRECIP)
+			continue;
+
 		for (currentthinker = thlist[i].next; currentthinker != &thlist[i]; currentthinker = next)
 		{
 			next = currentthinker->next;
@@ -6472,10 +6485,21 @@ static void P_NetUnArchiveSpecials(savebuffer_t *save)
 
 	if (globalweather)
 	{
-		if (curWeather == globalweather)
-			curWeather = PRECIP_NONE;
+		// Rebuilding the weather means spawning every raindrop on the map again,
+		// which measures at 4.3 ms of an 12 ms restore on Northern District --
+		// a third of the whole cost. It is done unconditionally because a
+		// gamestate arriving from the network has just had its precipitation
+		// purged with the rest of the thinkers, and precipitation is never
+		// archived, so it has to be recreated from nothing. A local restore
+		// keeps its own precipitation instead, so when the weather has not
+		// changed there is nothing to do at all.
+		if (localrestore == false || curWeather != globalweather)
+		{
+			if (curWeather == globalweather)
+				curWeather = PRECIP_NONE;
 
-		P_SwitchWeather(globalweather);
+			P_SwitchWeather(globalweather);
+		}
 	}
 	else // PRECIP_NONE
 	{
@@ -7718,11 +7742,12 @@ badloadgame:
 	return false;
 }
 
-dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading)
+dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 {
 	TracyCZone(__zone, true);
 
 	current_savebuffer = save;
+	localrestore = local;
 
 	P_ProfileReset();
 
