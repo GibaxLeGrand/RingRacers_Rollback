@@ -667,7 +667,7 @@ void ReadLmpExtraData(uint8_t **demo_pointer, int32_t playernum)
 // end extra data function for lmps
 // -----------------------------------------------------------------
 
-static int16_t Consistancy(void);
+int16_t Consistancy(void);
 
 typedef enum
 {
@@ -6218,7 +6218,7 @@ static void GetPackets(void)
 // no more use random generator, because at very first tic isn't yet synchronized
 // Note: It is called consistAncy on purpose.
 //
-static int16_t Consistancy(void)
+int16_t Consistancy(void)
 {
 	int32_t i;
 	uint32_t ret = 0;

@@ -705,6 +705,11 @@ void D_ResetTiccmds(void);
 void D_ResetTiccmdAngle(uint8_t ss, angle_t angle);
 ticcmd_t *D_LocalTiccmd(uint8_t ss);
 
+/* Hash of the parts of the game state the netcode compares between
+   machines. Exposed for the rollback netcode, which uses it to check a
+   restored state against the one it was taken from. */
+int16_t Consistancy(void);
+
 tic_t GetLag(int32_t node);
 uint8_t GetFreeXCmdSize(uint8_t playerid);
 
