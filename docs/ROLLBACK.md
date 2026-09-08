@@ -100,8 +100,22 @@ replay repeats and the restore is what loses something. Established so far:
   field the archive skips is equal on both sides by construction -- leaves only
   alignment padding and the drawing angles.
 
-So the remaining cause is in the objects or in module globals, and the next step
-is the same memory comparison applied to mobjs, matched by mobjnum.
+The objects come back correct too, compared the same way: only the thinker
+bookkeeping and old_scale2 differ. And the comparison now runs *inside* a
+resimulation check rather than at an idle moment, holding its findings back and
+printing them only when that check fails — at which point the players differ
+only in karthud, the HUD timers, and their interpolation angles.
+
+So a restore reproduces the simulation state. What differs is what happens next:
+a hit trace, recording every time the damage path counts a hit, takes it back, or
+judges a player invincible, shows the two passes agreeing on every event they
+share and the replay having **more of them**. Ten against twenty in one sample,
+two against four in another.
+
+More damage attempts from an identical world. That points at collision detection
+running over a different set of pairs, which is where to look next — the attempt,
+not the judgement and not the state. The failure rate meanwhile is 2.7 percent
+over 590 checks, down from 7.6.
 
 Two techniques worth keeping:
 
