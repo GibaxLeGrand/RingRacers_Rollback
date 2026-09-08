@@ -1063,9 +1063,10 @@ void K_RollbackSoakTicker(void)
 		CONS_Printf("rollback_soak: FAILURE at leveltime %u -- %u of %u checks have failed\n",
 			leveltime, g_soakfailures, g_soakchecks);
 	}
-	else if ((g_soakchecks % 50) == 0)
+	else if ((g_soakchecks % 10) == 0)
 	{
-		// Proof of life, rare enough not to drown the failures.
+		// Proof of life. Silence has to be distinguishable from a soak that is
+		// not running at all, which is a mistake I have already made once.
 		CONS_Printf("rollback_soak: %u checks, %u failures\n", g_soakchecks, g_soakfailures);
 	}
 
