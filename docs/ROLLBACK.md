@@ -121,10 +121,39 @@ simulation, which also buries the ordering theory for good.
 So: identical state, identical pairs in identical order, identical damage
 verdicts, different outcome. What differs is a value computed during the tic,
 and the memory comparison now runs at the far end of both passes rather than at
-the restore. That reading has not been taken yet. The failure rate is 2.7 percent
-over 590 checks, down from 7.6.
+the restore. The failure rate is 2.7 percent over 590 checks, down from 7.6.
 
-Two techniques worth keeping:
+That reading has now been taken -- out of the last soak's log, which had it all
+along; the crash killed the run, not the reading. Twenty failures in 120 checks,
+and every report named the same four offsets, none of which mattered, because
+the instrument was throwing away what did. It kept six findings and dropped the
+rest silently; it scanned from player zero with a quota of eight, so the six
+that survived were always the interpolation and HUD counters of players 0, 1 and
+2, which differ on every check because no archive carries them; it reported a
+run only when it did not begin on a multiple of eight, meaning to skip pointers,
+which discarded every field that begins on one and reported pointer bytes as
+fields whenever their low byte happened to match; and its crib line asked one
+`sizeu` buffer for two of its values, so `cmd` and `faultflash` were both
+reported at 892. The players whose archived record actually diverged, eleven and
+thirteen, were never looked at.
+
+Decoded by hand from the same log, the archived divergences are two named
+fields:
+
+- **`player->tilt`**, the camera lean. It is archived, and it is computed during
+  the tic: `DoABarrelRoll` calls `R_GetPitchRollAngle`, which for anyone who is
+  not a local display player reads `viewx`/`viewy` -- renderer globals the frame
+  interpolator writes, at frame rate, from wherever the camera was when the last
+  frame was drawn. Nothing in the simulation reads tilt; only the camera does.
+  The same call is made by `K_trickPanelTimingVisual`, which uses it to place
+  the MT_THOK sprites it spawns -- so local view state reaches the positions of
+  archived objects. That is the third of this family, after the render flags and
+  the per-screen visibility bits.
+- **`player->timeshitprev`**. This one is a real divergence. `timeshit` counts
+  the hits taken during a tic and is copied into `timeshitprev` at the end of
+  it, so a difference of one means one pass took a hit the other did not.
+
+Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive
   does not carry. Pointers differ legitimately; they sit on multiples of eight.
@@ -132,6 +161,12 @@ Two techniques worth keeping:
   invalid declaration per field (`char (*p)[offsetof(player_t, x)] = 1;`) makes
   it report every offset in its error messages. 350 fields mapped at once,
   without a local build of the game.
+- Better still, from the build itself. The CI publishes a `.pdb` beside the
+  Windows exe, and the game leaves a `.dmp` when it dies, so
+  `cdb -z <dump> -y <game folder> -c ".reload /f; dt <module>!player_t"` prints
+  the exact layout of the build that wrote the log -- 352 fields, the module
+  name's hyphens turned into underscores. It is trustworthy rather than merely
+  plausible because the five offsets the game prints itself agree with it.
 
 ## Traps that have cost time
 
@@ -150,13 +185,18 @@ Two techniques worth keeping:
   on it made the ring reserve 20 MB to carry 2.5, and the game died on "not
   enough memory for item roulette list" — an allocation with nothing to do with
   any of this.
-- **A new instrument lies.** Five times in one day: a profile from a map I had
+- **`sizeu1` to `sizeu5` are five buffers, not five formats.** Asking the same
+  one twice in a single call prints the same number twice, without a warning
+  from anything.
+- **A new instrument lies.** Six times now: a profile from a map I had
   not checked, a soak on a server that was not racing, an order comparison
   against an empty list, an offset extractor pairing names to the wrong
-  offsets, and a third pass counting into the replay's tally so every figure
-  came out exactly double. A diagnostic must state the size of what it
-  examined, and a suspiciously round ratio is an instrumentation fault until
-  proven otherwise.
+  offsets, a third pass counting into the replay's tally so every figure came
+  out exactly double, and a comparison that discarded most of what it found and
+  spent the rest of its quota on players nobody had asked about. A diagnostic
+  must state the size of what it examined, a suspiciously round ratio is an
+  instrumentation fault until proven otherwise, and whatever a diagnostic
+  filters out it must count and report.
 - **Playing during a soak** stutters and misfires anything edge-triggered — ring
   usage, item throws — because the replayed passes use frozen inputs. Use
   `play.cfg`, or `rollback_soak 0`.
@@ -228,14 +268,31 @@ Which is a design lesson worth more than the crash: a restored state should not
 contain dynamically allocated sub-objects, or every rollback pays for
 reallocating them. Fixed capacity, or a pool.
 
-Two ways on from here:
+The comparison at the far end of both passes has now been read, and the
+instrument that was hiding it has been fixed: it no longer discards a finding
+without counting it, it starts at the player the archive comparison blamed, and
+`P_NamePlayerField` names the field rather than giving its distance into a
+record. What that reading found is above -- `tilt` and `timeshitprev`.
 
-1. Read the memory comparison taken at the far end of both passes. The code is
-   in and has never produced a reading, because every run that would have
-   printed one died on the allocator first. It is the last unexamined place for
-   the remaining 2.7 percent.
-2. Or start step 3 and hook the tic loop behind a switch. Snapshots cost 0.8 ms,
-   restores 6 ms, and determinism holds on 97 percent of checks. A real rollback
-   replaying real inputs would also be a better test than the frozen-input one,
-   which demonstrably misfires anything edge-triggered -- ring usage misbehaves
-   visibly when a soak runs under a human player.
+Three ways on from here:
+
+1. Run a soak on the build that names fields and read the list. Everything so
+   far was decoded by hand out of one log; the tool should now produce the same
+   answer by itself, on every failing check, for every player. That is also the
+   check on the naming table, which is a copy of the archiver and can drift from
+   it: if it names a field whose value makes no sense, it has drifted.
+2. Decide what to do about `tilt`. Nothing in the simulation reads it, so the
+   honest fix is to keep local view state out of what a local snapshot compares,
+   the way the render flags were handled -- but that is treating a symptom until
+   it is understood why two passes with no frame drawn between them, and with
+   identical objects, arrive at different values. `viewx` and `viewy` cannot
+   move during a resimulation. Something else does.
+3. `timeshitprev` is the one that matters: a hit landed in one pass and not in
+   the other, which is a real divergence and not a cosmetic one. The hit trace
+   already exists and already agrees on every event the passes share, so what to
+   trace is the attempt that only one pass makes.
+
+Step 3 -- hooking the tic loop behind a switch -- remains available and may be
+the better revealer: snapshots cost 0.8 ms, restores 6 ms, determinism holds on
+97 percent of checks, and a real rollback replaying real inputs would not
+misfire everything edge-triggered the way the frozen-input test does.
