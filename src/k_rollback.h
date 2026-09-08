@@ -49,6 +49,11 @@ void K_RollbackTraceHit(int32_t victim, uint16_t inflictor, uint16_t source);
 void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int32_t nullhitlag,
 	uint8_t timeshit, uint8_t timeshitprev);
 
+// Records what the camera lean was computed from, and what came out. Does
+// nothing outside a check.
+void K_RollbackTraceTilt(int32_t who, uint32_t vx, uint32_t vy,
+	uint32_t pitch, uint32_t roll, uint32_t slope, uint32_t tilt);
+
 // Counts a pair of objects being tested against each other, while a check has
 // two passes to compare. Does nothing the rest of the time.
 void K_RollbackTraceCollide(uint32_t one, uint32_t two);

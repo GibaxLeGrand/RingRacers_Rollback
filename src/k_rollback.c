@@ -310,6 +310,11 @@ typedef struct
 	uint16_t b;
 	uint16_t c;
 	uint16_t d;
+
+	// For values that do not fit in sixteen bits: angles, coordinates. Reading
+	// what a computation actually read beats reasoning about which of its
+	// inputs could have moved.
+	uint32_t v[6];
 } tracehit_t;
 
 static tracehit_t g_hittrace[2][TRACE_MAX];
@@ -325,6 +330,7 @@ static const char *K_TraceKindName(uint16_t kind)
 		case 1: return "a hit taken back";
 		case 2: return "a damage judgement";
 		case 3: return "the end-of-tic hit copy";
+		case 4: return "the tilt computation";
 		default: return "an event of an unknown kind";
 	}
 }
@@ -417,6 +423,47 @@ void K_RollbackTraceHitCopy(int32_t victim, dboolean copied, int32_t hitlag, int
 	hit->d = timeshitprev;
 }
 
+/** Records what DoABarrelRoll read, and what it produced.
+  *
+  * player->tilt is archived, so a difference in it fails a check -- and it has
+  * been failing them from a starting state the restore is known to reproduce,
+  * with frozen inputs, on players that are not display players. Every input it
+  * is built from is either archived or a renderer global that cannot move with
+  * no frame drawn between the passes, which is a contradiction rather than an
+  * explanation. So: record the inputs instead of arguing about them.
+  */
+void K_RollbackTraceTilt(int32_t who, uint32_t vx, uint32_t vy,
+	uint32_t pitch, uint32_t roll, uint32_t slope, uint32_t tilt)
+{
+	tracehit_t *hit;
+
+	if (g_hittracing < 0)
+		return;
+
+	if (g_hittracecount[g_hittracing] >= TRACE_MAX)
+	{
+		g_tracedropped[g_hittracing]++;
+		return;
+	}
+
+	hit = &g_hittrace[g_hittracing][g_hittracecount[g_hittracing]++];
+
+	hit->when = leveltime;
+	hit->victim = (uint8_t)who;
+	hit->inflictor = 4;
+	hit->source = 0;
+	hit->a = 0;
+	hit->b = 0;
+	hit->c = 0;
+	hit->d = 0;
+	hit->v[0] = vx;
+	hit->v[1] = vy;
+	hit->v[2] = pitch;
+	hit->v[3] = roll;
+	hit->v[4] = slope;
+	hit->v[5] = tilt;
+}
+
 /** Says where two passes stopped agreeing about who got hit. */
 static void K_ReportTrace(const char *cmd)
 {
@@ -441,8 +488,22 @@ static void K_ReportTrace(const char *cmd)
 
 		if (a->when == b->when && a->victim == b->victim
 			&& a->inflictor == b->inflictor && a->source == b->source
-			&& a->a == b->a && a->b == b->b && a->c == b->c && a->d == b->d)
+			&& a->a == b->a && a->b == b->b && a->c == b->c && a->d == b->d
+			&& memcmp(a->v, b->v, sizeof (a->v)) == 0)
 			continue;
+
+		if (a->inflictor == 4 || b->inflictor == 4)
+		{
+			CONS_Printf("%s: event %u differs -- live: tic %u, player %u, %s, "
+				"view %08x/%08x, pitch %08x, roll %08x, slope %08x, tilt %08x\n",
+				cmd, i, a->when, a->victim, K_TraceKindName(a->inflictor),
+				a->v[0], a->v[1], a->v[2], a->v[3], a->v[4], a->v[5]);
+			CONS_Printf("%s: event %u differs -- replay: tic %u, player %u, %s, "
+				"view %08x/%08x, pitch %08x, roll %08x, slope %08x, tilt %08x\n",
+				cmd, i, b->when, b->victim, K_TraceKindName(b->inflictor),
+				b->v[0], b->v[1], b->v[2], b->v[3], b->v[4], b->v[5]);
+			return;
+		}
 
 		// For a judgement, flags bit 1 means invincible and bit 4 inside
 		// hitlag. For a skipped copy, the detail is hitlag and nullHitlag.

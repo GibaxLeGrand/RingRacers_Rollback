@@ -4180,6 +4180,7 @@ DoABarrelRoll (player_t *player)
 
 	angle_t slope;
 	angle_t delta;
+	angle_t raw;
 
 	fixed_t smoothing;
 
@@ -4199,7 +4200,8 @@ DoABarrelRoll (player_t *player)
 		return;
 	}
 
-	slope = InvAngle(R_GetPitchRollAngle(player->mo, player));
+	raw = R_GetPitchRollAngle(player->mo, player);
+	slope = InvAngle(raw);
 
 	if (AbsAngle(slope) < ANGLE_11hh)
 	{
@@ -4231,6 +4233,14 @@ DoABarrelRoll (player_t *player)
 		player->tilt += delta;
 	else
 		player->tilt  = slope;
+
+	// What this read, and what it produced. tilt is archived, so when two
+	// passes disagree about it the question is which of its inputs moved --
+	// and every candidate has been argued to be impossible, which means one
+	// of the arguments is wrong.
+	K_RollbackTraceTilt((int32_t)(player - players), (uint32_t)viewx, (uint32_t)viewy,
+		(uint32_t)player->mo->pitch, (uint32_t)player->mo->roll,
+		(uint32_t)raw, (uint32_t)player->tilt);
 }
 
 void P_TickAltView(altview_t *view)
