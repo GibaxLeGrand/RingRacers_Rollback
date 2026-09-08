@@ -32,6 +32,10 @@ dboolean K_LoadGameState(tic_t tic);
 
 void K_RegisterRollbackStuff(void);
 
+// Runs a resimulation check when the soak is on and one is due. Called once
+// per tic; does nothing at all unless rollback_soak has been turned on.
+void K_RollbackSoakTicker(void);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

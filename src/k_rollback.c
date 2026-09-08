@@ -754,7 +754,7 @@ static void Command_RollbackTest_f(void)
 }
 
 // ----------------------------------------------------------------------------
-// rollback_resim
+// rollback_resim, and the soak that runs it by itself
 // ----------------------------------------------------------------------------
 
 /** Runs a number of tics with the inputs held fixed.
@@ -786,10 +786,9 @@ static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
 	}
 }
 
-/** Console command: rollback_resim [tics]
+/** Runs the same tics twice from the same state and compares where they end up.
   *
-  * Runs the same tics twice from the same state and compares where they end
-  * up: snapshot, play N tics, snapshot, restore, play the same N tics again,
+  * Snapshot, play N tics, snapshot, restore, play the same N tics again,
   * snapshot, compare the two endings byte for byte.
   *
   * This is the question rollback_test cannot answer. That one proves the
@@ -797,17 +796,18 @@ static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
   * everything the simulation needs. A field nobody archives is missing from
   * both sides of a round trip and compares equal, but a resimulation starting
   * from a state that lost it goes somewhere else -- which is the failure that
-  * would end this approach, so it is worth finding early.
+  * would end this approach.
   *
-  * It also measures a tic of simulation, which together with the restore cost
-  * is what says how many tics of rollback fit in a frame.
+  * The world is put back where this found it, so a check does not leave the
+  * level ahead of the tic the netcode believes it is on. Sounds and screen
+  * effects from both passes do play, though: they are not part of the state,
+  * so nothing rewinds them.
   *
-  * The world is put back where the command found it, so running this does not
-  * leave the level ahead of the tic the netcode believes it is on. Sounds and
-  * screen effects from both passes do play, though: they are not part of the
-  * state, so nothing rewinds them.
+  * \param verbose prints the grid and the timings even when nothing is wrong.
+  *        A failure reports itself either way.
+  * \return true if both passes ended in the same state.
   */
-static void Command_RollbackResim_f(void)
+static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 {
 	rollbackslot_t *first, *second;
 	diagset_t recsfirst = {0}, recssecond = {0};
@@ -815,29 +815,25 @@ static void Command_RollbackResim_f(void)
 	precise_t started;
 	uint32_t firstus, secondus;
 	tic_t startedat;
-	int32_t tics = 4;
 	int32_t i;
 	dboolean records;
+	dboolean identical = false;
 
 	if (gamestate != GS_LEVEL)
 	{
 		CONS_Printf("You must be in a level to use this.\n");
-		return;
+		return false;
 	}
 
-	if (COM_Argc() > 1)
-	{
-		tics = atoi(COM_Argv(1));
+	if (tics < 1)
+		tics = 1;
 
-		if (tics < 1)
-			tics = 1;
+	// Past the ring's depth the exercise stops resembling a rollback.
+	if (tics > ROLLBACK_TICS)
+		tics = ROLLBACK_TICS;
 
-		// Past the ring's depth the exercise stops resembling a rollback.
-		if (tics > ROLLBACK_TICS)
-			tics = ROLLBACK_TICS;
-	}
-
-	K_PrintGrid("rollback_resim");
+	if (verbose)
+		K_PrintGrid("rollback_resim");
 
 	first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 	second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
@@ -905,14 +901,28 @@ static void Command_RollbackResim_f(void)
 	if (records)
 		K_CaptureRecords(&recssecond);
 
-	CONS_Printf("rollback_resim: %d tics took %u us, then %u us -- %u us per tic\n",
-		tics, firstus, secondus, secondus / (uint32_t)tics);
+	if (verbose)
+	{
+		CONS_Printf("rollback_resim: %d tics took %u us, then %u us -- %u us per tic\n",
+			tics, firstus, secondus, secondus / (uint32_t)tics);
+	}
 
-	K_ReportComparison("rollback_resim", "resimulation",
-		first, "first pass", second, "second pass",
-		&recsfirst, &recssecond, records);
+	identical = (first->used == second->used
+		&& memcmp(first->buffer, second->buffer, first->used) == 0);
 
-	// Back to where the command found the world.
+	// Silence is the point of a soak: thousands of passes should say nothing,
+	// so that the one failure is impossible to miss.
+	if (verbose || identical == false)
+	{
+		if (identical == false)
+			K_PrintGrid("rollback_resim");
+
+		K_ReportComparison("rollback_resim", "resimulation",
+			first, "first pass", second, "second pass",
+			&recsfirst, &recssecond, records);
+	}
+
+	// Back to where this found the world.
 	if (!K_LoadGameState(gametic))
 	{
 		CONS_Printf("rollback_resim: WARNING - could not restore the starting state, "
@@ -924,6 +934,121 @@ done:
 	Z_Free(second);
 	K_FreeDiagSet(&recsfirst);
 	K_FreeDiagSet(&recssecond);
+
+	return identical;
+}
+
+/** Console command: rollback_resim [tics] */
+static void Command_RollbackResim_f(void)
+{
+	int32_t tics = 4;
+
+	if (COM_Argc() > 1)
+		tics = atoi(COM_Argv(1));
+
+	K_ResimCheck(tics, true);
+}
+
+// ----------------------------------------------------------------------------
+// The soak
+//
+// One resimulation on a starting grid proves very little. The archive only has
+// to miss a field that nothing touches at the start of a race -- an item in
+// flight, hitlag, a respawn, a lap counter -- for the check to pass every time
+// and the approach to still be broken. So run it over and over, through whole
+// races, and say nothing until something disagrees.
+// ----------------------------------------------------------------------------
+
+static int32_t g_soakinterval;  // tics between checks, 0 when off
+static int32_t g_soaktics;      // tics resimulated per check
+static dboolean g_soakbusy;     // a check is running; do not start another
+static uint32_t g_soakchecks;
+static uint32_t g_soakfailures;
+
+/** Console command: rollback_soak [interval] [tics]
+  *
+  * With no arguments, reports what the soak has seen so far. An interval of 0
+  * turns it off.
+  */
+static void Command_RollbackSoak_f(void)
+{
+	if (COM_Argc() <= 1)
+	{
+		if (g_soakinterval == 0)
+		{
+			CONS_Printf("rollback_soak: off. %u checks so far, %u failures.\n",
+				g_soakchecks, g_soakfailures);
+		}
+		else
+		{
+			CONS_Printf("rollback_soak: every %d tics, resimulating %d. "
+				"%u checks so far, %u failures.\n",
+				g_soakinterval, g_soaktics, g_soakchecks, g_soakfailures);
+		}
+		return;
+	}
+
+	g_soakinterval = atoi(COM_Argv(1));
+
+	if (g_soakinterval < 0)
+		g_soakinterval = 0;
+
+	if (COM_Argc() > 2)
+		g_soaktics = atoi(COM_Argv(2));
+
+	if (g_soaktics < 1)
+		g_soaktics = 4;
+
+	if (g_soakinterval == 0)
+	{
+		CONS_Printf("rollback_soak: stopped after %u checks, %u failures.\n",
+			g_soakchecks, g_soakfailures);
+		return;
+	}
+
+	g_soakchecks = 0;
+	g_soakfailures = 0;
+
+	CONS_Printf("rollback_soak: checking every %d tics, resimulating %d tics each time. "
+		"Silence means agreement.\n", g_soakinterval, g_soaktics);
+}
+
+/** Runs a soak check when one is due. Called once per tic from G_Ticker.
+  *
+  * A check costs far more than the tic it runs in -- two resimulations and two
+  * restores -- so the game will not keep real time while the soak is on. That
+  * is fine where this is meant to run, which is a dedicated server with nobody
+  * watching.
+  */
+void K_RollbackSoakTicker(void)
+{
+	if (g_soakinterval == 0 || gamestate != GS_LEVEL)
+		return;
+
+	// A check resimulates tics, and those tics must not start checks of their own.
+	if (g_soakbusy)
+		return;
+
+	if ((leveltime % (tic_t)g_soakinterval) != 0)
+		return;
+
+	g_soakbusy = true;
+
+	g_soakchecks++;
+
+	if (K_ResimCheck(g_soaktics, false) == false)
+	{
+		g_soakfailures++;
+		CONS_Printf("rollback_soak: FAILURE at leveltime %u -- %u of %u checks have failed\n",
+			leveltime, g_soakfailures, g_soakchecks);
+	}
+	else if ((g_soakchecks % 50) == 0)
+	{
+		// Proof of life, rare enough not to drown the failures.
+		CONS_Printf("rollback_soak: %u checks, %u failures\n", g_soakchecks, g_soakfailures);
+	}
+
+	g_soakbusy = false;
 }
 
 void K_RegisterRollbackStuff(void)
@@ -933,4 +1058,5 @@ void K_RegisterRollbackStuff(void)
 	// be reached without typing into the console.
 	COM_AddDebugCommand("rollback_test", Command_RollbackTest_f);
 	COM_AddDebugCommand("rollback_resim", Command_RollbackResim_f);
+	COM_AddDebugCommand("rollback_soak", Command_RollbackSoak_f);
 }

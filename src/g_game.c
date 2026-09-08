@@ -61,6 +61,7 @@
 #include "k_boss.h"
 #include "k_specialstage.h"
 #include "k_bot.h"
+#include "k_rollback.h"
 #include "doomstat.h"
 #include "k_director.h"
 #include "k_podium.h"
@@ -2035,6 +2036,7 @@ void G_Ticker(dboolean run)
 			if (demo.attract)
 				F_AttractDemoTicker();
 			P_Ticker(run); // tic the game
+			K_RollbackSoakTicker(); // does nothing unless rollback_soak is on
 			F_TextPromptTicker();
 			AM_Ticker();
 			HU_Ticker();
