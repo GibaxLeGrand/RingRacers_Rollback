@@ -8549,6 +8549,12 @@ const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t play
 		FIELD(1, "faultflash");
 	}
 
+	// Which objects are attached to this player. Past here the record's shape
+	// depends on this word, so the walk stops -- but naming the word itself is
+	// worth the two lines: the last two failures of a played race were a bit
+	// in it, and reading that took a hex window and the enum by hand.
+	FIELD(4, "flags (which objects are attached)");
+
 #undef FIELD
 
 	return NULL;

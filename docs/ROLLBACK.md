@@ -286,6 +286,15 @@ either. What ended it was deciding that neither belongs in a snapshot at all.
 The check that says the run counted: no "the world did not advance", the soak
 counting its way up from ten, and the commit's own sha in the binary that ran.
 
+With the cameras restored again -- beside the archive, not inside it, so they
+are put back without being compared -- a played race gives **2 failures in 500,
+0.4 percent**, the same rate as idle, and the camera stops jerking.
+
+Both are the same thing: a bit in the player record's `flags` word, which says
+which objects are attached. 0x20d8 became 0x22d8 -- `WHIP`. So the whip object
+is attached on one pass and not on the other, which is the first survivor that
+is not decoration.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive
