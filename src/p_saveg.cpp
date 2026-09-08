@@ -368,6 +368,14 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		{
 			WRITEMEM(save->p, &players[i].cmd, sizeof (ticcmd_t));
 			WRITEMEM(save->p, &players[i].oldcmd, sizeof (ticcmd_t));
+
+			// The rest of what the wire format leaves out and drawing does not
+			// own. A local snapshot has no reason to skip anything the
+			// simulation reads.
+			WRITEINT32(save->p, players[i].SPBdistance);
+			WRITEFIXED(save->p, players[i].itemscale);
+			WRITEUINT8(save->p, players[i].enteredGame);
+			WRITEUINT8(save->p, players[i].faultflash);
 		}
 
 		if (players[i].awayview.mobj)
@@ -1117,6 +1125,11 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		{
 			READMEM(save->p, &players[i].cmd, sizeof (ticcmd_t));
 			READMEM(save->p, &players[i].oldcmd, sizeof (ticcmd_t));
+
+			players[i].SPBdistance = READINT32(save->p);
+			players[i].itemscale = READFIXED(save->p);
+			players[i].enteredGame = READUINT8(save->p);
+			players[i].faultflash = READUINT8(save->p);
 		}
 
 		flags = READUINT32(save->p);
@@ -3810,6 +3823,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 
 		WRITEUINT16(save->p, (num < CHAINORDER_MAX) ? chainorder_block[num] : 0);
 		WRITEUINT16(save->p, (num < CHAINORDER_MAX) ? chainorder_sector[num] : 0);
+
+		WRITEFIXED(save->p, mobj->floordrop);
+		WRITEFIXED(save->p, mobj->ceilingdrop);
 	}
 }
 
@@ -5416,6 +5432,9 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 			chainorder_block[mobj->mobjnum] = inblock;
 			chainorder_sector[mobj->mobjnum] = insector;
 		}
+
+		mobj->floordrop = READFIXED(save->p);
+		mobj->ceilingdrop = READFIXED(save->p);
 	}
 
 	if (mobj->player)
