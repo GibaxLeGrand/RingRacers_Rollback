@@ -1574,37 +1574,58 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 			players[i].itemRoulette.itemList.items[q] = READSINT8(save->p);
 		}
 #else
-		players[i].itemRoulette.itemList.cap = (size_t)READUINT32(save->p);
-		players[i].itemRoulette.itemList.len = (size_t)READUINT32(save->p);
-
-		if (players[i].itemRoulette.itemList.cap > 0)
 		{
-			if (players[i].itemRoulette.itemList.items == NULL)
-			{
-				players[i].itemRoulette.itemList.items = (int8_t*)Z_Calloc(
-					sizeof(int8_t) * players[i].itemRoulette.itemList.cap,
-					PU_STATIC,
-					NULL
-				);
-			}
-			else
-			{
-				players[i].itemRoulette.itemList.items = (int8_t*)Z_Realloc(
-					players[i].itemRoulette.itemList.items,
-					sizeof(int8_t) * players[i].itemRoulette.itemList.cap,
-					PU_STATIC,
-					NULL
-				);
-			}
+			// The capacity the snapshot was taken at, read into a local rather
+			// than straight into the structure: what is in there is the size of
+			// the block this player already holds, and overwriting it before
+			// looking at it is what made every restore reallocate. The old code
+			// compared nothing and called Z_Realloc every time, so a soak of a
+			// few hundred checks asked the zone for thousands of blocks across
+			// sixteen players and it eventually refused -- reported as "not
+			// enough memory for item roulette list", an allocation that had
+			// nothing to do with whatever actually exhausted it.
+			//
+			// Growing only. cap then describes the block that is held, which is
+			// what it is for; and since both passes of a check share this
+			// allocation, both archive the same number, so the byte-for-byte
+			// comparison is unaffected. The list only ever grows over a race,
+			// so a restore of an earlier state never needs it smaller.
+			const size_t want = (size_t)READUINT32(save->p);
+			const size_t used = (size_t)READUINT32(save->p);
 
-			if (players[i].itemRoulette.itemList.items == NULL)
-			{
-				I_Error("Not enough memory for item roulette list\n");
-			}
+			players[i].itemRoulette.itemList.len = used;
 
-			for (q = 0; q < players[i].itemRoulette.itemList.len; q++)
+			if (want > 0)
 			{
-				players[i].itemRoulette.itemList.items[q] = READSINT8(save->p);
+				if (players[i].itemRoulette.itemList.items == NULL)
+				{
+					players[i].itemRoulette.itemList.items = (int8_t*)Z_Calloc(
+						sizeof(int8_t) * want,
+						PU_STATIC,
+						NULL
+					);
+					players[i].itemRoulette.itemList.cap = want;
+				}
+				else if (players[i].itemRoulette.itemList.cap < want)
+				{
+					players[i].itemRoulette.itemList.items = (int8_t*)Z_Realloc(
+						players[i].itemRoulette.itemList.items,
+						sizeof(int8_t) * want,
+						PU_STATIC,
+						NULL
+					);
+					players[i].itemRoulette.itemList.cap = want;
+				}
+
+				if (players[i].itemRoulette.itemList.items == NULL)
+				{
+					I_Error("Not enough memory for item roulette list\n");
+				}
+
+				for (q = 0; q < used; q++)
+				{
+					players[i].itemRoulette.itemList.items[q] = READSINT8(save->p);
+				}
 			}
 		}
 #endif
