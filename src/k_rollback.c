@@ -499,6 +499,59 @@ static void K_PrintLoadProfile(const char *cmd)
 	}
 }
 
+/** Hashes the order objects appear in, rather than what they contain.
+  *
+  * A restore rebuilds every object from the archive, so the world it produces
+  * holds the same values -- rollback_test proves that byte for byte. What it
+  * cannot hold is the order the live world had arrived at: objects are recreated
+  * in archive order and re-linked into the sector and blockmap chains in that
+  * order, while the live chains reflect where everything has moved since it
+  * spawned.
+  *
+  * That matters because collision detection walks those chains. Two worlds
+  * holding identical objects in a different order can resolve a hit
+  * differently, which is exactly the shape of the failure the soak reports:
+  * repeatable, gameplay-affecting, and invisible to a comparison of the
+  * archive.
+  *
+  * \param blockmap hashes the blockmap chains rather than the thinker list.
+  */
+static uint32_t K_HashOrder(dboolean blockmap)
+{
+	uint32_t hash = 2166136261u; // FNV-1a, for no reason beyond being short
+	thinker_t *th;
+
+	if (blockmap)
+	{
+		int32_t cell;
+
+		if (blocklinks == NULL)
+			return 0;
+
+		for (cell = 0; cell < bmapwidth * bmapheight; cell++)
+		{
+			const mobj_t *mo;
+
+			for (mo = blocklinks[cell]; mo != NULL; mo = mo->bnext)
+			{
+				hash = (hash ^ mo->mobjnum) * 16777619u;
+			}
+		}
+
+		return hash;
+	}
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		hash = (hash ^ ((const mobj_t *)th)->mobjnum) * 16777619u;
+	}
+
+	return hash;
+}
+
 /** Prints who is on the grid.
   *
   * Every measurement below scales with this, and it is not something to be
@@ -658,6 +711,7 @@ static void Command_RollbackTest_f(void)
 	precise_t started;
 	uint32_t saveus, loadus, resaveus;
 	int16_t before, afterperturb, afterload;
+	uint32_t thinkerorder, blockmaporder;
 
 	if (gamestate != GS_LEVEL)
 	{
@@ -678,6 +732,8 @@ static void Command_RollbackTest_f(void)
 	}
 
 	before = Consistancy();
+	thinkerorder = K_HashOrder(false);
+	blockmaporder = K_HashOrder(true);
 
 	started = I_GetPreciseTime();
 	if (!K_SaveGameState(gametic))
@@ -726,6 +782,10 @@ static void Command_RollbackTest_f(void)
 	g_lastrestoreus = loadus;
 
 	afterload = Consistancy();
+
+	CONS_Printf("rollback_test: thinker order %s, blockmap order %s\n",
+		(K_HashOrder(false) == thinkerorder ? "kept" : "CHANGED"),
+		(K_HashOrder(true) == blockmaporder ? "kept" : "CHANGED"));
 
 	K_PrintLoadProfile("rollback_test");
 
