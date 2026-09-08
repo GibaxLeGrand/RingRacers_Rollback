@@ -516,6 +516,11 @@ static uint32_t g_mobjcopies;
   * whether both sides look like one costs the same and mistakes neither for the
   * other.
   */
+static dboolean K_LooksLikeAddress(uintptr_t v)
+{
+	return (v >= 0x10000 && (v % 8) == 0 && ((uint64_t)v >> 47) == 0);
+}
+
 static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at, size_t size)
 {
 	const size_t step = sizeof (void *);
@@ -529,10 +534,12 @@ static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at
 	memcpy(&b, now + base, step);
 
 	// Z_Malloc hands out aligned blocks well clear of the first page, and
-	// nothing this process maps sits near the top of the address space.
-	return (a >= 0x10000 && b >= 0x10000
-		&& (a % 8) == 0 && (b % 8) == 0
-		&& ((uint64_t)a >> 47) == 0 && ((uint64_t)b >> 47) == 0);
+	// nothing this process maps sits near the top of the address space. Zero
+	// counts as one: relinking clears pointers and sets them, and requiring an
+	// address on both sides reported all 128 of those as fields.
+	return ((K_LooksLikeAddress(a) && K_LooksLikeAddress(b))
+		|| (a == 0 && K_LooksLikeAddress(b))
+		|| (b == 0 && K_LooksLikeAddress(a)));
 }
 
 static void K_CopyMobjs(void)

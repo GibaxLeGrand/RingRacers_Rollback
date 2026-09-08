@@ -1135,10 +1135,16 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].lastsidehit = READINT16(save->p);
 		players[i].lastlinehit = READINT16(save->p);
 
+		// Read in the order P_NetArchivePlayers writes them. They were not:
+		// onconveyor goes out before the two counters and was being read after,
+		// so timeshit took onconveyor's first byte, timeshitprev its second,
+		// and onconveyor itself took its own last two bytes followed by the two
+		// counters. Since onconveyor is almost always zero, the counters came
+		// back as zero and nobody noticed.
+		players[i].onconveyor = READINT32(save->p);
+
 		players[i].timeshit = READUINT8(save->p);
 		players[i].timeshitprev = READUINT8(save->p);
-
-		players[i].onconveyor = READINT32(save->p);
 
 		players[i].jointime = READUINT32(save->p);
 
