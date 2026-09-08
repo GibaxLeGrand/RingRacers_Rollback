@@ -112,9 +112,16 @@ judges a player invincible, shows the two passes agreeing on every event they
 share and the replay having **more of them**. Ten against twenty in one sample,
 two against four in another.
 
-More damage attempts from an identical world. That points at collision detection
-running over a different set of pairs, which is where to look next — the attempt,
-not the judgement and not the state. The failure rate meanwhile is 2.7 percent
+That "more of them" was an instrument lying: the third pass was still recording
+into the replay's tally, so every figure was exactly double. Corrected, the
+collision counter rules itself out — on failing checks both passes examine the
+same pairs (24194, 37946, 48686) in the same order, after a full tic of
+simulation, which also buries the ordering theory for good.
+
+So: identical state, identical pairs in identical order, identical damage
+verdicts, different outcome. What differs is a value computed during the tic,
+and the memory comparison now runs at the far end of both passes rather than at
+the restore. That reading has not been taken yet. The failure rate is 2.7 percent
 over 590 checks, down from 7.6.
 
 Two techniques worth keeping:
@@ -138,6 +145,21 @@ Two techniques worth keeping:
   and a soak checks nothing at all.
 - `.gitattributes` covers `/src/*.c` and `/src/*.h` but **not `*.cpp`**, so a
   line-ending conversion of `p_saveg.cpp` gets committed verbatim.
+- **Do not size anything on `NETSAVEGAMESIZE`.** It is 768 KB, for the worst a
+  netgame savegame can be; a real sixteen-kart snapshot is 120 KB. Slots sized
+  on it made the ring reserve 20 MB to carry 2.5, and the game died on "not
+  enough memory for item roulette list" — an allocation with nothing to do with
+  any of this.
+- **A new instrument lies.** Five times in one day: a profile from a map I had
+  not checked, a soak on a server that was not racing, an order comparison
+  against an empty list, an offset extractor pairing names to the wrong
+  offsets, and a third pass counting into the replay's tally so every figure
+  came out exactly double. A diagnostic must state the size of what it
+  examined, and a suspiciously round ratio is an instrumentation fault until
+  proven otherwise.
+- **Playing during a soak** stutters and misfires anything edge-triggered — ring
+  usage, item throws — because the replayed passes use frozen inputs. Use
+  `play.cfg`, or `rollback_soak 0`.
 
 ## Changes to shared code
 
