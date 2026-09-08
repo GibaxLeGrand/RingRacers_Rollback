@@ -222,6 +222,132 @@ static const char *K_MobjTypeName(mobjtype_t type)
 	return (name != NULL) ? name : "(unnamed type)";
 }
 
+// ----------------------------------------------------------------------------
+// The objects, compared in memory
+//
+// The same instrument that cleared the player structures, pointed at mobjs.
+// Comparing snapshots is blind to whatever the archive does not carry, which is
+// exactly where the remaining divergence has to be; reading the structures
+// themselves is not.
+//
+// Objects are matched by mobjnum, since a restore rebuilds them at new
+// addresses and in new memory.
+// ----------------------------------------------------------------------------
+
+#define MOBJCOPY_MAX 16384
+
+static uint8_t *g_mobjcopy;    // the structures as they were, back to back
+static uint16_t *g_mobjslot;   // mobjnum -> its place in there, plus one
+static uint32_t g_mobjcopies;
+
+/** Copies every archived object. Call while the save's mobjnums still stand. */
+static void K_CopyMobjs(void)
+{
+	thinker_t *th;
+
+	if (g_mobjcopy == NULL)
+	{
+		g_mobjcopy = (uint8_t *)Z_Malloc(sizeof (mobj_t) * 4096, PU_STATIC, NULL);
+		g_mobjslot = (uint16_t *)Z_Malloc(sizeof (uint16_t) * MOBJCOPY_MAX, PU_STATIC, NULL);
+	}
+
+	if (g_mobjcopy == NULL || g_mobjslot == NULL)
+		return;
+
+	memset(g_mobjslot, 0, sizeof (uint16_t) * MOBJCOPY_MAX);
+	g_mobjcopies = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || mo->mobjnum >= MOBJCOPY_MAX)
+			continue;
+
+		if (g_mobjcopies >= 4096)
+			break;
+
+		memcpy(g_mobjcopy + (sizeof (mobj_t) * g_mobjcopies), mo, sizeof (mobj_t));
+		g_mobjslot[mo->mobjnum] = (uint16_t)(g_mobjcopies + 1);
+		g_mobjcopies++;
+	}
+}
+
+/** Reports what the restore did not put back, object by object. */
+static void K_CompareMobjs(const char *cmd)
+{
+	thinker_t *th;
+	uint32_t reported = 0;
+	uint32_t missing = 0;
+	uint32_t compared = 0;
+
+	if (g_mobjcopy == NULL || g_mobjslot == NULL || g_mobjcopies == 0)
+		return;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ] && reported < 6; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+		const uint8_t *was;
+		const uint8_t *now = (const uint8_t *)mo;
+		size_t at;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || mo->mobjnum >= MOBJCOPY_MAX)
+			continue;
+
+		if (g_mobjslot[mo->mobjnum] == 0)
+		{
+			// An object the restore produced that was not there before.
+			missing++;
+			continue;
+		}
+
+		was = g_mobjcopy + (sizeof (mobj_t) * (g_mobjslot[mo->mobjnum] - 1));
+		compared++;
+
+		for (at = 0; at < sizeof (mobj_t) && reported < 6; at++)
+		{
+			char before[32], after[32];
+			size_t run, k;
+			int32_t nb = 0, na = 0;
+
+			if (was[at] == now[at])
+				continue;
+
+			for (run = 0; at + run < sizeof (mobj_t) && was[at + run] != now[at + run]; run++)
+				;
+
+			// Pointers sit on multiples of eight and differ by rebuilding.
+			if ((at % 8) == 0)
+			{
+				at += run;
+				continue;
+			}
+
+			for (k = 0; k < run && k < 8; k++)
+			{
+				nb += snprintf(before + nb, sizeof (before) - nb, "%02x ", was[at + k]);
+				na += snprintf(after + na, sizeof (after) - na, "%02x ", now[at + k]);
+			}
+
+			CONS_Printf("%s: %s #%u, %s bytes into mobj_t: %s bytes, %s-> %s\n",
+				cmd, K_MobjTypeName(mo->type), mo->mobjnum,
+				sizeu1(at), sizeu2(run), before, after);
+
+			reported++;
+			at += run;
+		}
+	}
+
+	CONS_Printf("%s: %u objects compared, %u appeared from nowhere, %u differences shown\n",
+		cmd, compared, missing, reported);
+}
+
 /** Reports one mobj reference that the archive will not preserve.
   *
   * \return the running count of reports, incremented if this one was bad.
@@ -934,6 +1060,7 @@ static void Command_RollbackTest_f(void)
 	sectororder = K_HashOrder(K_ORDER_SECTORS);
 	K_PrintOrder("rollback_test", "before the restore");
 	K_CopyPlayers();
+	K_CopyMobjs();
 
 	// Same window: the per-object records depend on that numbering too. Taken
 	// outside the timed sections, and read-only, so neither the measurements
@@ -984,6 +1111,7 @@ static void Command_RollbackTest_f(void)
 
 	K_PrintOrder("rollback_test", "after the restore ");
 	K_ComparePlayers("rollback_test");
+	K_CompareMobjs("rollback_test");
 
 	K_PrintLoadProfile("rollback_test");
 
