@@ -3172,10 +3172,12 @@ static dboolean P_DamageMobjCompat(mobj_t *target, mobj_t *inflictor, mobj_t *so
 					if (target->eflags & MFE_PAUSED)
 					{
 						player->timeshit--; // doesn't count
+						K_RollbackTraceHit(player - players, 1, 0); // undo
 
 						if (playerInflictor)
 						{
 							playerInflictor->timeshit--;
+							K_RollbackTraceHit(playerInflictor - players, 1, 0); // undo
 						}
 
 						return false;
@@ -4002,10 +4004,12 @@ dboolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t
 					if (target->eflags & MFE_PAUSED)
 					{
 						player->timeshit--; // doesn't count
+						K_RollbackTraceHit(player - players, 1, 0); // undo
 
 						if (playerInflictor)
 						{
 							playerInflictor->timeshit--;
+							K_RollbackTraceHit(playerInflictor - players, 1, 0); // undo
 						}
 
 						return false;
