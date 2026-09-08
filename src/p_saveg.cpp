@@ -89,6 +89,11 @@ static dboolean chainorder_ready;
 // this a difference reported there is a bare offset into 16 records.
 static size_t playerrecordoffset[MAXPLAYERS];
 
+// Where the players block ends. Without it, an offset anywhere later in the
+// snapshot gets attributed to the last player, and a difference in the thinkers
+// block is reported as "player 15, 128934 bytes into their record".
+static size_t playersblockend;
+
 // Block UINT32s to attempt to ensure that the correct data is
 // being sent and received
 #define ARCHIVEBLOCK_MISC			0x7FEEDEED
@@ -999,6 +1004,8 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEUINT32(save->p, players[i].darkness_start);
 		WRITEUINT32(save->p, players[i].darkness_end);
 	}
+
+	playersblockend = (size_t)(save->p - save->buffer);
 
 	TracyCZoneEnd(__zone);
 }
@@ -8278,6 +8285,9 @@ dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into)
 {
 	int32_t i;
 	int32_t found = -1;
+
+	if (playersblockend != 0 && offset >= playersblockend)
+		return false;
 
 	for (i = 0; i < MAXPLAYERS; i++)
 	{

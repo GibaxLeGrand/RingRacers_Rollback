@@ -153,6 +153,29 @@ fields:
   the hits taken during a tic and is copied into `timeshitprev` at the end of
   it, so a difference of one means one pass took a hit the other did not.
 
+The build that names fields then ran a 500-check soak, and it answers the
+question the hand decoding could only sample: **34 failures in 500 checks (6.8
+percent), all 34 of them "the restore loses something the simulation uses" and
+not one a non-repeatable replay -- and 26 of the 34 name `timeshit` or
+`timeshitprev`.** Twenty-nine of the differences are in the players block and
+five in the thinkers block. `tilt` did not appear once. So the hit counter is
+not one of several remaining faults; it is very nearly the whole of what is
+left, and it is a restore fault.
+
+That run also priced two things nobody had measured:
+
+- **A snapshot grows with the race.** 120 KiB is what one weighs seconds after
+  the start; three minutes into the same race it was 318 KiB, because the world
+  accumulates objects as it is played. The ring's guard caught it in the slack
+  and said so. Every size and timing figure in this document is an
+  opening-lap figure and wants re-measuring late in a race -- the restore cost
+  in particular, since it was 11 ms at 120 KiB.
+- **The object comparison had the same alignment fault as the player one**, so
+  every `MT_RING` line it printed was `bprev` or `touching_sectorlist`: half of
+  what a failing check said was pointer noise. And `P_LocatePlayerField` did not
+  know where the players block ends, so a difference in the thinkers block was
+  reported as "player 15, 128934 bytes into their record". Both fixed.
+
 Three techniques worth keeping:
 
 - Compare structures in memory, not archives, when hunting for state the archive

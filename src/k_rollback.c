@@ -62,16 +62,22 @@
 // allocation failed and took the game down with "not enough memory for item
 // roulette list".
 //
-// A quarter of that, still twice the largest snapshot seen, and the slack
-// below still catches an overrun before it can reach the next slot.
-#define ROLLBACK_BUFSIZE (256*1024)
+// A quarter of that was still twice the largest snapshot then seen -- and it
+// was not enough, because 120 KiB is what a race weighs seconds after the
+// start. A soak run three minutes into the same race hit 318 KiB: the world
+// accumulates objects as it is played, so a snapshot grows with the race. The
+// guard caught it in the slack and said so, which is what the slack is for.
+//
+// Sized on that measurement rather than on the opening lap, with room for a
+// race that goes further than the one measured.
+#define ROLLBACK_BUFSIZE (512*1024)
 
 // P_SaveNetGame writes through raw pointer macros with no bounds checking, so
 // an oversized state cannot be stopped mid-write. Each slot therefore carries
 // slack past its nominal size: a state that overruns ROLLBACK_BUFSIZE lands in
 // the slack instead of in the next slot, and is caught before anything else
 // has been corrupted.
-#define ROLLBACK_SLACK (64*1024)
+#define ROLLBACK_SLACK (128*1024)
 
 typedef struct
 {
@@ -94,9 +100,9 @@ void K_InitRollback(void)
 	if (rollbackring)
 		return;
 
-	// Twenty megabytes at the current slot size, which is why the ring is
-	// allocated on first use rather than at startup: a session that never
-	// touches rollback never pays for it.
+	// Twelve and a half megabytes at the current slot size, which is why the
+	// ring is allocated on first use rather than at startup: a session that
+	// never touches rollback never pays for it.
 	rollbackring = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t) * ROLLBACK_TICS, PU_STATIC, NULL);
 	if (!rollbackring)
 		I_Error("K_InitRollback: not enough memory for the rollback ring buffer (%s KiB)",
@@ -407,6 +413,37 @@ static uint16_t *g_mobjslot;   // mobjnum -> its place in there, plus one
 static uint32_t g_mobjcopies;
 
 /** Copies every archived object. Call while the save's mobjnums still stand. */
+/** True when a run of differing bytes belongs to an address rather than a field.
+  *
+  * Alignment used to be the test, and it was wrong in both directions. A
+  * pointer whose low byte happens to match starts its run at an offset that is
+  * not a multiple of eight, and was reported as though it were a field -- which
+  * is every one of the MT_RING lines a failing check prints, all of them
+  * bprev and touching_sectorlist; and every field that begins on a multiple of
+  * eight, which is most of the wide ones, was thrown away unseen as though it
+  * were a pointer. Reading the whole aligned word as an address and asking
+  * whether both sides look like one costs the same and mistakes neither for the
+  * other.
+  */
+static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at, size_t size)
+{
+	const size_t step = sizeof (void *);
+	const size_t base = at - (at % step);
+	uintptr_t a = 0, b = 0;
+
+	if (base + step > size)
+		return false;
+
+	memcpy(&a, was + base, step);
+	memcpy(&b, now + base, step);
+
+	// Z_Malloc hands out aligned blocks well clear of the first page, and
+	// nothing this process maps sits near the top of the address space.
+	return (a >= 0x10000 && b >= 0x10000
+		&& (a % 8) == 0 && (b % 8) == 0
+		&& ((uint64_t)a >> 47) == 0 && ((uint64_t)b >> 47) == 0);
+}
+
 static void K_CopyMobjs(void)
 {
 	thinker_t *th;
@@ -449,6 +486,7 @@ static void K_CompareMobjs(const char *cmd)
 	uint32_t reported = 0;
 	uint32_t missing = 0;
 	uint32_t compared = 0;
+	uint32_t addresses = 0;
 
 	if (g_mobjcopy == NULL || g_mobjslot == NULL || g_mobjcopies == 0)
 		return;
@@ -488,9 +526,9 @@ static void K_CompareMobjs(const char *cmd)
 			for (run = 0; at + run < sizeof (mobj_t) && was[at + run] != now[at + run]; run++)
 				;
 
-			// Pointers sit on multiples of eight and differ by rebuilding.
-			if ((at % 8) == 0)
+			if (K_RunIsAddress(was, now, at, sizeof (mobj_t)))
 			{
+				addresses++;
 				at += run;
 				continue;
 			}
@@ -518,8 +556,9 @@ static void K_CompareMobjs(const char *cmd)
 
 	if (g_holdfindings == false || missing > 0)
 	{
-		CONS_Printf("%s: %u objects compared, %u appeared from nowhere, %u differences shown\n",
-			cmd, compared, missing, reported);
+		CONS_Printf("%s: %u objects compared, %u appeared from nowhere, "
+			"%u differences shown, %u runs were addresses\n",
+			cmd, compared, missing, reported, addresses);
 	}
 }
 
@@ -931,35 +970,6 @@ static void K_CopyPlayers(int32_t which)
 		memcpy(g_playercopy[which], players, sizeof (player_t) * MAXPLAYERS);
 }
 
-/** True when a run of differing bytes belongs to an address rather than a field.
-  *
-  * Alignment used to be the test, and it was wrong in both directions. A
-  * pointer whose low byte happens to match starts its run at an offset that is
-  * not a multiple of eight, and was reported as though it were a field; and
-  * every field that begins on a multiple of eight -- which is most of the wide
-  * ones -- was thrown away unseen as though it were a pointer. Reading the
-  * whole aligned word as an address and asking whether both sides look like one
-  * costs the same and mistakes neither for the other.
-  */
-static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at)
-{
-	const size_t step = sizeof (void *);
-	const size_t base = at - (at % step);
-	uintptr_t a = 0, b = 0;
-
-	if (base + step > sizeof (player_t))
-		return false;
-
-	memcpy(&a, was + base, step);
-	memcpy(&b, now + base, step);
-
-	// Z_Malloc hands out aligned blocks well clear of the first page, and
-	// nothing this process maps sits near the top of the address space.
-	return (a >= 0x10000 && b >= 0x10000
-		&& (a % 8) == 0 && (b % 8) == 0
-		&& ((uint64_t)a >> 47) == 0 && ((uint64_t)b >> 47) == 0);
-}
-
 /** Says which bytes of which player structure differ between two captures.
   *
   * The archive cannot answer this question about itself. Comparing snapshots
@@ -1015,7 +1025,7 @@ static void K_ComparePlayers(const char *cmd, const uint8_t *was, const uint8_t 
 			for (run = 0; at + run < sizeof (player_t) && a[at + run] != b[at + run]; run++)
 				;
 
-			if (K_RunIsAddress(a, b, at))
+			if (K_RunIsAddress(a, b, at, sizeof (player_t)))
 			{
 				addresses++;
 			}
