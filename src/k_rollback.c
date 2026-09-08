@@ -778,9 +778,6 @@ static void Command_RollbackTest_f(void)
 	}
 
 	before = Consistancy();
-	thinkerorder = K_HashOrder(false);
-	blockmaporder = K_HashOrder(true);
-	K_PrintOrder("rollback_test", "before the restore");
 
 	started = I_GetPreciseTime();
 	if (!K_SaveGameState(gametic))
@@ -794,8 +791,14 @@ static void Command_RollbackTest_f(void)
 	original = &rollbackring[gametic % ROLLBACK_TICS];
 
 	// Straight after the save, while the mobjnums it handed out still mean
-	// something.
+	// something. The ordering below reads them too, which is why it cannot be
+	// taken any earlier: before the save every mobjnum is zero, and comparing
+	// against nothing reports a change every time.
 	K_ReportLostReferences();
+
+	thinkerorder = K_HashOrder(false);
+	blockmaporder = K_HashOrder(true);
+	K_PrintOrder("rollback_test", "before the restore");
 
 	// Same window: the per-object records depend on that numbering too. Taken
 	// outside the timed sections, and read-only, so neither the measurements
