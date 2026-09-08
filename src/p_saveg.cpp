@@ -7753,3 +7753,83 @@ size_t P_SaveBufferRemaining(const savebuffer_t *save)
 		return 0;
 	}
 }
+
+/** Names the archive block that a byte offset of a P_SaveNetGame buffer falls in.
+  *
+  * Diagnostic aid for the rollback netcode. When two snapshots of what should
+  * be the same state disagree, the offset of the first differing byte says
+  * little on its own; the block it lands in says which archiver is at fault.
+  *
+  * The markers are searched for in the order P_SaveNetGame writes them, so a
+  * run of payload bytes that happens to match a marker cannot pull the scan
+  * out of sequence -- at worst it reports a block boundary slightly early.
+  *
+  * Not every archiver writes a marker. CV_SaveNetVars writes none, so anything
+  * ahead of the first marker is attributed to it. The colormaps and tube
+  * waypoints write none either and are reported as part of the specials block
+  * they follow; ACS and Lua likewise trail the waypoints block and are
+  * reported as waypoints.
+  *
+  * \return a static string naming the block. Never NULL.
+  */
+const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset)
+{
+	static const uint32_t markers[] = {
+		ARCHIVEBLOCK_MISC,
+		ARCHIVEBLOCK_PLAYERS,
+		ARCHIVEBLOCK_PARTIES,
+		ARCHIVEBLOCK_ROUNDQUEUE,
+		ARCHIVEBLOCK_ZVOTE,
+		ARCHIVEBLOCK_WORLD,
+		ARCHIVEBLOCK_POBJS,
+		ARCHIVEBLOCK_THINKERS,
+		ARCHIVEBLOCK_SPECIALS,
+		ARCHIVEBLOCK_WAYPOINTS,
+		ARCHIVEBLOCK_RNG
+	};
+	static const char *const names[] = {
+		"misc",
+		"players",
+		"parties",
+		"roundqueue",
+		"zvote",
+		"world",
+		"polyobjects",
+		"thinkers",
+		"specials",
+		"waypoints",
+		"rng"
+	};
+
+	const char *found = "netvars";
+	size_t at = 0;
+	size_t i;
+
+	for (i = 0; i < sizeof (markers) / sizeof (markers[0]); i++)
+	{
+		uint32_t here;
+
+		while (at + sizeof (uint32_t) <= length)
+		{
+			M_Memcpy(&here, buffer + at, sizeof (uint32_t));
+			if (here == markers[i])
+				break;
+			at++;
+		}
+
+		// Marker not present: the buffer is shorter than a full snapshot, or
+		// truncated. Nothing past this point can be located.
+		if (at + sizeof (uint32_t) > length)
+			break;
+
+		// This block starts after the offset we are asking about, so the
+		// offset belongs to the previous one.
+		if (at > offset)
+			break;
+
+		found = names[i];
+		at += sizeof (uint32_t);
+	}
+
+	return found;
+}

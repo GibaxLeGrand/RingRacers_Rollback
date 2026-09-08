@@ -56,6 +56,7 @@
 #include "k_pwrlv.h"
 #include "y_inter.h"
 #include "k_color.h"
+#include "k_rollback.h" // rollback netcode
 #include "k_respawn.h"
 #include "k_grandprix.h"
 #include "k_follower.h"
@@ -411,6 +412,8 @@ void D_RegisterServerCommands(void)
 	COM_AddDebugCommand("listmapthings", Command_ListDoomednums_f);
 	COM_AddDebugCommand("cxdiag", Command_cxdiag_f);
 	COM_AddCommand("listunusedsprites", Command_ListUnusedSprites_f);
+
+	K_RegisterRollbackStuff(); // rollback netcode
 
 	COM_AddCommand("runsoc", Command_RunSOC);
 	COM_AddCommand("pause", Command_Pause);

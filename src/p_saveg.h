@@ -38,6 +38,10 @@ void P_GetBackupCupData(savebuffer_t *save);
 void P_SaveNetGame(savebuffer_t *save, dboolean resending);
 dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading);
 
+// Names the archive block that a byte offset of a P_SaveNetGame buffer falls
+// in. Diagnostic aid for comparing two snapshots of the same state.
+const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset);
+
 mobj_t *P_FindNewPosition(uint32_t oldposition);
 
 struct savedata_bot_s
