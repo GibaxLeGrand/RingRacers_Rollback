@@ -58,7 +58,7 @@ const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t play
 
 // How long each step of the last P_LoadNetGame took, in microseconds. The
 // restore is the expensive half of a rollback, so it says where its time goes.
-#define P_LOADPROFILE_MAX 16
+#define P_LOADPROFILE_MAX 24
 
 struct loadstep_t
 {
@@ -71,10 +71,16 @@ struct loadstep_t
 	uint32_t playerhash;
 };
 
-// Turns the per-step hashing of the player structures on and off. Off by
-// default: it walks every player at every step of a restore, which is not
+// Turns the per-step capture of the player structures on and off. Off by
+// default: it copies every player at every step of a restore, which is not
 // something a game should pay for.
 void P_ProfileWatchPlayers(dboolean on);
+
+// The player structures as the given step left them, or NULL if that step was
+// not captured. A hash says a step changed something; this says what, which
+// matters because the steps that rebuild objects legitimately rewrite every
+// pointer a player holds.
+const uint8_t *P_GetProfilePlayers(size_t step);
 
 size_t P_GetLoadProfile(const loadstep_t **steps);
 

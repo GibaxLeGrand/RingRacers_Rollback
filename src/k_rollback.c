@@ -1067,10 +1067,51 @@ static void K_CopyPlayers(int32_t which)
   * back is the fault being hunted, and a step name is a far smaller thing to
   * read through than a whole restore.
   */
+static void K_ComparePlayers(const char *cmd, const uint8_t *was, const uint8_t *now, int32_t blamed);
+
+static uint32_t K_CountFieldRuns(const uint8_t *was, const uint8_t *now)
+{
+	uint32_t fields = 0;
+	int32_t i;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		const uint8_t *a = was + (sizeof (player_t) * i);
+		const uint8_t *b = now + (sizeof (player_t) * i);
+		size_t at;
+
+		if (playeringame[i] == false)
+			continue;
+
+		for (at = 0; at < sizeof (player_t); )
+		{
+			size_t run;
+
+			if (a[at] == b[at])
+			{
+				at++;
+				continue;
+			}
+
+			for (run = 0; at + run < sizeof (player_t) && a[at + run] != b[at + run]; run++)
+				;
+
+			if (K_RunIsAddress(a, b, at, sizeof (player_t)) == false)
+				fields++;
+
+			at += run;
+		}
+	}
+
+	return fields;
+}
+
 static void K_ReportRestoreSteps(const char *cmd)
 {
 	const loadstep_t *steps = NULL;
 	const size_t count = P_GetLoadProfile(&steps);
+	const char *culprit = NULL;
+	size_t culpritat = 0;
 	char names[160];
 	char line[224];
 	int32_t n = 0;
@@ -1096,6 +1137,51 @@ static void K_ReportRestoreSteps(const char *cmd)
 	snprintf(line, sizeof (line), "%s: the restore changed the players at: %s",
 		cmd, (n > 0 ? names : "no step after the first"));
 	K_Finding(line);
+
+	// Which of those changed a *field*. The steps that rebuild the world
+	// legitimately rewrite every pointer a player holds, so a hash moving at
+	// "thinkers" says nothing on its own -- and every one of them would have to
+	// be read by hand to find out which.
+	n = 0;
+	names[0] = '\0';
+
+	for (i = 1; i < count; i++)
+	{
+		const uint8_t *before = P_GetProfilePlayers(i - 1);
+		const uint8_t *after = P_GetProfilePlayers(i);
+		uint32_t fields;
+
+		if (before == NULL || after == NULL)
+			continue;
+
+		fields = K_CountFieldRuns(before, after);
+
+		if (fields == 0)
+			continue;
+
+		if (culprit == NULL && strcmp(steps[i].name, "players") != 0)
+		{
+			culprit = steps[i].name;
+			culpritat = i;
+		}
+
+		if (n < (int32_t)sizeof (names) - 32)
+		{
+			n += snprintf(names + n, sizeof (names) - n, "%s%s (%u)",
+				(n > 0 ? ", " : ""), steps[i].name, fields);
+		}
+	}
+
+	snprintf(line, sizeof (line), "%s: fields, not addresses, changed at: %s",
+		cmd, (n > 0 ? names : "no step"));
+	K_Finding(line);
+
+	// And what the first step that had no business doing so actually wrote.
+	if (culprit != NULL)
+	{
+		K_ComparePlayers(culprit, P_GetProfilePlayers(culpritat - 1),
+			P_GetProfilePlayers(culpritat), -1);
+	}
 }
 
 /** Says which bytes of which player structure differ between two captures.

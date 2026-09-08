@@ -8059,10 +8059,25 @@ static size_t g_loadprofilecount;
 static precise_t g_loadprofilemark;
 
 static dboolean g_profilewatchplayers;
+static uint8_t *g_profileplayers;
 
 void P_ProfileWatchPlayers(dboolean on)
 {
-	g_profilewatchplayers = on;
+	if (on && g_profileplayers == NULL)
+	{
+		g_profileplayers = (uint8_t *)Z_Malloc(
+			sizeof (player_t) * MAXPLAYERS * P_LOADPROFILE_MAX, PU_STATIC, NULL);
+	}
+
+	g_profilewatchplayers = (on && g_profileplayers != NULL);
+}
+
+const uint8_t *P_GetProfilePlayers(size_t step)
+{
+	if (g_profileplayers == NULL || step >= P_LOADPROFILE_MAX)
+		return NULL;
+
+	return g_profileplayers + (sizeof (player_t) * MAXPLAYERS * step);
 }
 
 /** Hashes the player structures, for telling one step of a restore from another. */
@@ -8099,6 +8114,13 @@ static void P_ProfileStep(const char *name)
 			(uint32_t)(((now - g_loadprofilemark) * (uint64_t)1000000) / I_GetPrecisePrecision());
 		g_loadprofile[g_loadprofilecount].playerhash =
 			g_profilewatchplayers ? P_HashPlayers() : 0;
+
+		if (g_profilewatchplayers)
+		{
+			memcpy(g_profileplayers + (sizeof (player_t) * MAXPLAYERS * g_loadprofilecount),
+				players, sizeof (player_t) * MAXPLAYERS);
+		}
+
 		g_loadprofilecount++;
 	}
 
