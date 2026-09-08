@@ -1779,6 +1779,11 @@ static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
   */
 static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 {
+	// Where viewx moves. The tilt trace says it differs between the passes, and
+	// the only code that writes it draws a frame -- which nothing between them
+	// is supposed to do. Four readings say whether it moves across the restore
+	// or across a tic, and one of those is a much smaller place to look.
+	fixed_t vx[4], vy[4];
 	rollbackslot_t *first, *second, *third;
 	diagset_t recsfirst = {0}, recssecond = {0}, recsthird = {0};
 	ticcmd_t frozen[MAXPLAYERS];
@@ -1874,9 +1879,13 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	g_pairhash[0] = g_pairhash[1] = 2166136261u;
 	g_hittracing = 0;
 
+	vx[0] = viewx; vy[0] = viewy;
+
 	started = I_GetPreciseTime();
 	K_RunFrozenTics(tics, frozen);
 	firstus = K_PreciseToMicros(I_GetPreciseTime() - started);
+
+	vx[1] = viewx; vy[1] = viewy;
 
 	// P_Ticker returns without doing anything while the game is paused, and
 	// two passes of nothing compare equal. Say so instead of reporting a pass.
@@ -1915,6 +1924,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 		goto done;
 	}
 
+	vx[2] = viewx; vy[2] = viewy;
+
 	K_ComparePlayers("rollback_resim restore", g_playercopy[2],
 		(const uint8_t *)players, -1);
 	K_ReportRestoreSteps("rollback_resim restore");
@@ -1927,6 +1938,19 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	K_RunFrozenTics(tics, frozen);
 	secondus = K_PreciseToMicros(I_GetPreciseTime() - started);
 	g_lastresimus = secondus / (uint32_t)tics;
+
+	vx[3] = viewx; vy[3] = viewy;
+
+	{
+		char text[160];
+
+		snprintf(text, sizeof (text),
+			"rollback_resim: view %08x/%08x -> %08x/%08x over the first pass, "
+			"%08x/%08x after the restore, %08x/%08x over the second",
+			(uint32_t)vx[0], (uint32_t)vy[0], (uint32_t)vx[1], (uint32_t)vy[1],
+			(uint32_t)vx[2], (uint32_t)vy[2], (uint32_t)vx[3], (uint32_t)vy[3]);
+		K_Finding(text);
+	}
 
 	if (!K_WriteSnapshot(second, gametic))
 	{
