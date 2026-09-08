@@ -8296,6 +8296,150 @@ dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into)
 	return true;
 }
 
+/** Names the field that a distance into a player's record lands in.
+  *
+  * "38 bytes into their record" says which player went somewhere else but not
+  * what about them did, and reading one of those costs a pass over the archiver
+  * by hand. This walks the fields P_NetArchivePlayers writes, in the order it
+  * writes them, and names the one the offset falls in.
+  *
+  * The list is a copy of that writer and goes stale if the writer changes,
+  * which is the price of not threading a name through every WRITE. It stops
+  * where the record turns conditional on what the player has attached to them;
+  * past that point this says nothing rather than something wrong.
+  *
+  * The name is written as a string and its terminator, so its length is read
+  * back out of the record rather than assumed -- Eggrobo takes eight bytes and
+  * Tails takes six, and every field after them moves with it.
+  *
+  * eturn the field's name, or NULL if the offset is past the named part.
+  */
+const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t player, size_t into)
+{
+	size_t at = 0;
+	size_t start;
+	size_t n;
+
+	if (buffer == NULL || player >= MAXPLAYERS)
+		return NULL;
+
+	start = playerrecordoffset[player];
+
+	if (start == 0 || start >= length)
+		return NULL;
+
+#define FIELD(size, label) \
+	do { \
+		if (into < at + (size_t)(size)) \
+			return label; \
+		at += (size_t)(size); \
+	} while (0)
+
+	FIELD(1, "adminplayers");
+	FIELD(2 * PWRLV_NUMTYPES, "clientpowerlevels");
+	FIELD(2, "clientPowerAdd");
+
+	// A player who is not in the game is three values and nothing else.
+	if (playeringame[player] == false)
+		return NULL;
+
+	for (n = 0; start + at + n < length && buffer[start + at + n] != '\0'; n++)
+		;
+
+	FIELD(n + 1, "player_names");
+	FIELD(1, "playerconsole");
+	FIELD(4, "splitscreen_invitations");
+
+	FIELD(2, "steering");
+	FIELD(4, "angleturn");
+	FIELD(4, "aiming");
+	FIELD(4, "drawangle");
+	FIELD(4, "viewrollangle");
+	FIELD(4, "tilt");
+	FIELD(4, "awayview.tics");
+
+	FIELD(1, "playerstate");
+	FIELD(4, "pflags");
+	FIELD(4, "pflags2");
+	FIELD(1, "panim");
+	FIELD(1, "spectator");
+	FIELD(4, "spectatewait");
+
+	FIELD(2, "flashpal");
+	FIELD(2, "flashcount");
+
+	FIELD(2, "skincolor");
+	FIELD(4, "skin");
+	FIELD(MAXAVAILABILITY, "availabilities");
+
+	FIELD(2, "fakeskin");
+	FIELD(2, "lastfakeskin");
+
+	FIELD(2, "prefcolor");
+	FIELD(4, "prefskin");
+	FIELD(2, "preffollowercolor");
+	FIELD(4, "preffollower");
+
+	FIELD(4, "score");
+	FIELD(1, "lives");
+	FIELD(1, "xtralife");
+	FIELD(4, "speed");
+	FIELD(4, "lastspeed");
+	FIELD(4, "deadtimer");
+	FIELD(4, "exiting");
+
+	FIELD(4, "cmomx");
+	FIELD(4, "cmomy");
+	FIELD(4, "rmomx");
+	FIELD(4, "rmomy");
+
+	FIELD(2, "totalring");
+	FIELD(4, "realtime");
+	FIELD(4 * LAP__MAX, "laptime");
+	FIELD(1, "laps");
+	FIELD(1, "latestlap");
+	FIELD(4, "exp");
+	FIELD(4, "gradingfactor");
+	FIELD(2, "gradingpointnum");
+	FIELD(2, "duelscore");
+	FIELD(4, "cheatchecknum");
+	FIELD(4, "checkpointId");
+
+	FIELD(1, "team");
+	FIELD(1, "checkskip");
+
+	FIELD(2, "lastsidehit");
+	FIELD(2, "lastlinehit");
+
+	FIELD(4, "onconveyor");
+
+	FIELD(1, "timeshit");
+	FIELD(1, "timeshitprev");
+
+	FIELD(4, "jointime");
+
+	FIELD(4, "spectatorReentry");
+	FIELD(4, "griefValue");
+	FIELD(1, "griefStrikes");
+	FIELD(1, "griefWarned");
+
+	FIELD(1, "splitscreenindex");
+
+	if (localsnapshot)
+	{
+		FIELD(sizeof (ticcmd_t), "cmd");
+		FIELD(sizeof (ticcmd_t), "oldcmd");
+		FIELD(4, "SPBdistance");
+		FIELD(4, "itemscale");
+		FIELD(1, "enteredGame");
+		FIELD(1, "faultflash");
+	}
+
+#undef FIELD
+
+	return NULL;
+}
+
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset)
 {
 	static const uint32_t markers[] = {

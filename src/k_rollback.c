@@ -233,9 +233,15 @@ static const char *K_MobjTypeName(mobjtype_t type)
 // that point nobody knows yet whether the check will fail, and a clean
 // restore reports the same interpolation fields every time. So the findings
 // wait here and are printed only if the check does fail.
-#define HELD_MAX 6
+// Six was not enough. A failing check has something to say about every player
+// whose structure moved, and the six it had room for went to the first players
+// in the table -- whose interpolation and HUD counters differ on every check,
+// failing or not -- so the player the check was actually about never got a
+// line.
+#define HELD_MAX 24
 static char g_held[HELD_MAX][160];
 static uint32_t g_heldcount;
+static uint32_t g_helddropped;
 static dboolean g_holdfindings;
 
 static void K_Finding(const char *text)
@@ -248,6 +254,8 @@ static void K_Finding(const char *text)
 
 	if (g_heldcount < HELD_MAX)
 		strlcpy(g_held[g_heldcount++], text, sizeof (g_held[0]));
+	else
+		g_helddropped++;
 }
 
 static void K_ReleaseFindings(void)
@@ -257,7 +265,13 @@ static void K_ReleaseFindings(void)
 	for (i = 0; i < g_heldcount; i++)
 		CONS_Printf("%s\n", g_held[i]);
 
+	// A report that stops short without saying so reads like a report with
+	// nothing more to say, which is how the half that mattered went unread.
+	if (g_helddropped > 0)
+		CONS_Printf("rollback: %u further findings were not kept\n", g_helddropped);
+
 	g_heldcount = 0;
+	g_helddropped = 0;
 }
 
 // ----------------------------------------------------------------------------
@@ -896,94 +910,169 @@ static uint32_t K_HashOrder(int32_t which)
   * -- so the offsets reported have to be read against d_player.h rather than
   * trusted blindly. Everything else that differs is state a restore lost.
   */
-static uint8_t *g_playercopy;
+static uint8_t *g_playercopy[2];
 
-static void K_CopyPlayers(void)
+// Which player the archive comparison blamed, so the structure comparison can
+// start there. -1 until it says.
+static int32_t g_blamedplayer = -1;
+
+/** Keeps a copy of the player structures as they stand.
+  *
+  * Two of them, because the comparison cannot run where a copy is taken. The
+  * third pass overwrites the players before anything has said which player is
+  * worth looking at, and it is the archive comparison, further down, that says.
+  */
+static void K_CopyPlayers(int32_t which)
 {
-	if (g_playercopy == NULL)
-		g_playercopy = (uint8_t *)Z_Malloc(sizeof (player_t) * MAXPLAYERS, PU_STATIC, NULL);
+	if (g_playercopy[which] == NULL)
+		g_playercopy[which] = (uint8_t *)Z_Malloc(sizeof (player_t) * MAXPLAYERS, PU_STATIC, NULL);
 
-	if (g_playercopy != NULL)
-		memcpy(g_playercopy, players, sizeof (player_t) * MAXPLAYERS);
+	if (g_playercopy[which] != NULL)
+		memcpy(g_playercopy[which], players, sizeof (player_t) * MAXPLAYERS);
 }
 
-static void K_ComparePlayers(const char *cmd)
+/** True when a run of differing bytes belongs to an address rather than a field.
+  *
+  * Alignment used to be the test, and it was wrong in both directions. A
+  * pointer whose low byte happens to match starts its run at an offset that is
+  * not a multiple of eight, and was reported as though it were a field; and
+  * every field that begins on a multiple of eight -- which is most of the wide
+  * ones -- was thrown away unseen as though it were a pointer. Reading the
+  * whole aligned word as an address and asking whether both sides look like one
+  * costs the same and mistakes neither for the other.
+  */
+static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at)
 {
-	uint32_t reported = 0;
-	int32_t i;
+	const size_t step = sizeof (void *);
+	const size_t base = at - (at % step);
+	uintptr_t a = 0, b = 0;
 
-	if (g_playercopy == NULL)
+	if (base + step > sizeof (player_t))
+		return false;
+
+	memcpy(&a, was + base, step);
+	memcpy(&b, now + base, step);
+
+	// Z_Malloc hands out aligned blocks well clear of the first page, and
+	// nothing this process maps sits near the top of the address space.
+	return (a >= 0x10000 && b >= 0x10000
+		&& (a % 8) == 0 && (b % 8) == 0
+		&& ((uint64_t)a >> 47) == 0 && ((uint64_t)b >> 47) == 0);
+}
+
+/** Says which bytes of which player structure differ between two captures.
+  *
+  * The archive cannot answer this question about itself. Comparing snapshots
+  * only ever compares what the archive carries, so a field it does not carry is
+  * equal on both sides by construction and invisible however hard you look.
+  * Reading the structures themselves has no such blind spot.
+  *
+  * Offsets are reported, not names: read them against the layout the build's
+  * .pdb gives -- dt player_t under cdb -- rather than by counting through
+  * d_player.h, which is how two fields came to be reported at one offset.
+  */
+static void K_ComparePlayers(const char *cmd, const uint8_t *was, const uint8_t *now, int32_t blamed)
+{
+	uint32_t fields = 0, addresses = 0, examined = 0, reported = 0;
+	int32_t order;
+	char text[160];
+
+	if (was == NULL || now == NULL)
 		return;
 
-	// So a reported offset can be read straight off, rather than counted
-	// through d_player.h by hand.
-	CONS_Printf("%s: offsets -- cmd %s, oldcmd %s, SPBdistance %s, itemscale %s, "
-		"enteredGame %s, faultflash %s\n",
-		cmd,
-		sizeu1(offsetof(player_t, cmd)), sizeu2(offsetof(player_t, oldcmd)),
-		sizeu3(offsetof(player_t, SPBdistance)), sizeu4(offsetof(player_t, itemscale)),
-		sizeu5(offsetof(player_t, enteredGame)), sizeu1(offsetof(player_t, faultflash)));
-
-	for (i = 0; i < MAXPLAYERS && reported < 8; i++)
+	// The blamed player first. A quota spent from player zero upwards is a
+	// quota spent on interpolation and HUD counters, which differ on every
+	// check because no archive carries them -- and the player the check is
+	// about is usually well down the table.
+	for (order = -1; order < MAXPLAYERS; order++)
 	{
-		const uint8_t *was = g_playercopy + (sizeof (player_t) * i);
-		const uint8_t *now = (const uint8_t *)&players[i];
+		const int32_t i = (order < 0) ? blamed : order;
+		const uint8_t *a;
+		const uint8_t *b;
+		uint32_t here = 0;
 		size_t at;
 
-		if (playeringame[i] == false)
+		if (i < 0 || i >= MAXPLAYERS || playeringame[i] == false)
 			continue;
 
-		// Every run that differs, not just the first: a restore rebuilds objects
-		// at new addresses, so pointer fields differ legitimately and there are
-		// enough of them to hide everything else behind the first one. A run of
-		// eight is almost certainly one of those; a run of one to four is a field
-		// the restore lost.
-		for (at = 0; at < sizeof (player_t) && reported < 8; at++)
+		if (order >= 0 && i == blamed)
+			continue;
+
+		a = was + (sizeof (player_t) * i);
+		b = now + (sizeof (player_t) * i);
+		examined++;
+
+		for (at = 0; at < sizeof (player_t); )
 		{
 			size_t run;
 
-			if (was[at] == now[at])
+			if (a[at] == b[at])
+			{
+				at++;
 				continue;
+			}
 
-			for (run = 0; at + run < sizeof (player_t) && was[at + run] != now[at + run]; run++)
+			for (run = 0; at + run < sizeof (player_t) && a[at + run] != b[at + run]; run++)
 				;
 
-			// Not a length test: two heap addresses on this platform differ only
-			// in their low bytes, so a pointer shows up as a run of three like
-			// anything else. Alignment is the tell -- every pointer in the
-			// structure sits on a multiple of eight.
-			if ((at % 8) != 0)
+			if (K_RunIsAddress(a, b, at))
 			{
-				char before[32], after[32];
-				size_t k;
-				int32_t nb = 0, na = 0;
+				addresses++;
+			}
+			else
+			{
+				fields++;
 
-				// The values, not just the offset. "three bytes differ" does not say
-				// whether a field was lost, truncated or merely moved.
-				for (k = 0; k < run && k < 8; k++)
+				// The values, not just the offset: "three bytes differ" does not
+				// say whether a field was lost, truncated or merely moved. A few
+				// per player, so one noisy player cannot fill the report.
+				if (here < 3 && reported < 12)
 				{
-					nb += snprintf(before + nb, sizeof (before) - nb, "%02x ", was[at + k]);
-					na += snprintf(after + na, sizeof (after) - na, "%02x ", now[at + k]);
-				}
+					char before[32], after[32];
+					size_t k;
+					int32_t nb = 0, na = 0;
 
-				{
-					char text[160];
+					for (k = 0; k < run && k < 8; k++)
+					{
+						nb += snprintf(before + nb, sizeof (before) - nb, "%02x ", a[at + k]);
+						na += snprintf(after + na, sizeof (after) - na, "%02x ", b[at + k]);
+					}
 
 					snprintf(text, sizeof (text),
 						"%s: player %d, %s bytes into player_t: %s bytes, %s-> %s",
 						cmd, i, sizeu1(at), sizeu2(run), before, after);
 					K_Finding(text);
-				}
 
-				reported++;
+					here++;
+					reported++;
+				}
 			}
 
 			at += run;
 		}
 	}
 
-	if (reported == 0)
-		CONS_Printf("%s: the player structures came back identical apart from pointers\n", cmd);
+	// Offsets to read the lines above against. Printed as numbers rather than
+	// passed through sizeu, which keeps one buffer per name and quietly hands
+	// back the same number twice when a line asks for the same buffer more than
+	// once -- which is how cmd and faultflash came to be reported at 892 alike.
+	if (fields > 0)
+	{
+		snprintf(text, sizeof (text),
+			"%s: offsets -- cmd %u, oldcmd %u, tilt %u, karthud %u, timeshitprev %u, roundconditions %u",
+			cmd,
+			(unsigned)offsetof(player_t, cmd), (unsigned)offsetof(player_t, oldcmd),
+			(unsigned)offsetof(player_t, tilt), (unsigned)offsetof(player_t, karthud),
+			(unsigned)offsetof(player_t, timeshitprev), (unsigned)offsetof(player_t, roundconditions));
+		K_Finding(text);
+	}
+
+	// What was looked at, not only what was found. A run of field lines says
+	// nothing about whether the scan reached the player that mattered.
+	snprintf(text, sizeof (text),
+		"%s: %u players examined -- %u runs differ as fields, %u as addresses, %u shown",
+		cmd, examined, fields, addresses, reported);
+	K_Finding(text);
 }
 
 /** Prints the first few archived objects in the order the lists hold them.
@@ -1118,10 +1207,16 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 
 			if (P_LocatePlayerField(at, &who, &into))
 			{
-				CONS_Printf("%s: that is player %u (%s), %s bytes into their record\n",
+				const char *field = P_NamePlayerField(a->buffer, a->used, who, into);
+
+				CONS_Printf("%s: that is player %u (%s), %s bytes into their record -- %s\n",
 					cmd, who,
 					(playeringame[who] ? player_names[who] : "not in game"),
-					sizeu1(into));
+					sizeu1(into),
+					(field != NULL) ? field : "past the fields this can name");
+
+				// Where the structure comparison should look first.
+				g_blamedplayer = (int32_t)who;
 			}
 		}
 	}
@@ -1231,7 +1326,7 @@ static void Command_RollbackTest_f(void)
 	blockmaporder = K_HashOrder(K_ORDER_BLOCKMAP);
 	sectororder = K_HashOrder(K_ORDER_SECTORS);
 	K_PrintOrder("rollback_test", "before the restore");
-	K_CopyPlayers();
+	K_CopyPlayers(0);
 	K_CopyMobjs();
 
 	// Same window: the per-object records depend on that numbering too. Taken
@@ -1282,7 +1377,7 @@ static void Command_RollbackTest_f(void)
 	}
 
 	K_PrintOrder("rollback_test", "after the restore ");
-	K_ComparePlayers("rollback_test");
+	K_ComparePlayers("rollback_test", g_playercopy[0], (const uint8_t *)players, -1);
 	K_CompareMobjs("rollback_test");
 
 	K_PrintLoadProfile("rollback_test");
@@ -1464,6 +1559,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	g_holdfindings = true;
 	g_heldcount = 0;
+	g_helddropped = 0;
+	g_blamedplayer = -1;
 
 	// M_Random draws from the C library, whose state no archive can hold, and
 	// the game uses it for decoration -- item debris picks its rollangle that
@@ -1503,7 +1600,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// clean often enough; what is unexplained is what the tic computes, so the
 	// two ends are what to compare -- and this sees the fields the archive
 	// does not carry, which a snapshot comparison never will.
-	K_CopyPlayers();
+	K_CopyPlayers(0);
 	K_CopyMobjs();
 
 	if (!K_LoadGameState(gametic))
@@ -1530,7 +1627,9 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	if (records)
 		K_CaptureRecords(&recssecond);
 
-	K_ComparePlayers("rollback_resim");
+	// The players as the second pass left them. The comparison itself waits for
+	// the archive comparison below to say which player to start with.
+	K_CopyPlayers(1);
 	K_CompareMobjs("rollback_resim");
 
 	// A third pass, from a restored state like the second. The first pass ran
@@ -1580,6 +1679,11 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 			&recsfirst, &recssecond, records);
 
 		K_ReportTrace("rollback_resim");
+
+		// The player structures at the end of both passes, now that the
+		// comparison above has named the player worth starting with.
+		K_ComparePlayers("rollback_resim", g_playercopy[0], g_playercopy[1],
+			g_blamedplayer);
 
 		// What the restore itself did to the world, gathered before the replay
 		// ran and worth reading now that it went somewhere else.
