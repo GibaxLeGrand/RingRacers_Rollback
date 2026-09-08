@@ -404,7 +404,7 @@ static void K_PrintRecordMasks(const char *label, const uint8_t *rec, uint32_t l
 }
 
 /** Names the objects whose archived record changed across a restore. */
-static void K_ReportRecordDifferences(const diagset_t *before, const diagset_t *after)
+static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, const diagset_t *after)
 {
 	uint32_t common = (before->count < after->count) ? before->count : after->count;
 	uint32_t reported = 0;
@@ -412,8 +412,8 @@ static void K_ReportRecordDifferences(const diagset_t *before, const diagset_t *
 
 	if (before->count != after->count)
 	{
-		CONS_Printf("rollback_test: %u objects archived before the restore, %u after\n",
-			before->count, after->count);
+		CONS_Printf("%s: %u objects archived before the restore, %u after\n",
+			cmd, before->count, after->count);
 	}
 
 	for (i = 0; i < common && reported < 3; i++)
@@ -430,14 +430,14 @@ static void K_ReportRecordDifferences(const diagset_t *before, const diagset_t *
 		// everything after this point is comparing unrelated objects.
 		if (before->recs[i].type != after->recs[i].type)
 		{
-			CONS_Printf("rollback_test: object %u is %s before the restore and %s after -- "
+			CONS_Printf("%s: object %u is %s before the restore and %s after -- "
 				"the objects no longer line up, so the rest of this comparison is meaningless\n",
-				i, K_MobjTypeName(before->recs[i].type), K_MobjTypeName(after->recs[i].type));
+				cmd, i, K_MobjTypeName(before->recs[i].type), K_MobjTypeName(after->recs[i].type));
 			return;
 		}
 
-		CONS_Printf("rollback_test: object %u (%s) changed: %u bytes became %u\n",
-			i, K_MobjTypeName(before->recs[i].type), la, lb);
+		CONS_Printf("%s: object %u (%s) changed: %u bytes became %u\n",
+			cmd, i, K_MobjTypeName(before->recs[i].type), la, lb);
 		K_PrintRecordMasks("  before:", a, la);
 		K_PrintRecordMasks("  after: ", b, lb);
 		reported++;
@@ -445,12 +445,12 @@ static void K_ReportRecordDifferences(const diagset_t *before, const diagset_t *
 
 	if (reported == 0 && before->count == after->count)
 	{
-		CONS_Printf("rollback_test: every object came back identical, so what changed is "
-			"outside the per-object records\n");
+		CONS_Printf("%s: every object came back identical, so what changed is "
+			"outside the per-object records\n", cmd);
 	}
 
 	if (before->truncated || after->truncated)
-		CONS_Printf("rollback_test: note - the object capture hit its limit, later objects were not compared\n");
+		CONS_Printf("%s: note - the object capture hit its limit, later objects were not compared\n", cmd);
 }
 
 /** Prints the bytes around an offset of a snapshot, for reading a mismatch by hand.
@@ -587,7 +587,7 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 	// Which object, and which of its fields -- the byte offset above says
 	// neither on its own.
 	if (records)
-		K_ReportRecordDifferences(recsa, recsb);
+		K_ReportRecordDifferences(cmd, recsa, recsb);
 	else
 		CONS_Printf("%s: no memory for the per-object comparison\n", cmd);
 
@@ -866,6 +866,14 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 
 	startedat = leveltime;
 
+	// M_Random draws from the C library, whose state no archive can hold, and
+	// the game uses it for decoration -- item debris picks its rollangle that
+	// way. Two replays would then differ over something that is local by
+	// design and that no other machine ever agreed on. Seeding it identically
+	// before each pass keeps the question to the one being asked: does the
+	// *archived* state reproduce.
+	srand((unsigned int)gametic);
+
 	started = I_GetPreciseTime();
 	K_RunFrozenTics(tics, frozen);
 	firstus = K_PreciseToMicros(I_GetPreciseTime() - started);
@@ -894,6 +902,8 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 			"the level is left where the first pass ended\n");
 		goto done;
 	}
+
+	srand((unsigned int)gametic);
 
 	started = I_GetPreciseTime();
 	K_RunFrozenTics(tics, frozen);
