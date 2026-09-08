@@ -1337,7 +1337,7 @@ static void SV_SendSaveGame(int32_t node, dboolean resending)
 	// Leave room for the uncompressed length.
 	save.p += sizeof(uint32_t);
 
-	P_SaveNetGame(&save, resending);
+	P_SaveNetGame(&save, resending, false);
 
 	length = save.p - save.buffer;
 	if (length > NETSAVEGAMESIZE)
@@ -1398,7 +1398,7 @@ static void CL_DumpConsistency(const char *file_name)
 		return;
 	}
 
-	P_SaveNetGame(&save, false);
+	P_SaveNetGame(&save, false, false);
 
 	length = save.p - save.buffer;
 	if (length > NETSAVEGAMESIZE)

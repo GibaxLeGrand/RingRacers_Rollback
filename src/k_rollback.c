@@ -114,7 +114,9 @@ static dboolean K_WriteSnapshot(rollbackslot_t *slot, tic_t tic)
 
 	// resending, so that gametic goes into the archive. K_LoadGameState reads
 	// it back, and the reader only looks for it when the writer wrote it.
-	P_SaveNetGame(&save, true);
+	// local, because this snapshot is restored on the machine that took it:
+	// the per-viewport visibility flags are worth keeping and must round-trip.
+	P_SaveNetGame(&save, true, true);
 
 	slot->used = (size_t)(save.p - save.buffer);
 

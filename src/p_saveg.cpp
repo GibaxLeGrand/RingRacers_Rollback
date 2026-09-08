@@ -58,6 +58,11 @@ savedata_cup_t cupsavedata;
 
 static savebuffer_t *current_savebuffer;
 
+// Set by P_SaveNetGame for the duration of a save, and left where it is
+// afterwards so P_ArchiveMobjForDiagnostics re-archives an object the same way
+// the last snapshot did.
+static dboolean localsnapshot;
+
 // Block UINT32s to attempt to ensure that the correct data is
 // being sent and received
 #define ARCHIVEBLOCK_MISC			0x7FEEDEED
@@ -3622,7 +3627,13 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 		uint32_t rf = mobj->renderflags;
 		uint32_t q = rf & RF_DONTDRAW;
 
-		if (q != RF_DONTDRAW // visible for more than one local player
+		// Which local player can see this object is a property of this machine's
+		// split screen, not of the world, so it is not pushed onto whoever
+		// receives the save. A snapshot that never leaves the machine keeps it:
+		// dropping it would make a rollback pop things in and out of view, and
+		// would leave the state differing from the one it was taken from.
+		if (localsnapshot == false
+		&& q != RF_DONTDRAW // visible for more than one local player
 		&& q != (RF_DONTDRAWP1|RF_DONTDRAWP2|RF_DONTDRAWP3)
 		&& q != (RF_DONTDRAWP4|RF_DONTDRAWP1|RF_DONTDRAWP2)
 		&& q != (RF_DONTDRAWP4|RF_DONTDRAWP1|RF_DONTDRAWP3)
@@ -7576,11 +7587,12 @@ void P_SaveGame(savebuffer_t *save)
 	P_ArchiveLuabanksAndConsistency(save);
 }
 
-void P_SaveNetGame(savebuffer_t *save, dboolean resending)
+void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 {
 	TracyCZone(__zone, true);
 
 	current_savebuffer = save;
+	localsnapshot = local;
 
 	thinker_t *th;
 	mobj_t *mobj;

@@ -35,7 +35,10 @@ dboolean P_LoadGame(savebuffer_t *save);
 void P_GetBackupCupData(savebuffer_t *save);
 
 // Online
-void P_SaveNetGame(savebuffer_t *save, dboolean resending);
+// `local` says the snapshot stays on this machine, as a rollback snapshot
+// does. It keeps the per-viewport visibility flags, which are stripped from
+// anything sent to another machine.
+void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local);
 dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading);
 
 // Names the archive block that a byte offset of a P_SaveNetGame buffer falls
