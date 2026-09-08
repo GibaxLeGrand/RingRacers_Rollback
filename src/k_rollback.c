@@ -630,22 +630,35 @@ static void K_ComparePlayers(const char *cmd)
 		if (playeringame[i] == false)
 			continue;
 
-		for (at = 0; at < sizeof (player_t); at++)
+		// Every run that differs, not just the first: a restore rebuilds objects
+		// at new addresses, so pointer fields differ legitimately and there are
+		// enough of them to hide everything else behind the first one. A run of
+		// eight is almost certainly one of those; a run of one to four is a field
+		// the restore lost.
+		for (at = 0; at < sizeof (player_t) && reported < 8; at++)
 		{
+			size_t run;
+
 			if (was[at] == now[at])
 				continue;
 
-			CONS_Printf("%s: player %d differs at byte %s of player_t "
-				"(0x%02x became 0x%02x)\n",
-				cmd, i, sizeu1(at), was[at], now[at]);
+			for (run = 0; at + run < sizeof (player_t) && was[at + run] != now[at + run]; run++)
+				;
 
-			reported++;
-			break;
+			if (run != 8) // let the pointers pass in silence
+			{
+				CONS_Printf("%s: player %d, %s bytes into player_t: %s bytes differ\n",
+					cmd, i, sizeu1(at), sizeu2(run));
+
+				reported++;
+			}
+
+			at += run;
 		}
 	}
 
 	if (reported == 0)
-		CONS_Printf("%s: every player structure came back identical, pointers and all\n", cmd);
+		CONS_Printf("%s: the player structures came back identical apart from pointers\n", cmd);
 }
 
 /** Prints the first few archived objects in the order the lists hold them.
