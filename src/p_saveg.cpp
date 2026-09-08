@@ -279,7 +279,17 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEANGLE(save->p, players[i].aiming);
 		WRITEANGLE(save->p, players[i].drawangle);
 		WRITEANGLE(save->p, players[i].viewrollangle);
-		WRITEANGLE(save->p, players[i].tilt);
+
+		// The camera lean is presentation, and only for whoever is being
+		// looked at: R_ViewRollAngle is its one reader. It still goes out on
+		// the wire, where a joining client has to be given some value and the
+		// format is not ours to change -- but a local snapshot has no business
+		// carrying it, and comparing it made a value that exists to look nice
+		// fail 141 checks in 530.
+		if (localsnapshot == false)
+		{
+			WRITEANGLE(save->p, players[i].tilt);
+		}
 		WRITEINT32(save->p, players[i].awayview.tics);
 
 		WRITEUINT8(save->p, players[i].playerstate);
@@ -1007,24 +1017,17 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 	playersblockend = (size_t)(save->p - save->buffer);
 
-	// The cameras, for a local snapshot only.
+	// The cameras went in here for one reason: the tic computed player->tilt
+	// from them and tilt was archived, so a replay that started from a
+	// different camera ended with a different tilt. That collapsed the
+	// unrepeatable replays from 121 to 14 and left the cameras themselves being
+	// compared instead -- 43 of 44 differences in one played race landed in
+	// these bytes, because a camera is driven by a local view that nothing
+	// archives either.
 	//
-	// They are not part of a netgame savegame and no other machine has any use
-	// for them -- but the tic reads them. DoABarrelRoll computes player->tilt,
-	// which is archived, by way of R_PointToAnglePlayer, which answers from the
-	// local camera; and the camera is moved by the tic and restored by nothing.
-	// So a replay starts from wherever the pass before left the camera and
-	// arrives at a different tilt, which is what 121 of 144 failing checks were
-	// in a soak run while somebody was actually driving. Idle, with the camera
-	// standing still, tilt never appeared once in 500 checks.
-	//
-	// Written whole, subsector pointer included: that points into level data a
-	// restore does not touch, and a local snapshot never leaves the machine
-	// that wrote it.
-	if (localsnapshot)
-	{
-		WRITEMEM(save->p, camera, sizeof (camera));
-	}
+	// With tilt out of a local snapshot there is nothing left that reads them,
+	// so they come out too. A rollback leaving the camera where it is, rather
+	// than rewinding it, is also what you want to look at.
 
 	TracyCZoneEnd(__zone);
 }
@@ -1068,7 +1071,11 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].aiming = READANGLE(save->p);
 		players[i].drawangle = players[i].old_drawangle = READANGLE(save->p);
 		players[i].viewrollangle = READANGLE(save->p);
-		players[i].tilt = READANGLE(save->p);
+
+		if (localrestore == false)
+		{
+			players[i].tilt = READANGLE(save->p);
+		}
 		players[i].awayview.tics = READINT32(save->p);
 
 		players[i].playerstate = (playerstate_t)READUINT8(save->p);
@@ -1764,11 +1771,6 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].darkness_end = READUINT32(save->p);
 
 		//players[i].viewheight = P_GetPlayerViewHeight(players[i]); // scale cannot be factored in at this point
-	}
-
-	if (localrestore)
-	{
-		READMEM(save->p, camera, sizeof (camera));
 	}
 
 	TracyCZoneEnd(__zone);
@@ -8463,7 +8465,11 @@ const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t play
 	FIELD(4, "aiming");
 	FIELD(4, "drawangle");
 	FIELD(4, "viewrollangle");
-	FIELD(4, "tilt");
+
+	if (localsnapshot == false)
+	{
+		FIELD(4, "tilt");
+	}
 	FIELD(4, "awayview.tics");
 
 	FIELD(1, "playerstate");
