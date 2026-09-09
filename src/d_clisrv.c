@@ -6831,6 +6831,7 @@ dboolean TryRunTics(tic_t realtics)
 			hu_stopped = false;
 	}
 
+
 	if (player_joining)
 	{
 		if (realtics)
@@ -6935,7 +6936,20 @@ dboolean TryRunTics(tic_t realtics)
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
 
 			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
-			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
+			//
+			// This is what stops a rollback client predicting, and it took an
+			// afternoon to find because it is at the *end* of the loop rather
+			// than in its condition. The client deliberately stops short, holding
+			// netticbuffer tics in reserve, so gametic settles at neededtic minus
+			// the buffer and the prediction test -- gametic >= neededtic -- can
+			// never be true. Three fixes aimed at how to predict changed nothing
+			// a player could feel, because nothing was predicting at all.
+			//
+			// A reserve is exactly right for a delay-based client: it smooths
+			// jitter by never running dry. It is exactly wrong for a rollback
+			// one, whose whole method is to run ahead and be corrected.
+			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value
+				&& K_RollbackPredictAhead() == 0)
 			{
 				break;
 			}
@@ -6946,6 +6960,11 @@ dboolean TryRunTics(tic_t realtics)
 				g_player_voice_frames_this_tic[i] = 0;
 			}
 		}
+
+		// What lead the client is actually left with. Predicting needs one, and
+		// until this was asked nobody knew whether there ever was one.
+		if (client && gamestate == GS_LEVEL)
+			K_RollbackNoteTicLoopEnd((int32_t)(gametic - neededtic));
 
 		if (F_IsDeferredContinueCredits())
 		{

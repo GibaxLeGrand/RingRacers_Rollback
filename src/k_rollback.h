@@ -52,6 +52,9 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead);
 /** Records how far behind the server the client was when a tic loop began. */
 void K_RollbackNoteTicLoop(int32_t behind);
 
+/** Records the lead the client is left with when a tic loop finishes. */
+void K_RollbackNoteTicLoopEnd(int32_t lead);
+
 /** True when a tic already run has been contradicted; the oldest one via from. */
 dboolean K_RollbackPending(tic_t *from);
 

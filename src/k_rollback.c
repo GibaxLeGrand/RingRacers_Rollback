@@ -3266,6 +3266,10 @@ static int32_t g_furthestahead;  // the most it ever got in front
 static uint32_t g_loops;         // times the tic loop was entered
 static int32_t g_mostbehind;     // the most confirmed tics waiting to be run
 static int64_t g_behindsum;      // to say what "typically" means
+static int32_t g_bestlead;       // the furthest ahead the loop ever ENDED a pass
+static int32_t g_worstlead;      // and the furthest behind
+static int64_t g_leadsum;        // to say what it typically ends at
+static uint32_t g_leadsamples;
 
 /** How far ahead a predicted client may get.
   *
@@ -3305,6 +3309,32 @@ void K_RollbackNoteTicLoop(int32_t behind)
 
 	if (behind > g_mostbehind)
 		g_mostbehind = behind;
+}
+
+/** Records the lead the client is left with when a tic loop finishes.
+  *
+  * The counters said the loop predicts thirty tics in four thousand passes, and
+  * three fixes aimed at *how* it predicts changed nothing a player could feel.
+  * What none of them measured is whether the client ever holds a lead at all:
+  * predicting requires gametic to have reached neededtic, and if something pulls
+  * it back every pass then no amount of tuning the prediction will matter.
+  *
+  * Called after the loop rather than before it, which is the half the "how far
+  * behind did it start" number could never see.
+  */
+void K_RollbackNoteTicLoopEnd(int32_t lead)
+{
+	if (g_loopahead <= 0)
+		return;
+
+	if (g_leadsamples == 0 || lead > g_bestlead)
+		g_bestlead = lead;
+
+	if (g_leadsamples == 0 || lead < g_worstlead)
+		g_worstlead = lead;
+
+	g_leadsum += lead;
+	g_leadsamples++;
 }
 
 /** Fills a tic's inputs with the last thing each player was known to be doing.
@@ -3443,6 +3473,12 @@ static void Command_RollbackLoop_f(void)
 		(client ? "client" : "server"), (int32_t)gamestate, (int32_t)GS_LEVEL);
 	CONS_Printf("rollback_loop: %u tics were run before the server confirmed them, furthest ahead %d\n",
 		g_predicted, g_furthestahead);
+	CONS_Printf("rollback_loop: the loop ended its passes %d ahead at best, %d at "
+		"worst, %d typically -- predicting needs a lead, and this is whether there "
+		"ever is one\n",
+		g_bestlead, g_worstlead,
+		(int32_t)(g_leadsamples ? (g_leadsum / (int64_t)g_leadsamples) : 0));
+
 	CONS_Printf("rollback_loop: over %u tic loops the server was ahead by %d at worst, %d on average -- a client with nothing to wait for has nothing to predict\n",
 		g_loops, g_mostbehind,
 		(int32_t)(g_loops ? (g_behindsum / (int64_t)g_loops) : 0));

@@ -1314,6 +1314,21 @@ dboolean HGetPacket(void)
 	if (netlagtics <= 0)
 		return HGetPacketNow();
 
+	// A held packet must not outlive the game it belongs to. Releasing one after
+	// the netgame has ended got a reply sent to a node that is no longer there,
+	// and the netcode says so with "Tried to transmit to another node" -- which
+	// is what killed a played test. The queue is emptied instead.
+	if (netgame == false)
+	{
+		uint32_t i;
+
+		for (i = 0; i < LAGQUEUE_MAX; i++)
+			lagqueue[i].used = false;
+
+		lagheld = 0;
+		return HGetPacketNow();
+	}
+
 	while (HGetPacketNow())
 	{
 		if (doomcom->remotenode == 0)
