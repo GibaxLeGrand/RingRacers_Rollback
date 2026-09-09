@@ -37,6 +37,7 @@
 
 #include "command.h"
 #include "d_clisrv.h" // Consistancy(), playerdelaytable
+#include "d_net.h" // netlagtics
 #include "d_netcmd.h" // cv_mindelay
 #include <stddef.h> // offsetof
 
@@ -3420,6 +3421,42 @@ static void Command_RollbackLoop_f(void)
 		g_corrections, g_replayedtics, g_unreachable);
 }
 
+/** Console command: rollback_lag [tics]
+  *
+  * Delays every packet from a peer by that many tics, on reception. Off by
+  * default and only useful for testing: a loopback has no latency, a client with
+  * no latency is never short of confirmed tics, and a client that is never short
+  * has nothing to predict. Measured at one to two tics ahead at all times, which
+  * is why the rollback loop could be switched on and still never fire.
+  */
+static void Command_RollbackLag_f(void)
+{
+	int32_t tics;
+	uint32_t held, dropped;
+
+	if (COM_Argc() > 1)
+	{
+		netlagtics = atoi(COM_Argv(1));
+
+		if (netlagtics < 0)
+			netlagtics = 0;
+	}
+
+	Net_LagStatus(&tics, &held, &dropped);
+
+	CONS_Printf("rollback_lag: holding every peer packet for %d tics (%d ms), "
+		"%u waiting now, %u dropped for want of room\n",
+		tics, (tics * 1000) / TICRATE, held, dropped);
+
+	if (dropped > 0)
+	{
+		// Said plainly, because a full queue turns an artificial delay into
+		// artificial packet loss and the two would look the same in the results.
+		CONS_Printf("rollback_lag: WARNING - packets were dropped, so this is no "
+			"longer only a delay\n");
+	}
+}
+
 /** Console command: rollback_maxdepth [tics]
   *
   * How far back a rollback may rewind. Latency beyond this has to be paid for
@@ -3513,4 +3550,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_replay", Command_RollbackReplay_f);
 	COM_AddDebugCommand("rollback_detect", Command_RollbackDetect_f);
 	COM_AddDebugCommand("rollback_loop", Command_RollbackLoop_f);
+	COM_AddDebugCommand("rollback_lag", Command_RollbackLag_f);
 }

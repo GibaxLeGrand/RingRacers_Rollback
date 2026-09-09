@@ -1118,7 +1118,104 @@ dboolean HSendPacket(int32_t node, dboolean reliable, uint8_t acknum, size_t pac
 // Returns false if no packet is waiting
 // Check Datalength and checksum
 //
-dboolean HGetPacket(void)
+// ----------------------------------------------------------------------------
+// Artificial latency, off unless asked for.
+//
+// A loopback has none, and a client with no latency is never short of confirmed
+// tics -- measured at one to two tics ahead of it at all times -- so prediction
+// never fires and there is nothing for a rollback to correct. That made this a
+// prerequisite for testing the rollback loop rather than the phase 4 convenience
+// it had been filed as.
+//
+// Store and forward, on reception, so it delays what a peer says without
+// pretending anything about the clock. Packets from ourselves are never held:
+// the rebound queue is this machine talking to itself and has no wire to be slow.
+// ----------------------------------------------------------------------------
+
+#define LAGQUEUE_MAX 512
+
+int32_t netlagtics = 0; // set by the rollback_lag console command
+
+static struct
+{
+	uint8_t data[MAXPACKETLENGTH];
+	size_t len;
+	int16_t node;
+	tic_t due;
+	dboolean used;
+} lagqueue[LAGQUEUE_MAX];
+
+static uint32_t lagheld;   // how many are waiting right now
+static uint32_t lagdropped; // and how many were thrown away for want of room
+
+/** Puts the packet now in netbuffer aside until its time comes. */
+static void Lag_Stash(void)
+{
+	uint32_t i;
+
+	for (i = 0; i < LAGQUEUE_MAX; i++)
+	{
+		if (lagqueue[i].used)
+			continue;
+
+		if (doomcom->datalength > (int32_t)sizeof (lagqueue[i].data))
+			break; // too big to hold; fall through to the drop below
+
+		M_Memcpy(lagqueue[i].data, netbuffer, doomcom->datalength);
+		lagqueue[i].len = (size_t)doomcom->datalength;
+		lagqueue[i].node = doomcom->remotenode;
+		lagqueue[i].due = I_GetTime() + (tic_t)netlagtics;
+		lagqueue[i].used = true;
+		lagheld++;
+		return;
+	}
+
+	// Counted rather than silently discarded: a queue that overflows while
+	// nobody is looking turns an artificial delay into artificial packet loss,
+	// and the two would be indistinguishable in the results.
+	lagdropped++;
+}
+
+/** Hands back the oldest packet whose time has come, if any. */
+static dboolean Lag_Release(void)
+{
+	tic_t now = I_GetTime();
+	uint32_t best = LAGQUEUE_MAX;
+	uint32_t i;
+
+	for (i = 0; i < LAGQUEUE_MAX; i++)
+	{
+		if (lagqueue[i].used == false || lagqueue[i].due > now)
+			continue;
+
+		if (best == LAGQUEUE_MAX || lagqueue[i].due < lagqueue[best].due)
+			best = i;
+	}
+
+	if (best == LAGQUEUE_MAX)
+		return false;
+
+	M_Memcpy(netbuffer, lagqueue[best].data, lagqueue[best].len);
+	doomcom->datalength = (int16_t)lagqueue[best].len;
+	doomcom->remotenode = lagqueue[best].node;
+	lagqueue[best].used = false;
+	lagheld--;
+
+	return true;
+}
+
+/** What the delay is doing, for the command that sets it. */
+void Net_LagStatus(int32_t *tics, uint32_t *held, uint32_t *dropped)
+{
+	if (tics != NULL)
+		*tics = netlagtics;
+	if (held != NULL)
+		*held = lagheld;
+	if (dropped != NULL)
+		*dropped = lagdropped;
+}
+
+static dboolean HGetPacketNow(void)
 {
 	//dboolean nodejustjoined;
 
@@ -1204,6 +1301,28 @@ dboolean HGetPacket(void)
 	}
 
 	return true;
+}
+
+/** Reception, with the artificial delay applied.
+  *
+  * Everything from the wire is put aside and handed over later; anything from
+  * ourselves goes straight through, because the rebound queue is this machine
+  * talking to itself and has no wire to be slow.
+  */
+dboolean HGetPacket(void)
+{
+	if (netlagtics <= 0)
+		return HGetPacketNow();
+
+	while (HGetPacketNow())
+	{
+		if (doomcom->remotenode == 0)
+			return true; // from ourselves, and never delayed
+
+		Lag_Stash();
+	}
+
+	return Lag_Release();
 }
 
 static dboolean Internal_Get(void)

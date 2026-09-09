@@ -63,6 +63,10 @@ void Net_AckTicker(void);
 dboolean HSendPacket(int32_t node, dboolean reliable, uint8_t acknum,
 	size_t packetlength);
 dboolean HGetPacket(void);
+
+// Artificial latency, in tics, for testing the rollback loop. Zero is off.
+extern int32_t netlagtics;
+void Net_LagStatus(int32_t *tics, uint32_t *held, uint32_t *dropped);
 void D_SetDoomcom(void);
 dboolean D_CheckNetGame(void);
 void D_CloseConnection(void);
