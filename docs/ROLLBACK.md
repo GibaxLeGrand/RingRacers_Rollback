@@ -687,6 +687,67 @@ the layout. It reports the window length it matched on and how many records
 matched, because a fingerprint that matches twice names nothing. **Not yet
 measured.**
 
+### The residue, named: `MT_ITEM_DEBRIS` and an unsynchronised die
+
+The locator answered on its first run. Five of six failures placed the first
+differing byte inside a named object, each on a unique 32-byte window:
+
+| object | its masks |
+|---|---|
+| `MT_ITEM_DEBRIS`, 90 bytes into a 118-byte record | `diff 8800303e diff2 00045008` |
+| `MT_ITEM_DEBRIS`, 89 into 117 | `diff 8800303e diff2 00044008` |
+| `MT_ITEM_DEBRIS`, 90 into 118 | `diff 8800303e diff2 00045008` |
+| `MT_ITEM_DEBRIS`, 94 into 122 | `diff 8800303e diff2 00045028` |
+| `MT_SHADOW`, 53 into 75 | `diff 80100006 diff2 00808000` |
+
+Every `diff2` there has `MD2_ROLLANGLE`. And `src/objects/item-debris.c`:
+
+```c
+static void rotate3d (mobj_t *debris)
+{
+	const uint8_t steps = 30;
+	debris->rollangle = M_RandomKey(steps) * (ANGLE_MAX / steps);
+}
+```
+
+`ANGLE_MAX / 30` is `0x08888888`, twelve degrees. Every value this residue has
+ever shown is an exact multiple of it: `0x33333330` is six of them, `0xaaaaaaa0`
+twenty, `0x77777770` fourteen, `0x2aaaaaa8` five. That is not a resemblance, it
+is the arithmetic.
+
+**`M_RandomKey` is the unsynchronised generator** -- `m_random.c` says so in its
+own comment, "as with all M_Random functions, not synched in netgames" -- and it
+appears nowhere in `p_saveg.cpp`. Its state is never archived, and HUD drawing
+consumes it between tics, so it is not even a function of the tic count. A
+replayed tic therefore rolls a different number.
+
+**And that is why four bytes go missing.** The archiver writes the field only
+`if (mobj->rollangle)`. One draw in thirty is zero. When the replay rolls the
+zero and the live pass did not, the record is four bytes shorter, every byte
+after it is offset, and the comparison reports nineteen thousand differing bytes
+in four thousand runs -- for one cosmetic die roll on a piece of debris that
+lives about a second.
+
+**Fixed by leaving it out of a local snapshot**, gated on `localsnapshot` exactly
+as `tilt` is. It stays on the wire, where a peer has to be told a value it cannot
+compute for itself. The cost is that debris loses its roll across a rollback,
+which is a sub-second particle.
+
+⚠ **The tempting fix is the wrong one.** Making `rotate3d` draw from
+`P_RandomKey(PR_DECORATION, ...)` -- a *synchronised* class, and one literally
+named for decoration -- would make the roll deterministic and archived, with no
+visible pop. It would also consume from a synchronised generator that a stock
+peer does not consume from, so our RNG stream would walk away from theirs and
+every later synchronised draw would differ. That is a desync against stock
+builds, which is the exact thing phase 5 exists to protect. **Left alone, and
+recorded as an upstream observation instead:** a net-synchronised object takes an
+archived field from an unsynchronised die, so two stock clients already archive
+different `rollangle` for the same debris.
+
+Fourth member of the family, after the render flags, the per-viewport visibility
+bits, and `tilt` with the camera: **a presentation value driven by something the
+simulation does not own, reaching archived state.**
+
 ⚠ **A measurement hazard found the same way.** `rollback_test` performs a
 restore, and a restore does not put interpolation state back -- so dropping a
 `rollback_test` into the middle of a scenario changes the race that follows it.
@@ -803,6 +864,7 @@ never sees them:
 | what | where |
 |---|---|
 | cmd, oldcmd, SPBdistance, itemscale, enteredGame, faultflash | the extras block a local snapshot adds |
+| `rollangle` **skipped** when local (still written for the wire) | beside the mirrored flag |
 | `tilt` **skipped** when local (still written for the wire) | beside viewrollangle |
 | per-viewport render flags kept instead of stripped | the mobj archiver |
 | chain order: mobjnum plus blockmap and sector positions | the mobj archiver |

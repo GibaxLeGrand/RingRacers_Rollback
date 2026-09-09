@@ -3558,7 +3558,16 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const uint8
 		diff2 |= MD2_CEILINGROVER;
 	if (mobj->mirrored)
 		diff2 |= MD2_MIRRORED;
-	if (mobj->rollangle)
+	// Sprite roll is decoration, and on MT_ITEM_DEBRIS it is drawn from
+	// M_RandomKey -- the generator m_random.c itself documents as "not synched in
+	// netgames". Its state is archived nowhere and HUD drawing consumes it
+	// between tics, so a replayed tic rolls a different number; one draw in
+	// thirty is zero, which clears this bit and makes the record four bytes
+	// shorter, and from there the whole tail of the archive is offset and
+	// nineteen thousand bytes differ. It stays on the wire, where a peer has to
+	// be told a value it cannot compute for itself. A snapshot that never leaves
+	// this machine leaves it out, the same way it leaves out tilt.
+	if (mobj->rollangle && localsnapshot == false)
 		diff2 |= MD2_ROLLANGLE;
 	if (mobj->shadowscale)
 		diff2 |= MD2_SHADOWSCALE;
