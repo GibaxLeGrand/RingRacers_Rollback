@@ -1949,3 +1949,66 @@ two. **Do not write another fix before it.**
 half a race and the report was "j'ai pas trop mesuré, maybe ça marche". It stays
 behind its switch with no claim attached.
 
+### The desync is named down to two fields, and the bench is unattended now
+
+Gibax's correction opened this: the rule that an undriven race reads clean holds
+only when there are **no bots on the grid**. With bots the world moves on its own,
+so the test needs nobody at the controls -- which turns every measurement in this
+project from "two minutes of a person's time" into "free", and n=1 into whatever
+sample size is wanted.
+
+**`rollback_blame` on both ends, same tic, six bots, nobody driving:**
+
+```
+SERVER tic 1908: p0(...) p1(...) p2(-466649599,-464206496,i0) ... rngsum=3328620361
+CLIENT tic 1908: p0(...) p1(...) p2(-466649583,-464207548,i0) ... rngsum=3328620361
+```
+
+- **`rngsum` identical.** The synchronised RNG is cleared.
+- **every `i0` identical.** Items are cleared.
+- **`p0` and `p8` -- the two idle humans -- identical to the byte.**
+- **`p2` and `p4` differ**, by 16 and 1052 in x and y. A fraction of a unit. Those
+  two are **bots**.
+
+So it is a **position drift on bots**, not a jump, not chance, not an item.
+
+**And the chain around it is now closed, every link measured under the same
+conditions:**
+
+| | resyncs |
+|---|---|
+| restore alone, two idle players, 1400 round trips | **0** |
+| restore alone, **six bots**, 1400 round trips | **0** |
+| four speculated tics a pass, six bots | **2 to 3** |
+| netxcmds raised inside a speculation, ever | **0** |
+
+The server transmits every player's ticcmd including the bots' (`G_DcpyTiccmd`
+over `numslots`), and the client copies them **unconditionally** -- the `i >=
+gametic` gate gGuards only the textcmds. So the inputs are identical on both sides.
+`botvars` is archived in full, all sixteen fields, `turnconfirm` and
+`spindashconfirm` among them, so the restore puts bot state back too.
+
+⚠ **Which leaves exactly one statement: a speculated tic modifies state the
+archive does not carry, and that state reaches a bot's simulation.** Not the
+restore -- it is now cleared twice, with and without bots. Not the inputs. Not the
+RNG.
+
+**The next instrument already exists.** The memory comparison -- `K_NameMobjField`
+over 125 fields and `P_NamePlayerField` -- is what found the interpolation family
+in the first place, and it works on *structures* rather than on archives, which is
+precisely the blind spot every other oracle here shares. Point it at the world
+immediately after `K_RollbackUnspeculate`, against a copy taken immediately before
+`K_RollbackSpeculate`, and it will name the fields that a speculation leaves
+behind. Anything it reports that is not presentation is the bug.
+
+⚠ **And read the answer with the archive's blind spot in mind.** That comparison
+has been reporting fifteen hundred to two thousand differing fields per check all
+along, filed as "presentation, costs the simulation nothing" **on the strength of
+their names**. One of them is not presentation. The list is already in this
+document; what has never been done is checking whether anything in it feeds the
+simulation.
+
+**Cost, measured on the way past:** 8.33 ms a pass at eight karts -- restore 4.3,
+a speculated tic 1.0 -- against 4.94 at two. Twenty-nine percent of a tic, and the
+grid that matters is sixteen. That is the roadmap's second item arriving early.
+
