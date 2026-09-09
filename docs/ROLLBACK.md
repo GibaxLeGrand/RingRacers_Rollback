@@ -472,6 +472,7 @@ end in `quit`, so each run stops by itself:
 | `replay_test.cfg` | `rollback_keep` on, then `rollback_replay` at 1, 4, 8 and 16 tics |
 | `soak_client.cfg` | the soak a human plays under |
 | `netserver_min.cfg`, `netclient_min.cfg` | the two-instance harness, **run and working** |
+| `playtest.sh on|off|pace` | a played race across two instances at 171 ms: loop on, loop off as the control, and one race split half with input pacing off and half with it on |
 
 A soak needs nobody: the two failures that ended phase 2 were on bot players,
 and fifteen bots exercise items, damage, respawns and the finish line. A human
@@ -1535,3 +1536,77 @@ stock peer would disagree about three values, always with us correct. The
 honest move is to offer all three upstream -- the `onconveyor` order in
 particular, since it scrambles `timeshit`, `timeshitprev` and `onconveyor` for
 any player who joins a netgame in progress.
+
+## 09/09 (fin de soiree) -- the self-misprediction, put to instruments
+
+The reading written above -- the controls are sampled once a pass and spent once
+a tic -- is an **inference from the shape of a symptom**, and it is the third one
+this project has made about this same offset. The first two were `mindelay` at
+two tics and `maketic` labelling at twelve. Both were written, both were
+measured, both were wrong, and the second was reverted. Everything that has held
+came from reading a line or printing a number instead.
+
+So this one is not being fixed on its own say-so. Two instruments ship first, and
+the candidate fix ships beside them behind a switch that is off.
+
+**What was read, and is therefore not in doubt.** `NetUpdate` calls
+`Local_Maketic` at the top of `TryRunTics` and returns early unless a real tic
+has elapsed, so a pass makes exactly one sample of the controls. The tic loop
+under it runs to `neededtic + K_RollbackPredictAhead()`, which is **not** bounded
+by `realtics`. `CL_SendClientCmd` sends one sample a pass -- `localcmds[0][0]`,
+one ticcmd, no tic label -- and the server stamps it with its own `maketic`
+(`d_clisrv.c:5609`), with a single tic of overflow when that slot is taken. Only
+**predicted** tics consume a local sample; a confirmed tic carries the server's
+inputs, our own among them. What is *not* read anywhere is how many predicted
+tics a pass actually runs, and that is the whole of the inference.
+
+**Instrument one: passes against predicted tics.** `K_RollbackNotePass` is called
+for every pass of the loop, including the ones that run nothing, because a pass
+makes a sample whether or not the loop spends it. `rollback_loop` now prints how
+many passes there were, how many predicted anything, how many predicted more than
+one tic, the worst and the typical. "Up to twelve tics in one pass" becomes a
+number or it stops being said.
+
+**Instrument two: where the server put our input against where we ran it.** The
+inputs this machine ran its own player on are kept by tic, 64 deep, and when the
+server sends one back `rollback_detect` says which of our samples it was. The
+histogram separates two readings that want opposite fixes:
+
+- **one offset, repeated** -- the labelling is out of step by that many tics, and
+  the client and server disagree about which tic a sample belongs to. Small fix,
+  and the one the two reverted attempts were aiming at.
+- **"it never ran that sample at all"** -- the server used an input this machine
+  made, sent, and then spent no tic on, because the pass that made it ran several
+  tics on an older one. That is the frame-rate-against-tic-rate reading, and it
+  wants pacing rather than labelling.
+
+The trail is deeper than the snapshot ring on purpose: the question is about the
+network's round trip, not about how far back a correction can reach. A match
+further from the tic than the trail is long is refused, because a slot is only
+overwritten once every 64 tics and an input matches by value however old it is.
+
+**The candidate fix, off by default: `rollback_pace 1`.** At most one predicted
+tic per pass, which is how many samples a pass makes. Confirmed tics are never
+held back -- they carry their own inputs, and a client that has fallen behind has
+to be free to catch up -- so only the guessing is paced. It is a separate switch
+from `rollback_loop` deliberately, and it resets every counter whose meaning it
+changes, so **one race** can be read with it off and then with it on instead of
+comparing two evenings.
+
+⚠ **What pacing costs, said before it is measured rather than after.** With the
+cap on, the lead can only grow between arrivals and collapses when a batch of
+server tics lands, so it will average roughly half a batch instead of sitting at
+twelve. That is not obviously a loss: the responsiveness comes from running the
+first unconfirmed tic on what the player is holding *now*, which a lead of one
+already does. But it is a prediction, and the counters will say.
+
+**How to run it:** `./playtest.sh pace` in the game folder. Three reporting
+windows with pacing off, `rollback_pace 1`, three more with it on, same race,
+same track, same session. `./playtest.sh off` remains the control for anything
+about feel, because 171 ms is plainly noticeable on its own and is present in
+every one of these runs.
+
+**What no counter will answer**, and so wants somebody at the controls: whether
+the other kart rubber-bands, whether your own kart still answers at once with
+pacing on, and whether anything repeats itself -- a sound, an item, a position
+that jumps back.
