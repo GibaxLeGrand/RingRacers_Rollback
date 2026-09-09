@@ -3327,6 +3327,28 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 	if (ahead > g_furthestahead)
 		g_furthestahead = ahead;
 
+	// Your own input is not a guess, and this is the half of a rollback that
+	// removes input lag. The client runs the tic on what you are holding *now*,
+	// straight out of D_LocalTiccmd, and predicts only what it cannot know --
+	// everyone else. Without this the loop still waits a round trip for your own
+	// button to come back from the server before it does anything with it, which
+	// is precisely the delay rollback exists to remove, and a played race said so
+	// in one sentence: still input lag.
+	//
+	// TICCMD_RECEIVED is set and it is not a lie: this is the genuine input, not
+	// a repeat of an older one, and p_user reads that flag to decide how far to
+	// trust the angle beside it.
+	for (i = 0; i <= (int32_t)splitscreen; i++)
+	{
+		const int32_t who = g_localplayers[i];
+
+		if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
+			continue;
+
+		netcmds[tic % BACKUPTICS][who] = *D_LocalTiccmd((uint8_t)i);
+		netcmds[tic % BACKUPTICS][who].flags |= TICCMD_RECEIVED;
+	}
+
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
 		ticcmd_t *to = &netcmds[tic % BACKUPTICS][i];
