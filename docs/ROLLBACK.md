@@ -471,7 +471,7 @@ end in `quit`, so each run stops by itself:
 | `soak_northern.cfg`, `soak_greenhills.cfg`, `soak_speedway.cfg` | a soak of about 500 checks on one map, unattended |
 | `replay_test.cfg` | `rollback_keep` on, then `rollback_replay` at 1, 4, 8 and 16 tics |
 | `soak_client.cfg` | the soak a human plays under |
-| `netserver.cfg`, `netclient.cfg` | the two-instance harness, **written and never run** |
+| `netserver_min.cfg`, `netclient_min.cfg` | the two-instance harness, **run and working** |
 
 A soak needs nobody: the two failures that ended phase 2 were on bot players,
 and fifteen bots exercise items, damage, respawns and the finish line. A human
@@ -993,6 +993,53 @@ phase 2 were on bot players. What bots **cannot** stand in for, so far:
 So the division is: **measurements and regression runs are unattended, and a
 played race is asked for when a change touches what only a human drives** --
 named above, rather than asked for by reflex.
+
+### The two-instance harness, run at last
+
+It had been written and never started. Started, it failed twice, and both
+failures are worth more than the run that worked.
+
+**A client cannot join a Match Race that has already begun.** The client dies on
+
+```
+I_Error(): assert failed: newplayernum < MAXPLAYERS, d_clisrv.c:4094
+```
+
+which is this document's own `maxplayers` trap seen from the other end:
+`K_UpdateMatchRaceBots` fills the grid *up to `maxplayers`*, so by the time a
+level is running there is no free slot and there never will be. The harness
+therefore starts the server, lets the client connect **while the server is still
+in the menu**, and only then runs `map`. With `maxplayers 8` and `bots 4` the
+client lands in player 8 and the log says so.
+
+⚠ **Upstream, worth reporting with the others.** The code that looks for a bot to
+overwrite reads the array before checking the bound:
+
+```c
+while (playeringame[nobotoverwrite]
+&& players[nobotoverwrite].bot
+&& nobotoverwrite < MAXPLAYERS)
+```
+
+An out-of-bounds read, and the assert underneath only notices the damage
+afterwards.
+
+**Two instances in one folder share one log.** On Windows `i_main.cpp` ends at
+`fopen("latest-log.txt", "wt+")` -- a path relative to the process, not to
+`-home`, which it ignores. So the second instance overwrites the first, and a
+"server" log came back talking about the client's config file. It computes a
+`-logdir`/`-logfile` path just above and then does not use it on this platform.
+
+The harness gives the client **its own copy of the executable** in `clienthome`,
+with `RINGRACERSWADDIR` pointing back at the game data: nothing is duplicated but
+the exe, and each instance gets its own `latest-log.txt`. Fixing `i_main.cpp`
+would be one line but would move `latest-log.txt` for every recipe in this
+document, so the copy is cheaper.
+
+**What it proves so far**: server and client connect, race together, and both
+survive to a scripted `quit`. No rollback is exercised yet -- that is the next
+step, and it is the first thing here that needs the harness rather than the
+harness needing it.
 
 ### Before phase 4 -- two instances with latency
 
