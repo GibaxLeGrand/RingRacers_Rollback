@@ -1648,6 +1648,14 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 	// neither on its own.
 	if (records)
 		K_ReportRecordDifferences(cmd, recsa, recsb);
+	else if (recsa == NULL || recsb == NULL)
+	{
+		// Not the same thing as running out of memory, and mistaking one for the
+		// other cost two readings of a log: this caller never asks for the
+		// per-object pass at all.
+		CONS_Printf("%s: no per-object comparison here -- this command does not collect one\n",
+			cmd);
+	}
 	else
 		CONS_Printf("%s: no memory for the per-object comparison\n", cmd);
 
@@ -2301,6 +2309,94 @@ static void Command_RollbackKeep_f(void)
 	CONS_Printf("rollback_keep: %s\n", g_keeping ? "on" : "off");
 }
 
+/** Names the fields two inputs disagree on, decoded rather than left in hex.
+  *
+  * The snapshot comparison can only say "cmd, 204 bytes into their record",
+  * which then wants a ticcmd laid out by hand -- and the two fields that turned
+  * up that way, angle and bot.turnconfirm, are exactly the ones a bot computes
+  * for itself. Naming them costs eleven lines.
+  *
+  * \return out, which is empty when the two agree.
+  */
+static const char *K_NameTiccmdDifferences(char *out, size_t outsize,
+	const ticcmd_t *a, const ticcmd_t *b)
+{
+	int32_t n = 0;
+
+	out[0] = '\0';
+
+#define ROLLBACK_CMDFIELD(name, value) \
+	if ((a->value) != (b->value) && n < (int32_t)outsize - 48) \
+	{ \
+		n += snprintf(out + n, outsize - n, "%s%s %d vs %d", \
+			(n > 0 ? ", " : ""), name, (int32_t)(a->value), (int32_t)(b->value)); \
+	}
+
+	ROLLBACK_CMDFIELD("forwardmove", forwardmove)
+	ROLLBACK_CMDFIELD("turning", turning)
+	ROLLBACK_CMDFIELD("angle", angle)
+	ROLLBACK_CMDFIELD("throwdir", throwdir)
+	ROLLBACK_CMDFIELD("aiming", aiming)
+	ROLLBACK_CMDFIELD("buttons", buttons)
+	ROLLBACK_CMDFIELD("latency", latency)
+	ROLLBACK_CMDFIELD("flags", flags)
+	ROLLBACK_CMDFIELD("bot.turnconfirm", bot.turnconfirm)
+	ROLLBACK_CMDFIELD("bot.spindashconfirm", bot.spindashconfirm)
+	ROLLBACK_CMDFIELD("bot.itemconfirm", bot.itemconfirm)
+
+#undef ROLLBACK_CMDFIELD
+
+	return out;
+}
+
+/** Says whether the replay left behind the inputs the present was holding.
+  *
+  * cmd and oldcmd are inputs, not simulated state: the replay hands each tic the
+  * input that ran, so it ends holding the last one, while the world it is
+  * compared against was holding the input for the tic about to run. Putting them
+  * back is part of leaving the world where this found it -- but a difference put
+  * back silently is a difference nobody can see, so it is named and counted
+  * first, and the count prints even when it is zero.
+  *
+  * \return how many differences were named.
+  */
+static uint32_t K_ReportReplayInputs(const char *cmd,
+	const ticcmd_t *livecmd, const ticcmd_t *liveold)
+{
+	char fields[192];
+	uint32_t named = 0;
+	int32_t i;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (!playeringame[i])
+			continue;
+
+		K_NameTiccmdDifferences(fields, sizeof (fields), &livecmd[i], &players[i].cmd);
+
+		if (fields[0] != '\0')
+		{
+			CONS_Printf("%s: player %d (%s) cmd, present vs replay -- %s\n",
+				cmd, i, player_names[i], fields);
+			named++;
+		}
+
+		K_NameTiccmdDifferences(fields, sizeof (fields), &liveold[i], &players[i].oldcmd);
+
+		if (fields[0] != '\0')
+		{
+			CONS_Printf("%s: player %d (%s) oldcmd, present vs replay -- %s\n",
+				cmd, i, player_names[i], fields);
+			named++;
+		}
+	}
+
+	CONS_Printf("%s: %u input difference(s) named, all put back before the comparison\n",
+		cmd, named);
+
+	return named;
+}
+
 /** Console command: rollback_replay [tics]
   *
   * Rewinds that many tics and replays them with the inputs that really ran,
@@ -2315,7 +2411,7 @@ static void Command_RollbackReplay_f(void)
 	uint32_t us;
 	int32_t n = 4;
 	int32_t i;
-	ticcmd_t pending[MAXPLAYERS], pendingold[MAXPLAYERS];
+	ticcmd_t livecmd[MAXPLAYERS], liveold[MAXPLAYERS];
 	int32_t ran = 0;
 	tic_t from, t, now;
 	tic_t ltbefore, ltafter, ltloaded;
@@ -2367,6 +2463,18 @@ static void Command_RollbackReplay_f(void)
 	from = now - (tic_t)n;
 	ltbefore = leveltime;
 
+	// The input each player is holding for the tic the game is about to run --
+	// read here, from the living world, because a local snapshot carries cmd and
+	// oldcmd. Read after the restore below, this was the input of the tic the
+	// replay starts from, and putting *that* back afterwards left the world
+	// holding a pair it had never held. Six replays out of six said so, on a
+	// bot's cmd.
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		livecmd[i] = players[i].cmd;
+		liveold[i] = players[i].oldcmd;
+	}
+
 	if (!K_LoadGameState(from))
 	{
 		CONS_Printf("rollback_replay: no snapshot for tic %s -- turn rollback_keep "
@@ -2375,17 +2483,6 @@ static void Command_RollbackReplay_f(void)
 	}
 
 	ltloaded = leveltime;
-
-	// The input each player is holding for the tic the game is about to run.
-	// The loop below overwrites it with the input of the last tic it replays,
-	// and a local snapshot carries cmd -- so without this the comparison
-	// reports a difference in player 0's cmd and nothing else, which is
-	// bookkeeping rather than a world that went somewhere different.
-	for (i = 0; i < MAXPLAYERS; i++)
-	{
-		pending[i] = players[i].cmd;
-		pendingold[i] = players[i].oldcmd;
-	}
 
 	// The inputs of each tic as the netcode recorded them, rather than one tic's
 	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
@@ -2416,14 +2513,21 @@ static void Command_RollbackReplay_f(void)
 	// world this was compared against stands.
 	gametic = now + 1;
 
-	for (i = 0; i < MAXPLAYERS; i++)
-	{
-		players[i].cmd = pending[i];
-		players[i].oldcmd = pendingold[i];
-	}
-
+	// Stopped before anything is printed: CONS_Printf writes to the log as well
+	// as the console, which costs milliseconds, and the per-tic figure below is
+	// the whole point of the command.
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
 	ltafter = leveltime;
+
+	// Named before they are put back, so the log still carries what the replay
+	// had arrived at rather than what this wrote over it.
+	K_ReportReplayInputs("rollback_replay", livecmd, liveold);
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		players[i].cmd = livecmd[i];
+		players[i].oldcmd = liveold[i];
+	}
 
 	if (!K_WriteSnapshot(g_first, now))
 	{
