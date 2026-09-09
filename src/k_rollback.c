@@ -2572,6 +2572,13 @@ static void Command_RollbackSoak_f(void)
 
 	CONS_Printf("rollback_soak: checking every %d tics, resimulating %d tics each time. "
 		"Silence means agreement.\n", g_soakinterval, g_soaktics);
+
+	// What it is about to soak, said once at the start rather than only on the
+	// first failure. A run that never fails otherwise records five hundred
+	// checks against no map and no mode at all, which is a number nobody can
+	// use -- and a run that switched mode with -random may not be on the map
+	// its config named.
+	K_PrintGrid("rollback_soak");
 }
 
 /** Runs a soak check when one is due. Called once per tic from G_Ticker.

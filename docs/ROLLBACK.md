@@ -1095,6 +1095,39 @@ also runs scheduled commands -- real side effects that must not happen twice. So
 a local snapshot leaves it out, gated like `tilt` and the debris roll. Fifth
 member of the presentation family.
 
+### The breadth soaks, run at last -- and two of the three do not count yet
+
+`soak_battle.cfg`, `soak_gp.cfg` and `soak_encore.cfg` had been written and never
+started. Started:
+
+| | checks | failures | context |
+|---|---|---|---|
+| Battle | 390 | **1** | Battle mode, but on **RR_TESTRUN** |
+| Grand Prix | 520 | 0 | **not verified** |
+| Encore | 530 | 0 | **not verified** |
+
+**Battle switched mode but not map.** `map -gametype Battle -random` moved the
+gametype -- the log says `WARNING: No Deathmatch starts in this map!`, which is a
+Battle-rules complaint -- and then landed on `RR_TESTRUN`. Battle *rules* were
+soaked; a Battle *arena* was not. `forcebots 1` worked: sixteen racers, fifteen
+bots, in a gametype whose rules carry no `GTR_BOTS`.
+
+Its one failure is named: `MT_DASHRING`, 71 bytes into an 81-byte record,
+`0x1d` to `0x17`, same diff masks both sides. First `MT_DASHRING` this project
+has seen, and the first failure found on a map other than Northern District.
+
+**Grand Prix and Encore cannot be counted, and that is an instrument fault.**
+`K_PrintGrid` prints the map, grid and mode, but only from a *verbose* check --
+so a run that never fails never says what it ran on. Five hundred and twenty
+clean checks against an unnamed map and an unnamed mode is a number nobody can
+use, and this document says as much two sections above about somebody else's
+numbers. `rollback_soak` announces its context at the start now. Both want
+re-running before they are believed.
+
+⚠ **Worth keeping separately**: a scenario that switches mode with `-random` may
+not end up on the map its filename promises. The context line is the only thing
+that would ever say so.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
