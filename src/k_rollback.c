@@ -3158,6 +3158,28 @@ static uint32_t g_arrivals;      // inputs that arrived for a tic already run
 static uint32_t g_contradicted;  // of those, how many said something different
 static uint32_t g_unrecorded;    // and how many the ring could no longer vouch for
 static uint32_t g_blame[MAXPLAYERS];  // which player's input the guess got wrong
+static dboolean g_localwrong;    // and whether one of them was us
+static tic_t g_lastcorrection;   // when the world was last reconciled
+static uint32_t g_deferred;      // corrections the rate limit held back
+
+// How often the world is reconciled for somebody else's misprediction.
+//
+// Correcting on every contradicted input cost 2476 rollbacks in two minutes,
+// each replaying twelve tics -- seventeen milliseconds of replay against a
+// 28.6 ms budget, permanently, which is what the stutter was. Most of those
+// contradictions are an angle moving by a hair.
+//
+// A car is predictable: left alone, the engine's own physics carries a kart
+// forward on its momentum and heading, which is dead reckoning done by the
+// simulation rather than by us. What that buys is time -- the predicted world
+// stays close for a while, so the correction can be paid for once every so often
+// instead of on every packet.
+//
+// ⚠ It cannot be skipped altogether. This is deterministic lockstep: an input
+// that is wrong and never corrected is baked into our world for good, and two
+// worlds that drift apart never come back together. So this is a rate, not a
+// tolerance, and every reconciliation makes the world exact again.
+#define ROLLBACK_RECONCILE_EVERY 12
 static tic_t g_correctfrom;      // the oldest tic that would have to be replayed
 static dboolean g_havecorrection;
 static uint32_t g_corrections;   // rollbacks the loop has actually performed
@@ -3207,6 +3229,12 @@ void K_RollbackNoteArrival(tic_t tic)
 
 		g_contradicted++;
 		g_blame[i]++;
+
+		// Our own input is never a guess -- it came off this machine's keyboard.
+		// If it disagrees with what the server used, something is wrong that
+		// waiting will not fix, and it is the one case worth a rollback at once.
+		if (i == g_localplayers[0])
+			g_localwrong = true;
 
 		if (g_havecorrection == false || tic < g_correctfrom)
 		{
@@ -3448,6 +3476,16 @@ dboolean K_RollbackPending(tic_t *from)
 	if (g_havecorrection == false || g_loopahead <= 0)
 		return false;
 
+	// Somebody else's input being off by a hair is not worth rewinding the world
+	// for, and doing it anyway was the whole cost of this loop. Their kart keeps
+	// its momentum in the meantime, which is the engine dead-reckoning them for
+	// free. Ours is different: it is not a prediction at all.
+	if (g_localwrong == false && (gametic - g_lastcorrection) < ROLLBACK_RECONCILE_EVERY)
+	{
+		g_deferred++;
+		return false;
+	}
+
 	if (from != NULL)
 		*from = g_correctfrom;
 
@@ -3485,6 +3523,8 @@ void K_RollbackCorrect(void)
 
 	g_corrections++;
 	g_replayedtics += (uint32_t)ran;
+	g_lastcorrection = gametic;
+	g_localwrong = false;
 }
 
 /** Console command: rollback_loop [0/1]
@@ -3530,6 +3570,9 @@ static void Command_RollbackLoop_f(void)
 	CONS_Printf("rollback_loop: %u corrections so far, %u tics replayed by them, "
 		"%u reached further back than the ring\n",
 		g_corrections, g_replayedtics, g_unreachable);
+	CONS_Printf("rollback_loop: %u more were deferred -- somebody else's input off by "
+		"a hair, which their momentum covers until the next reconciliation\n",
+		g_deferred);
 }
 
 /** Console command: rollback_lag [tics]
