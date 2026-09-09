@@ -3403,6 +3403,13 @@ static void Command_RollbackLoop_f(void)
 
 	CONS_Printf("rollback_loop: running up to %d tics ahead of the server "
 		"(the cap allows %d)\n", g_loopahead, K_RollbackPredictAhead());
+
+	// The two conditions the predict block is gated on, printed rather than
+	// assumed. The tic loop never counted a single pass, and the command that
+	// says so runs on the same machine at the same point of the same function,
+	// so whichever of these is false is the whole answer.
+	CONS_Printf("rollback_loop: this machine is the %s, gamestate %d (a level is %d)\n",
+		(client ? "client" : "server"), (int32_t)gamestate, (int32_t)GS_LEVEL);
 	CONS_Printf("rollback_loop: %u tics were run before the server confirmed them, furthest ahead %d\n",
 		g_predicted, g_furthestahead);
 	CONS_Printf("rollback_loop: over %u tic loops the server was ahead by %d at worst, %d on average -- a client with nothing to wait for has nothing to predict\n",
