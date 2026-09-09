@@ -6764,6 +6764,7 @@ dboolean TryRunTics(tic_t realtics)
 {
 	dboolean ticking;
 	tic_t runto;   // how far the loop below may go: neededtic, plus prediction
+	int32_t predictedthispass = 0;   // and how many of those tics were guesses
 
 	// the machine has lagged but it is not so bad
 	if (realtics > TICRATE/7) // FIXME: consistency failure!!
@@ -6846,6 +6847,28 @@ dboolean TryRunTics(tic_t realtics)
 				K_RollbackRewindTaken();
 			}
 		}
+
+		// One predicted tic to a pass, when the pacing switch is on.
+		//
+		// A pass makes exactly one sample of the player's controls: NetUpdate
+		// calls Local_Maketic at the top of this function, and returns early
+		// unless a real tic has elapsed. The loop below then runs every tic the
+		// network has handed us plus the prediction depth, and gives them all
+		// that one sample, while the server -- which receives one sample a pass
+		// and spends one a tic -- has a distinct input for each. Measured as our
+		// own turning and angle frozen across four tics while the server's moved
+		// on every one of them.
+		//
+		// Confirmed tics are never held back by this: they carry their own
+		// inputs, and a client that has fallen behind has to be free to catch up.
+		// Only the guessing is paced.
+		if (K_RollbackPacing())
+		{
+			const tic_t frontier = (gametic > neededtic) ? gametic : neededtic;
+
+			if (runto > frontier + 1)
+				runto = frontier + 1;
+		}
 	}
 
 	ticking = runto > gametic;
@@ -6877,6 +6900,7 @@ dboolean TryRunTics(tic_t realtics)
 				// Nobody has told us what happens in this tic yet, so repeat
 				// what everyone was last holding.
 				K_RollbackPredictInputs(gametic, (int32_t)(gametic - neededtic));
+				predictedthispass++;
 			}
 
 			DEBFILE(va("============ Running tic %d (local %d)\n", gametic, localgametic));
@@ -7006,6 +7030,12 @@ dboolean TryRunTics(tic_t realtics)
 		if (realtics)
 			hu_stopped = true;
 	}
+
+	// How many predicted tics this pass ran, counted for every pass including the
+	// ones that ran nothing -- a pass makes a sample whether or not the loop
+	// spends it, and how many go unspent is half of the question.
+	if (client && gamestate == GS_LEVEL)
+		K_RollbackNotePass(predictedthispass);
 
 	return ticking;
 }

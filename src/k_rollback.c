@@ -3219,6 +3219,89 @@ static uint32_t g_corrections;   // rollbacks the loop has actually performed
 static uint32_t g_replayedtics;  // tics those rollbacks replayed
 static uint32_t g_unreachable;   // corrections wanted from before the ring reaches
 
+// The inputs this machine ran its own player on, kept by tic.
+//
+// When the server's copy of one of them comes back, this says *which* of our
+// samples it is, and therefore how far out of step our labelling is. Deeper than
+// the snapshot ring on purpose: the question is about the network's round trip,
+// not about how far back a correction can reach.
+#define ROLLBACK_LOCALTRAIL 64
+static tic_t g_trailtic[ROLLBACK_LOCALTRAIL];
+static ticcmd_t g_trailcmd[ROLLBACK_LOCALTRAIL];
+static dboolean g_trailheld[ROLLBACK_LOCALTRAIL];
+
+// Where the server put an input against where we ran it. Two guesses at this
+// offset -- mindelay at two tics, then maketic labelling at twelve -- were both
+// wrong, and both were guesses. A histogram cannot be guessed at.
+#define ROLLBACK_OFFSPAN 24
+static uint32_t g_offsetseen[(2 * ROLLBACK_OFFSPAN) + 1];
+static uint32_t g_offsetfar;   // matched, but further out than the histogram reaches
+static uint32_t g_offsetlost;  // the server used an input we never ran a tic on
+
+/** How far apart two tics are, either way round.
+  *
+  * tic_t is unsigned, so the ordinary subtraction is a trap.
+  */
+static tic_t K_TicDistance(tic_t a, tic_t b)
+{
+	return (a > b) ? (a - b) : (b - a);
+}
+
+/** Keeps the input a predicted tic ran our own player on. */
+static void K_RollbackTrailLocal(tic_t tic, const ticcmd_t *cmd)
+{
+	const size_t at = (size_t)(tic % ROLLBACK_LOCALTRAIL);
+
+	g_trailtic[at] = tic;
+	g_trailcmd[at] = *cmd;
+	g_trailheld[at] = true;
+}
+
+/** Finds which tic, if any, this machine ran a given input on.
+  *
+  * Walks the whole trail rather than indexing it, because the question is "did
+  * we ever run this input, and when" and the answer wanted is the tic. Ties are
+  * ordinary -- somebody holding still makes the same sample over and over -- so
+  * the match nearest the tic asked about wins, which is the reading most
+  * favourable to the code being right.
+  *
+  * \return true when found, with the tic through *at.
+  */
+static dboolean K_RollbackTrailFind(const ticcmd_t *cmd, tic_t about, tic_t *at)
+{
+	dboolean found = false;
+	tic_t best = 0;
+	size_t i;
+
+	for (i = 0; i < ROLLBACK_LOCALTRAIL; i++)
+	{
+		if (g_trailheld[i] == false)
+			continue;
+
+		// A slot is only overwritten once every ROLLBACK_LOCALTRAIL tics, so an
+		// entry from a previous level survives until its turn comes round, and
+		// an input matches by value however old it is. Anything further away
+		// than the trail is long cannot be the sample this arrival is about.
+		if (K_TicDistance(g_trailtic[i], about) >= ROLLBACK_LOCALTRAIL)
+			continue;
+
+		if (K_InputsDiffer(&g_trailcmd[i], cmd))
+			continue;
+
+		if (found == false
+			|| K_TicDistance(g_trailtic[i], about) < K_TicDistance(best, about))
+		{
+			best = g_trailtic[i];
+			found = true;
+		}
+	}
+
+	if (found && at != NULL)
+		*at = best;
+
+	return found;
+}
+
 /** Called when the server's inputs for a tic land on a client.
   *
   * A rollback needs to know one thing from the network: that a tic it has
@@ -3288,6 +3371,30 @@ void K_RollbackNoteArrival(tic_t tic)
 
 				g_selfnamed++;
 			}
+
+			// And where the server put this input against where we ran it. The
+			// namer says which field disagrees; this says whether the whole
+			// sample is simply in the wrong place, and by how much. The two
+			// answers want opposite fixes: a repeated offset is a labelling
+			// error, while a sample we never ran at all means the passes are
+			// spending them unevenly.
+			{
+				tic_t ranon = 0;
+
+				if (K_RollbackTrailFind(&netcmds[tic % BACKUPTICS][i], tic, &ranon))
+				{
+					const int32_t off = (int32_t)((int64_t)tic - (int64_t)ranon);
+
+					if (off >= -ROLLBACK_OFFSPAN && off <= ROLLBACK_OFFSPAN)
+						g_offsetseen[off + ROLLBACK_OFFSPAN]++;
+					else
+						g_offsetfar++;
+				}
+				else
+				{
+					g_offsetlost++;
+				}
+			}
 		}
 
 		if (g_havecorrection == false || tic < g_correctfrom)
@@ -3352,7 +3459,48 @@ static void Command_RollbackDetect_f(void)
 		}
 	}
 
+	// Where the server put our own input against where we ran it.
+	//
+	// One offset repeated says the labelling is out of step, and by how much,
+	// which is a small fix. A sample the server used that this machine never ran
+	// a tic on says something else entirely: a pass makes one sample and the tic
+	// loop can spend several tics on it, so the ones in between are made, sent,
+	// and never used here. Those two readings want opposite fixes, they have been
+	// argued about twice without either being measured, and this is the
+	// measurement.
+	{
+		uint32_t placed = 0;
+		int32_t off;
+
+		for (off = -ROLLBACK_OFFSPAN; off <= ROLLBACK_OFFSPAN; off++)
+			placed += g_offsetseen[off + ROLLBACK_OFFSPAN];
+
+		if (placed > 0 || g_offsetfar > 0 || g_offsetlost > 0)
+		{
+			CONS_Printf("rollback_detect: of our own inputs the server sent back, "
+				"%u were samples this machine did run a tic on, %u were further "
+				"out than %d tics, and %u it never ran at all\n",
+				placed, g_offsetfar, ROLLBACK_OFFSPAN, g_offsetlost);
+
+			for (off = -ROLLBACK_OFFSPAN; off <= ROLLBACK_OFFSPAN; off++)
+			{
+				const uint32_t seen = g_offsetseen[off + ROLLBACK_OFFSPAN];
+
+				if (seen == 0)
+					continue;
+
+				CONS_Printf("rollback_detect:   the server used it %d tic(s) %s, %u times\n",
+					(off < 0 ? -off : off),
+					(off > 0 ? "later than we did" :
+						(off < 0 ? "earlier than we did" : "on the very tic we did")),
+					seen);
+			}
+		}
+	}
+
 	g_arrivals = g_contradicted = g_unrecorded = g_selfnamed = 0;
+	g_offsetfar = g_offsetlost = 0;
+	memset(g_offsetseen, 0, sizeof (g_offsetseen));
 	g_havecorrection = false;
 }
 
@@ -3377,6 +3525,28 @@ static int32_t g_bestlead;       // the furthest ahead the loop ever ENDED a pas
 static int32_t g_worstlead;      // and the furthest behind
 static int64_t g_leadsum;        // to say what it typically ends at
 static uint32_t g_leadsamples;
+
+// How many predicted tics one pass of the tic loop runs.
+//
+// The player's controls are sampled once a pass: NetUpdate calls Local_Maketic
+// at the top of TryRunTics and returns early when no real tic has elapsed. The
+// tic loop underneath it then runs as many tics as the network has handed it,
+// plus the prediction depth -- and every predicted tic in that pass is run on
+// that one sample, while the server, which receives one sample a pass and spends
+// one a tic, has a distinct input for each of them.
+//
+// That is the shape the namer printed: our own turning and angle frozen across
+// four tics while the server's moved on every one. Counted here rather than
+// assumed, because "the loop runs up to twelve tics in one pass" is an inference
+// from a symptom, and two fixes built on inferences of exactly that kind have
+// already been written, measured and reverted.
+static uint32_t g_passes;           // tic loop passes taken while the loop was on
+static uint32_t g_passespredicting; // of those, passes that predicted anything
+static uint32_t g_passesburst;      // and passes that predicted more than one tic
+static int32_t g_worstburst;        // the most predicted tics one pass ever ran
+static int64_t g_burstsum;          // to say what a predicting pass typically runs
+
+static dboolean g_pacing;           // one predicted tic to a pass; off by default
 
 /** How far ahead a predicted client may get.
   *
@@ -3444,6 +3614,44 @@ void K_RollbackNoteTicLoopEnd(int32_t lead)
 	g_leadsamples++;
 }
 
+/** Records how many predicted tics one pass of the tic loop ran.
+  *
+  * A pass makes exactly one sample of the player's controls, so a pass that
+  * predicts several tics spends that single sample on all of them. This is the
+  * count that says whether that happens at all, and how badly.
+  */
+void K_RollbackNotePass(int32_t predicted)
+{
+	if (g_loopahead <= 0)
+		return;
+
+	g_passes++;
+
+	if (predicted <= 0)
+		return;
+
+	g_passespredicting++;
+	g_burstsum += predicted;
+
+	if (predicted > 1)
+		g_passesburst++;
+
+	if (predicted > g_worstburst)
+		g_worstburst = predicted;
+}
+
+/** True when the loop may run only one predicted tic per pass.
+  *
+  * The candidate fix for the frozen input column, and off by default so the
+  * measurement above can be taken with it off and again with it on inside one
+  * played race. Confirmed tics are never held back by it: they carry their own
+  * inputs, and a client that has fallen behind has to be free to catch up.
+  */
+dboolean K_RollbackPacing(void)
+{
+	return (g_loopahead > 0 && g_pacing);
+}
+
 /** Fills a tic's inputs with the last thing each player was known to be doing.
   *
   * Repeat-last is the standard prediction and the right first one: it is correct
@@ -3484,6 +3692,11 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 
 		netcmds[tic % BACKUPTICS][who] = *D_LocalTiccmd((uint8_t)i);
 		netcmds[tic % BACKUPTICS][who].flags |= TICCMD_RECEIVED;
+
+		// Kept so that when the server sends this same input back, the arrival
+		// can say which of our samples it was and what tic we spent it on.
+		if (i == 0)
+			K_RollbackTrailLocal(tic, &netcmds[tic % BACKUPTICS][who]);
 	}
 
 	for (i = 0; i < MAXPLAYERS; i++)
@@ -3629,6 +3842,58 @@ static void Command_RollbackLoop_f(void)
 		g_deferred);
 	CONS_Printf("rollback_loop: %u tics were handed back to the real loop because a "
 		"message landed on them\n", g_rewinds);
+
+	// One pass, one sample of the controls. Anything past the first predicted tic
+	// in a pass runs on an input the server has no copy of for that tic, and this
+	// says how often that happens rather than how often it might.
+	CONS_Printf("rollback_loop: %u passes, %u predicted something, %u predicted more "
+		"than one tic -- worst %d, %d typically. The controls are sampled once a "
+		"pass, so every tic past the first in one runs on a sample the server does "
+		"not have for it\n",
+		g_passes, g_passespredicting, g_passesburst, g_worstburst,
+		(int32_t)(g_passespredicting ? (g_burstsum / (int64_t)g_passespredicting) : 0));
+
+	// Printed here as well as by rollback_pace, because the figures above mean
+	// opposite things either side of it and a log read a week later has only
+	// what was printed.
+	CONS_Printf("rollback_loop: pacing was %s\n",
+		(g_pacing ? "ON -- one predicted tic to a pass"
+			: "off -- as many predicted tics in a pass as the depth allows"));
+}
+
+/** Console command: rollback_pace [0/1]
+  *
+  * One predicted tic to a pass, which is how many samples of the player's
+  * controls a pass makes. Off by default, and separate from rollback_loop on
+  * purpose: the counters above want reading once with it off and once with it on
+  * inside the same race, or the comparison is between two different evenings.
+  */
+static void Command_RollbackPace_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_pacing = (atoi(COM_Argv(1)) != 0);
+
+		// Every counter this changes is reset with it. A rate measured half
+		// before a change and half after is not a rate of anything.
+		g_passes = g_passespredicting = g_passesburst = 0;
+		g_worstburst = 0;
+		g_burstsum = 0;
+		g_predicted = 0;
+		g_furthestahead = 0;
+		g_corrections = 0;
+		g_replayedtics = 0;
+		g_offsetfar = 0;
+		g_offsetlost = 0;
+		memset(g_offsetseen, 0, sizeof (g_offsetseen));
+	}
+
+	CONS_Printf("rollback_pace: %s\n",
+		(g_pacing
+			? "on -- at most one predicted tic per pass, so each one gets its own "
+				"sample of the controls"
+			: "off -- the loop predicts as far as it may in a single pass, sharing "
+				"one sample between those tics"));
 }
 
 /** A message arrived for a tic this client has already predicted.
@@ -3810,4 +4075,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_detect", Command_RollbackDetect_f);
 	COM_AddDebugCommand("rollback_loop", Command_RollbackLoop_f);
 	COM_AddDebugCommand("rollback_lag", Command_RollbackLag_f);
+	COM_AddDebugCommand("rollback_pace", Command_RollbackPace_f);
 }

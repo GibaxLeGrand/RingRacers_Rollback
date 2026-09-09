@@ -55,6 +55,12 @@ void K_RollbackNoteTicLoop(int32_t behind);
 /** Records the lead the client is left with when a tic loop finishes. */
 void K_RollbackNoteTicLoopEnd(int32_t lead);
 
+/** Records how many predicted tics one pass of the tic loop ran. */
+void K_RollbackNotePass(int32_t predicted);
+
+/** True when the loop may run only one predicted tic per pass of TryRunTics. */
+dboolean K_RollbackPacing(void);
+
 /** True while a correction is re-running tics. Sound and other outside-the-world
   * effects should sit those out: the tic already happened once. */
 dboolean K_RollbackReplaying(void);
