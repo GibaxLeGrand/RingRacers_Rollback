@@ -1445,6 +1445,41 @@ without checking. Every finding that held today came from reading the line
 instead -- `netticbuffer`, `D_Clearticcmd`, `K_CheckSpectateStatus`, the keeper's
 position mid-tic.
 
+### The self-misprediction, named at last
+
+The ticcmd namer, pointed at our own input, answers in four lines:
+
+```
+tic 2085: used turning 0 vs -211, angle -6109 vs -6201, buttons 5 vs 1
+tic 2086: used turning 0 vs -800, angle -6109 vs -6411, buttons 5 vs 1
+tic 2087: used turning 0 vs -800, angle -6109 vs -6742
+tic 2088: used turning 0 vs -800, angle -6109 vs -7101
+```
+
+**The left column is frozen across four tics** -- `turning 0`, `angle -6109`,
+unchanged -- while the server has four different values that move. We are
+applying *one* input to several tics.
+
+`localcmds[0][0]` is refreshed once per **frame**, in `Local_Maketic`. The loop
+runs up to twelve tics inside one frame when it is leading. Those twelve share a
+single sample of the player's input; the server has twelve distinct ones. The
+offset was never `mindelay` (two tics) or `maketic` labelling (twelve) -- both
+were guessed and both were wrong. **The input is sampled at frame rate and
+consumed at tic rate**, and running ahead is what makes the difference visible.
+
+`buttons 5 vs 1` says the same thing from the other side: we hold ACCEL|DRIFT
+frozen while the server has ACCEL alone.
+
+**Two ways out, and Rocket League took the second.** Sample the input once per
+predicted tic; or advance at most one tic per frame and let the server pace the
+client -- their *upstream throttle*, "buffer low? client runs extra physics
+frames; buffer full? client runs fewer".
+
+**And a second pattern, later in the race:** `flags 1 vs 128`. `TICCMD_BOT` -- the
+server is driving our player as a bot, having replaced them. That is the
+consequence of the desync rather than its cause, and it is what "became a
+spectator on the server" was.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
