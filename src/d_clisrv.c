@@ -5945,8 +5945,15 @@ static void HandlePacketFromPlayer(int8_t node)
 						int32_t k = *txtpak++; // playernum
 						const size_t txtsize = ((uint16_t*)txtpak)[0]+2;
 
-						if (i >= gametic) // Don't copy old net commands
+						// Kept even for a tic already run, when the loop is on:
+						// dropping it is how the client and the server ended up
+						// disagreeing about who was a spectator. The tic is handed
+						// back to the real loop below so the message actually runs.
+						if (i >= gametic || K_RollbackPredictAhead() > 0)
 							M_Memcpy(D_GetTextcmd(i, k), txtpak, txtsize);
+
+						if (i < gametic && numtxtpak > 0)
+							K_RollbackNoteMessage(i);
 						txtpak += txtsize;
 					}
 				}
@@ -6821,6 +6828,24 @@ dboolean TryRunTics(tic_t realtics)
 		// since contradicted, so the world the loop below starts from is the
 		// corrected one.
 		K_RollbackCorrect();
+
+		// And if a message landed on a tic already predicted, give that tic back
+		// to this loop rather than replaying it inside a correction: netxcmds are
+		// run by ExtraDataTicker below, which the correction path never reaches.
+		{
+			tic_t back;
+
+			if (K_RollbackRewindWanted(&back) && back < gametic)
+			{
+				if (K_LoadGameState(back))
+				{
+					gametic = back;
+					runto = neededtic + (tic_t)K_RollbackPredictAhead();
+				}
+
+				K_RollbackRewindTaken();
+			}
+		}
 	}
 
 	ticking = runto > gametic;

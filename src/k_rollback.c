@@ -2733,6 +2733,18 @@ static uint32_t K_ReportReplayInputs(const char *cmd,
 	return named;
 }
 
+static dboolean g_replaying;     // true while a correction is re-running tics
+
+/** True while a correction is re-running tics that have already been played.
+  *
+  * Anything that reaches outside the simulation -- sound, most obviously --
+  * should sit the replay out. The tic happened once already.
+  */
+dboolean K_RollbackReplaying(void)
+{
+	return g_replaying;
+}
+
 /** True when two inputs say the player pressed different things.
   *
   * Not a memcmp. A ticcmd also carries latency and flags, and neither is
@@ -2754,6 +2766,7 @@ static dboolean K_InputsDiffer(const ticcmd_t *a, const ticcmd_t *b)
 		|| a->bot.spindashconfirm != b->bot.spindashconfirm
 		|| a->bot.itemconfirm != b->bot.itemconfirm);
 }
+
 
 #define ROLLBACK_FEEDKEPT 6
 
@@ -2800,8 +2813,19 @@ static int32_t K_RollbackTo(tic_t from, tic_t now, rollbackfeed_t *feed)
 
 	memset(feed, 0, sizeof (*feed));
 
+	// A replayed tic makes the same sounds the tic made the first time, and a
+	// correction every few tics turns that into every sound firing over and over.
+	// Gibax heard it before any counter reported it: "le son est complètement
+	// buggé". Silencing the replay is the standard treatment -- the tics already
+	// happened once, audibly, and the point of re-running them is the world, not
+	// the noise.
+	g_replaying = true;
+
 	if (!K_LoadGameState(from))
+	{
+		g_replaying = false;
 		return -1;
+	}
 
 	feed->loaded = leveltime;
 
@@ -2889,6 +2913,7 @@ static int32_t K_RollbackTo(tic_t from, tic_t now, rollbackfeed_t *feed)
 	// as well as the console and costs milliseconds, and the per-tic figure is
 	// the whole point of measuring at all.
 	feed->us = K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_replaying = false;
 
 	return ran;
 }
@@ -3159,6 +3184,14 @@ static uint32_t g_contradicted;  // of those, how many said something different
 static uint32_t g_unrecorded;    // and how many the ring could no longer vouch for
 static uint32_t g_blame[MAXPLAYERS];  // which player's input the guess got wrong
 static dboolean g_localwrong;    // and whether one of them was us
+static uint32_t g_selfnamed;     // how many self-mispredictions have been spelled out
+static dboolean g_rewindwanted;  // a netxcmd landed on a tic we had already predicted
+static tic_t g_rewindto;
+static uint32_t g_rewinds;       // how many times that has happened
+
+// Enough to see the shape without filling the log: the same field wrong every
+// time says something different from a different field each time.
+#define ROLLBACK_SELFNAMED 8
 static tic_t g_lastcorrection;   // when the world was last reconciled
 static uint32_t g_deferred;      // corrections the rate limit held back
 
@@ -3234,7 +3267,28 @@ void K_RollbackNoteArrival(tic_t tic)
 		// If it disagrees with what the server used, something is wrong that
 		// waiting will not fix, and it is the one case worth a rollback at once.
 		if (i == g_localplayers[0])
+		{
 			g_localwrong = true;
+
+			// Which field, not just how often. Every contradiction measured so
+			// far has been this machine disagreeing with itself, and two guesses
+			// at the size of the offset -- mindelay, then maketic -- both missed.
+			// The ticcmd namer has existed since this morning; this is what it
+			// was for.
+			if (g_selfnamed < ROLLBACK_SELFNAMED)
+			{
+				char fields[192];
+
+				K_NameTiccmdDifferences(fields, sizeof (fields),
+					&used[i], &netcmds[tic % BACKUPTICS][i]);
+
+				CONS_Printf("rollback_detect: tic %s, our own input -- used %s\n",
+					sizeu1((size_t)tic),
+					(fields[0] != '\0') ? fields : "the same fields, different padding");
+
+				g_selfnamed++;
+			}
+		}
 
 		if (g_havecorrection == false || tic < g_correctfrom)
 		{
@@ -3298,7 +3352,7 @@ static void Command_RollbackDetect_f(void)
 		}
 	}
 
-	g_arrivals = g_contradicted = g_unrecorded = 0;
+	g_arrivals = g_contradicted = g_unrecorded = g_selfnamed = 0;
 	g_havecorrection = false;
 }
 
@@ -3573,6 +3627,57 @@ static void Command_RollbackLoop_f(void)
 	CONS_Printf("rollback_loop: %u more were deferred -- somebody else's input off by "
 		"a hair, which their momentum covers until the next reconciliation\n",
 		g_deferred);
+	CONS_Printf("rollback_loop: %u tics were handed back to the real loop because a "
+		"message landed on them\n", g_rewinds);
+}
+
+/** A message arrived for a tic this client has already predicted.
+  *
+  * Not an input: a netxcmd -- a chat line, a cvar change, somebody becoming a
+  * spectator. Those are executed by ExtraDataTicker, which only the real tic loop
+  * calls; the correction path drives G_Ticker directly and never reaches it. So
+  * replaying such a tic internally would still not run the message, and the
+  * client would stay out of step with the server about a piece of game state
+  * rather than a position -- which is exactly what a host being spectated on the
+  * server and still racing on the client looked like.
+  *
+  * The way out is not to replay it here but to *give the tic back to the normal
+  * loop*: restore that far and let TryRunTics run forward again, ExtraDataTicker
+  * included. Expensive, and netxcmds are rare enough for that to be the right
+  * trade.
+  */
+void K_RollbackNoteMessage(tic_t tic)
+{
+	if (g_loopahead <= 0 || gamestate != GS_LEVEL)
+		return;
+
+	if (tic >= gametic)
+		return;   // the normal loop will reach it on its own
+
+	if (g_rewindwanted == false || tic < g_rewindto)
+	{
+		g_rewindto = tic;
+		g_rewindwanted = true;
+	}
+}
+
+/** Hands back a tic the loop must re-run for real, or false. */
+dboolean K_RollbackRewindWanted(tic_t *tic)
+{
+	if (g_rewindwanted == false)
+		return false;
+
+	if (tic != NULL)
+		*tic = g_rewindto;
+
+	return true;
+}
+
+/** The loop has taken the rewind; forget it. */
+void K_RollbackRewindTaken(void)
+{
+	g_rewindwanted = false;
+	g_rewinds++;
 }
 
 /** Console command: rollback_lag [tics]

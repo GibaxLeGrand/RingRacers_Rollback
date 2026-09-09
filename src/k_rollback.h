@@ -55,6 +55,20 @@ void K_RollbackNoteTicLoop(int32_t behind);
 /** Records the lead the client is left with when a tic loop finishes. */
 void K_RollbackNoteTicLoopEnd(int32_t lead);
 
+/** True while a correction is re-running tics. Sound and other outside-the-world
+  * effects should sit those out: the tic already happened once. */
+dboolean K_RollbackReplaying(void);
+
+/** Tells the rollback code a netxcmd arrived for a tic, which may already have
+  * been predicted. */
+void K_RollbackNoteMessage(tic_t tic);
+
+/** True when a tic must be re-run by the real loop, message and all. */
+dboolean K_RollbackRewindWanted(tic_t *tic);
+
+/** The loop has taken that rewind. */
+void K_RollbackRewindTaken(void);
+
 /** True when a tic already run has been contradicted; the oldest one via from. */
 dboolean K_RollbackPending(tic_t *from);
 

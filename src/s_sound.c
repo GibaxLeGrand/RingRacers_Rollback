@@ -23,6 +23,7 @@
 #include "i_system.h"
 #include "i_sound.h"
 #include "s_sound.h"
+#include "k_rollback.h" // K_RollbackReplaying
 #include "w_wad.h"
 #include "z_zone.h"
 #include "d_main.h"
@@ -428,7 +429,8 @@ void S_StartSoundAtVolume(const void *origin_p, sfxenum_t sfx_id, int32_t volume
 	listener_t listener[MAXSPLITSCREENPLAYERS];
 	mobj_t *listenmobj[MAXSPLITSCREENPLAYERS];
 
-	if (S_SoundDisabled() || !sound_started)
+	// A replayed tic already made its noise the first time round.
+	if (S_SoundDisabled() || !sound_started || K_RollbackReplaying())
 		return;
 
 	// Don't want a sound? Okay then...
