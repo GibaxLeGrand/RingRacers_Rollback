@@ -6812,6 +6812,11 @@ dboolean TryRunTics(tic_t realtics)
 	{
 		runto += (tic_t)K_RollbackPredictAhead();
 
+		// How far behind the server this client is before it runs anything. If
+		// that is never zero, it never runs out of confirmed tics and predict
+		// cannot fire -- which is a fact about the connection, not the code.
+		K_RollbackNoteTicLoop((int32_t)(neededtic - gametic));
+
 		// Correct: before running anything, put right any tic the network has
 		// since contradicted, so the world the loop below starts from is the
 		// corrected one.

@@ -3254,6 +3254,9 @@ static void Command_RollbackDetect_f(void)
 static int32_t g_loopahead;      // how many tics the client may run past the server
 static uint32_t g_predicted;     // tics actually run before the server confirmed them
 static int32_t g_furthestahead;  // the most it ever got in front
+static uint32_t g_loops;         // times the tic loop was entered
+static int32_t g_mostbehind;     // the most confirmed tics waiting to be run
+static int64_t g_behindsum;      // to say what "typically" means
 
 /** How far ahead a predicted client may get.
   *
@@ -3273,6 +3276,26 @@ int32_t K_RollbackPredictAhead(void)
 		cap = ROLLBACK_TICS - 2;
 
 	return (g_loopahead < cap) ? g_loopahead : cap;
+}
+
+/** Records how far behind the server the client was when a tic loop began.
+  *
+  * A client only has something to predict when it runs out of confirmed tics. On
+  * a loopback there is no latency to run out of: the server's tics arrive before
+  * they are needed, so the client is permanently a little behind and the
+  * prediction ceiling is never reached. That is a claim about the network rather
+  * than about the code, and this is the number that decides it.
+  */
+void K_RollbackNoteTicLoop(int32_t behind)
+{
+	if (g_loopahead <= 0)
+		return;
+
+	g_loops++;
+	g_behindsum += behind;
+
+	if (behind > g_mostbehind)
+		g_mostbehind = behind;
 }
 
 /** Fills a tic's inputs with the last thing each player was known to be doing.
@@ -3382,6 +3405,9 @@ static void Command_RollbackLoop_f(void)
 		"(the cap allows %d)\n", g_loopahead, K_RollbackPredictAhead());
 	CONS_Printf("rollback_loop: %u tics were run before the server confirmed them, furthest ahead %d\n",
 		g_predicted, g_furthestahead);
+	CONS_Printf("rollback_loop: over %u tic loops the server was ahead by %d at worst, %d on average -- a client with nothing to wait for has nothing to predict\n",
+		g_loops, g_mostbehind,
+		(int32_t)(g_loops ? (g_behindsum / (int64_t)g_loops) : 0));
 	CONS_Printf("rollback_loop: %u corrections so far, %u tics replayed by them, "
 		"%u reached further back than the ring\n",
 		g_corrections, g_replayedtics, g_unreachable);
