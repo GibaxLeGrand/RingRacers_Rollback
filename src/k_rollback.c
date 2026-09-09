@@ -3157,6 +3157,7 @@ int32_t K_RollbackMaxDepth(void)
 static uint32_t g_arrivals;      // inputs that arrived for a tic already run
 static uint32_t g_contradicted;  // of those, how many said something different
 static uint32_t g_unrecorded;    // and how many the ring could no longer vouch for
+static uint32_t g_blame[MAXPLAYERS];  // which player's input the guess got wrong
 static tic_t g_correctfrom;      // the oldest tic that would have to be replayed
 static dboolean g_havecorrection;
 static uint32_t g_corrections;   // rollbacks the loop has actually performed
@@ -3205,6 +3206,7 @@ void K_RollbackNoteArrival(tic_t tic)
 			continue;
 
 		g_contradicted++;
+		g_blame[i]++;
 
 		if (g_havecorrection == false || tic < g_correctfrom)
 		{
@@ -3244,6 +3246,28 @@ static void Command_RollbackDetect_f(void)
 	else
 	{
 		CONS_Printf("rollback_detect: nothing has contradicted anything yet\n");
+	}
+
+	// Which player the guess was wrong about. "Ninety-two percent of tics
+	// contradicted" does not say whether that is one player every tic or every
+	// player occasionally, and those want opposite fixes. Named, because a local
+	// player mispredicting *itself* would be a bug of mine rather than a hard
+	// problem about guessing what other people are about to press.
+	{
+		int32_t i;
+
+		for (i = 0; i < MAXPLAYERS; i++)
+		{
+			if (g_blame[i] == 0)
+				continue;
+
+			CONS_Printf("rollback_detect: player %d (%s)%s was mispredicted %u times\n",
+				i, (playeringame[i] ? player_names[i] : "gone"),
+				(i == g_localplayers[0]) ? " -- THIS MACHINE" : "",
+				g_blame[i]);
+
+			g_blame[i] = 0;
+		}
 	}
 
 	g_arrivals = g_contradicted = g_unrecorded = 0;
