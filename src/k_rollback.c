@@ -997,6 +997,7 @@ static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, 
 {
 	uint32_t common = (before->count < after->count) ? before->count : after->count;
 	uint32_t reported = 0;
+	uint32_t differing = 0;
 	uint32_t i;
 
 	if (before->count != after->count)
@@ -1005,7 +1006,7 @@ static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, 
 			cmd, before->count, after->count);
 	}
 
-	for (i = 0; i < common && reported < 3; i++)
+	for (i = 0; i < common; i++)
 	{
 		const uint8_t *a = before->bytes + before->recs[i].offset;
 		const uint8_t *b = after->bytes + after->recs[i].offset;
@@ -1025,14 +1026,27 @@ static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, 
 			return;
 		}
 
-		CONS_Printf("%s: object %u (%s) changed: %u bytes became %u\n",
-			cmd, i, K_MobjTypeName(before->recs[i].type), la, lb);
-		K_PrintRecordMasks("  before:", a, la);
-		K_PrintRecordMasks("  after: ", b, lb);
-		reported++;
+		differing++;
+
+		// The first few in detail, the rest counted. A cap without a count is
+		// how this project once kept six findings out of an unknown number and
+		// said nothing about the others.
+		if (reported < 3)
+		{
+			CONS_Printf("%s: object %u (%s) changed: %u bytes became %u\n",
+				cmd, i, K_MobjTypeName(before->recs[i].type), la, lb);
+			K_PrintRecordMasks("  before:", a, la);
+			K_PrintRecordMasks("  after: ", b, lb);
+			reported++;
+		}
 	}
 
-	if (reported == 0 && before->count == after->count)
+	// How big the thing examined was, every time, so a number is never read
+	// without knowing what it is a number out of.
+	CONS_Printf("%s: %u objects compared, %u differed, %u shown in full\n",
+		cmd, common, differing, reported);
+
+	if (differing == 0 && before->count == after->count)
 	{
 		CONS_Printf("%s: every object came back identical, so what changed is "
 			"outside the per-object records\n", cmd);
@@ -2506,6 +2520,12 @@ static void Command_RollbackReplay_f(void)
 	if (records)
 		K_CaptureRecords(&g_recsfirst);
 
+	// And the structures themselves, keyed by mobjnum. The archived records are
+	// written under diff masks, so a place in one is not a field; an offset into
+	// mobj_t is, and the debugger turns it into a name from the pdb of the very
+	// build that printed it. That is how the player side of this was read.
+	K_CopyMobjs();
+
 	if (!K_LoadGameState(from))
 	{
 		CONS_Printf("rollback_replay: no snapshot for tic %s -- turn rollback_keep "
@@ -2555,6 +2575,10 @@ static void Command_RollbackReplay_f(void)
 
 	if (records)
 		K_CaptureRecords(&g_recssecond);
+
+	// Before the present is put back, because this compares against the world
+	// the replay arrived at.
+	K_CompareMobjs("rollback_replay");
 
 	// Named before they are put back, so the log still carries what the replay
 	// had arrived at rather than what this wrote over it.
