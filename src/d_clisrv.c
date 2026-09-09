@@ -163,7 +163,10 @@ static tic_t maketic;
 
 static int16_t consistancy[BACKUPTICS];
 
-#define BLAMELINE 192
+// Eight players at roughly thirty characters each, plus the tic and the seed sum.
+// The first cut of this was 192 and silently truncated at five players -- and a
+// line that stops early looks exactly like a line with nothing more to say.
+#define BLAMELINE 512
 static char blameline[BACKUPTICS][BLAMELINE];
 static dboolean g_blame;
 
@@ -6062,11 +6065,16 @@ static void HandlePacketFromPlayer(int8_t node)
 			// Before the state comes back and overwrites everything, say what
 			// this side thought the world was. lastconfirmedtic is the tic this
 			// client last offered, which is the one the server refused.
+			// Wide enough to cover the trip. The server refuses tic N and this
+			// notice arrives several tics later -- six at 171 ms -- so a window
+			// of three printed tics that had nothing to do with the one refused.
+			// And the seed sum changes completely every tic, so lines from two
+			// different tics cannot be compared at all.
 			if (blameline[lastconfirmedtic % BACKUPTICS][0] != '\0')
 			{
 				tic_t t;
 
-				for (t = (lastconfirmedtic > 2) ? (lastconfirmedtic - 2) : 0;
+				for (t = (lastconfirmedtic > 20) ? (lastconfirmedtic - 20) : 0;
 					t <= lastconfirmedtic; t++)
 				{
 					if (blameline[t % BACKUPTICS][0] != '\0')
