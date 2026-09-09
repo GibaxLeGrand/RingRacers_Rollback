@@ -2887,6 +2887,21 @@ static void Command_RollbackReplay_f(void)
 
 					fedcount++;
 				}
+
+				// And replay on what really ran. netcmds is not a record of the
+				// past: D_Clearticcmd zeroes the flags of every acknowledged tic,
+				// so a tic replayed out of netcmds arrives with flags 0 --
+				// TICCMD_RECEIVED gone for a person, TICCMD_BOT gone for a bot.
+				// p_user reads the first of those to decide whether this input
+				// was dropped in transit, and takes a different steering branch
+				// when it thinks it was. That is why a played race diverged on
+				// steering and five hundred bot checks never did: the bot branch
+				// is chosen before the flag is ever consulted.
+				for (i = 0; i < MAXPLAYERS; i++)
+				{
+					if (playeringame[i])
+						players[i].cmd = used[i];
+				}
 			}
 		}
 

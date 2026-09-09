@@ -765,12 +765,53 @@ tic was fed the same input the live tic used. By construction it should be --
 both read `netcmds[t]` -- unless `netcmds` for the local player is rewritten
 after its tic has run, which on a listen server is not obviously impossible.
 
-**Next instrument, and it is not a detour:** have the keeper record the ticcmd
-each tic actually used, one per ring slot, and have the replay compare what it
-feeds against what was recorded. That is the same comparison phase 3's packet
-half needs for its second gesture -- *detect*, "a real input arrived for a tic
-already run and it differs from what was predicted" -- so it is work the loop
-needs anyway, borrowed early to answer this.
+**And the instrument answered on its first played race: it had never once been
+fed the right inputs.** Twelve replays, every player, every tic:
+
+```
+16 tics checked against the inputs they really used, 0 not recorded, 240 disagreed
+  tic 1049, player 0 fed something else -- flags 1 vs 0
+  tic 1049, player 1 fed something else -- flags 128 vs 0
+```
+
+240 is sixteen tics times fifteen players. **Only `flags` ever differs**, and the
+reason is four lines of the netcode:
+
+```c
+static void D_Clearticcmd(tic_t tic)
+{
+	D_FreeTextcmd(tic);
+	for (i = 0; i < MAXPLAYERS; i++)
+		netcmds[tic%BACKUPTICS][i].flags = 0;
+}
+```
+
+called from `TryRunTics` as `for (; tictoclear < firstticstosend; tictoclear++)`
+-- "clear only when acknowledged". It zeroes **exactly and only the flags**,
+which is exactly and only what disagreed. `netcmds` is not a record of the past;
+it is a mailbox, and the netcode empties the acknowledged slots.
+
+**Which is the whole mechanism of the steering divergence.** `p_user.c:2371`
+branches on `!(player->cmd.flags & TICCMD_RECEIVED)` -- the "missed a single tic"
+path -- and sets `player->steering = targetsteering` directly instead of running
+the camera-angle solver below it. A tic replayed out of `netcmds` arrives with
+flags 0, so the replay takes the dropped-input branch where the live tic did not.
+Different steering, then different speed.
+
+**And why a bot could never show it**: `K_PlayerUsesBotMovement` is tested
+*first*, at line 2363, so a bot takes its own branch and never reaches the flag.
+Losing `TICCMD_BOT` costs it nothing. The one field the netcode erases is the one
+field only a human's code path reads. Five hundred bot checks could not have
+found this, and one played race did.
+
+Fixed for `rollback_replay` by replaying on the recorded inputs rather than on
+`netcmds`, which is what a verification command should do anyway.
+
+⚠ **This is a constraint on phase 3, not just on a test.** A real rollback that
+rewinds past an acknowledged tic cannot recover that tic's flags from `netcmds`
+either -- they are gone. The loop has to keep them itself, exactly as the ring
+slot now does. Found by an instrument built to check something else, which is the
+argument for building the instrument.
 
 ### How the bot-side residue was closed: `MT_ITEM_DEBRIS` and an unsynchronised die
 
