@@ -1218,7 +1218,25 @@ onwards was therefore always one tic's worth of tail-end work short, no matter
 how many tics it repeated.
 
 `K_RollbackTicker()` runs at the end of `G_Ticker` now. `G_Ticker` has no early
-return, so the end of it is the end of the tic. **Not yet measured.**
+return, so the end of it is the end of the tic.
+
+**Measured, both sides.** Client: **two replays, two IDENTICAL** --
+`spectatorReentry` gone, so that boundary was the last of the family. Listen
+server: **eleven of twelve**, the one failure an `MT_SHADOW`, which is the
+residue this project carried in before today and which also turns up in the
+Grand Prix and Encore soaks. One appearance in twelve says nothing about whether
+its rate moved, and this document should not pretend otherwise.
+
+⚠ **Replaying whole tics costs more, and that is the price of being right.**
+
+| | P_Ticker only | whole tics |
+|---|---|---|
+| a replayed tic, late in a race | 1.85 to 3.06 ms | **2.37 to 4.04 ms** |
+| a 16-tic rollback, with the restore | about 54 ms | **about 65 ms** |
+
+The conclusion does not change -- a deep rollback does not fit in a 28.6 ms tic
+and the depth cap is the answer -- but the cap moves down, and phase 6 has to
+pick it against these figures rather than the old ones.
 
 ### Before phase 4 -- two instances with latency
 
