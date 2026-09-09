@@ -2315,7 +2315,7 @@ static void Command_RollbackReplay_f(void)
 	uint32_t us;
 	int32_t n = 4;
 	int32_t i;
-	ticcmd_t pending[MAXPLAYERS];
+	ticcmd_t pending[MAXPLAYERS], pendingold[MAXPLAYERS];
 	int32_t ran = 0;
 	tic_t from, t, now;
 	tic_t ltbefore, ltafter, ltloaded;
@@ -2382,7 +2382,10 @@ static void Command_RollbackReplay_f(void)
 	// reports a difference in player 0's cmd and nothing else, which is
 	// bookkeeping rather than a world that went somewhere different.
 	for (i = 0; i < MAXPLAYERS; i++)
+	{
 		pending[i] = players[i].cmd;
+		pendingold[i] = players[i].oldcmd;
+	}
 
 	// The inputs of each tic as the netcode recorded them, rather than one tic's
 	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
@@ -2414,7 +2417,10 @@ static void Command_RollbackReplay_f(void)
 	gametic = now + 1;
 
 	for (i = 0; i < MAXPLAYERS; i++)
+	{
 		players[i].cmd = pending[i];
+		players[i].oldcmd = pendingold[i];
+	}
 
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
 	ltafter = leveltime;
