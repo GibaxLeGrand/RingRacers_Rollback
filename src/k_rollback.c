@@ -189,9 +189,30 @@ dboolean K_SaveGameState(tic_t tic)
 	return K_WriteSnapshot(&rollbackring[tic % ROLLBACK_TICS], tic);
 }
 
-dboolean K_LoadGameState(tic_t tic)
+/** Puts the world back to what a slot holds, wherever the slot came from. */
+static dboolean K_ReadSnapshot(rollbackslot_t *slot)
 {
 	savebuffer_t save = {0};
+
+	if (slot == NULL || slot->valid == false)
+		return false;
+
+	if (P_SaveBufferFromExisting(&save, slot->buffer, slot->used) == false)
+		return false;
+
+	// reloading: keep the level in place, and keep the RNG seeds the archive
+	// restores instead of resetting them. Both are required for a rollback --
+	// replaying the same tics has to produce the same result.
+	if (P_LoadNetGame(&save, true, true) == false)
+		return false;
+
+	memcpy(camera, slot->cameras, sizeof (slot->cameras));
+
+	return true;
+}
+
+dboolean K_LoadGameState(tic_t tic)
+{
 	rollbackslot_t *slot;
 
 	if (!rollbackring)
@@ -210,18 +231,7 @@ dboolean K_LoadGameState(tic_t tic)
 	if (slot->gamemap != gamemap)
 		return false;
 
-	if (P_SaveBufferFromExisting(&save, slot->buffer, slot->used) == false)
-		return false;
-
-	// reloading: keep the level in place, and keep the RNG seeds the archive
-	// restores instead of resetting them. Both are required for a rollback --
-	// replaying the same tics has to produce the same result.
-	if (P_LoadNetGame(&save, true, true) == false)
-		return false;
-
-	memcpy(camera, slot->cameras, sizeof (slot->cameras));
-
-	return true;
+	return K_ReadSnapshot(slot);
 }
 
 // ----------------------------------------------------------------------------
@@ -2305,7 +2315,8 @@ static void Command_RollbackReplay_f(void)
 	uint32_t us;
 	int32_t n = 4;
 	int32_t i;
-	tic_t from, t;
+	int32_t ran = 0;
+	tic_t from, t, now;
 
 	if (COM_Argc() > 1)
 		n = atoi(COM_Argv(1));
@@ -2324,7 +2335,13 @@ static void Command_RollbackReplay_f(void)
 		return;
 	}
 
-	if (n >= (int32_t)gametic)
+	// A console command runs at the top of TryRunTics, before the tic loop, so
+	// gametic is the tic about to run and the world is the one the tic before
+	// it left. Rewinding from gametic replayed one tic too many, and the
+	// comparison said so: the misc block, where leveltime lives, at byte 22.
+	now = gametic - 1;
+
+	if ((tic_t)n >= now)
 	{
 		CONS_Printf("rollback_replay: the game has not run that many tics yet\n");
 		return;
@@ -2332,18 +2349,20 @@ static void Command_RollbackReplay_f(void)
 
 	if (K_NeedScratch() == false)
 	{
-		CONS_Printf("rollback_replay: not enough memory for the comparison slot\n");
+		CONS_Printf("rollback_replay: not enough memory for the comparison slots\n");
 		return;
 	}
 
-	if (!K_SaveGameState(gametic))
+	// Into a scratch slot rather than the ring: the ring belongs to whatever
+	// the keeper put there, and a command has no business overwriting it.
+	if (!K_WriteSnapshot(g_second, now))
 	{
 		CONS_Printf("rollback_replay: could not snapshot the present\n");
 		return;
 	}
 
-	present = &rollbackring[gametic % ROLLBACK_TICS];
-	from = gametic - (tic_t)n;
+	present = g_second;
+	from = now - (tic_t)n;
 
 	if (!K_LoadGameState(from))
 	{
@@ -2356,7 +2375,7 @@ static void Command_RollbackReplay_f(void)
 	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
 	started = I_GetPreciseTime();
 
-	for (t = from + 1; t <= gametic; t++)
+	for (t = from + 1; t <= now; t++)
 	{
 		for (i = 0; i < MAXPLAYERS; i++)
 		{
@@ -2365,11 +2384,12 @@ static void Command_RollbackReplay_f(void)
 		}
 
 		P_Ticker(true);
+		ran++;
 	}
 
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
 
-	if (!K_WriteSnapshot(g_first, gametic))
+	if (!K_WriteSnapshot(g_first, now))
 	{
 		CONS_Printf("rollback_replay: could not snapshot the replay\n");
 		return;
@@ -2378,11 +2398,14 @@ static void Command_RollbackReplay_f(void)
 	K_ReportComparison("rollback_replay", "replay", present, "the world as it was",
 		g_first, "the replay", NULL, NULL, false);
 
-	CONS_Printf("rollback_replay: %d tics replayed in %u us -- %u us per tic\n",
-		n, us, us / (uint32_t)n);
+	// What it replayed, not just how long it took: a loop that ran no tics at
+	// all would otherwise report a time and look like it had worked.
+	CONS_Printf("rollback_replay: %s tics replayed, %s to %s, in %u us -- %u us per tic\n",
+		sizeu1((size_t)ran), sizeu2((size_t)from + 1), sizeu3((size_t)now),
+		us, us / (uint32_t)(ran > 0 ? ran : 1));
 
 	// Back to where this found the world, whatever the replay decided.
-	if (!K_LoadGameState(gametic))
+	if (!K_ReadSnapshot(g_second))
 	{
 		CONS_Printf("rollback_replay: WARNING - could not restore the present\n");
 	}
