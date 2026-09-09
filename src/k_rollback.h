@@ -70,6 +70,9 @@ int32_t K_RollbackTwoClock(void);
   * thrown away and rebuilt every pass, so its side effects would repeat. */
 dboolean K_RollbackSpeculating(void);
 
+/** Counts a netxcmd refused because it was raised inside a speculation. */
+void K_RollbackNoteSuppressedXCmd(void);
+
 /** Puts the confirmed world back, undoing the last pass's speculation. Called
   * before the authoritative tic loop, so that loop starts where the server
   * left it. Does nothing when there is no speculation standing. */

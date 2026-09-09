@@ -2778,6 +2778,13 @@ static uint32_t g_specus;           // and running the speculation forward
 // nothing speculated indict the restore, and their absence clears it.
 static dboolean g_nullspec;
 
+// Messages a speculated tic tried to send. localtextcmd is netcode state, not
+// world state, so the archive does not carry it and a restore cannot take one
+// back -- the server would apply a message from a timeline that was discarded.
+// Counted rather than only refused, because a guard that never fires and a guard
+// that works are indistinguishable from the outside.
+static uint32_t g_suppressedxcmds;
+
 
 /** True while a correction is re-running tics that have already been played.
   *
@@ -3727,6 +3734,11 @@ dboolean K_RollbackSpeculating(void)
 	return g_speculating;
 }
 
+void K_RollbackNoteSuppressedXCmd(void)
+{
+	g_suppressedxcmds++;
+}
+
 void K_RollbackUnspeculate(void)
 {
 	precise_t started;
@@ -3844,7 +3856,7 @@ static void Command_RollbackTwoClock_f(void)
 			g_keeping = true;
 		}
 
-		g_specpasses = g_spectics = g_specstranded = g_specnosave = 0;
+		g_specpasses = g_spectics = g_specstranded = g_specnosave = g_suppressedxcmds = 0;
 		g_unspecus = g_specus = 0;
 	}
 
@@ -3858,6 +3870,10 @@ static void Command_RollbackTwoClock_f(void)
 		"forward -- %u us a pass, against 28571 for a whole tic\n",
 		g_unspecus, g_specus,
 		(uint32_t)(g_specpasses ? ((g_unspecus + g_specus) / g_specpasses) : 0));
+
+	CONS_Printf("rollback_twoclock: %u messages were refused because a speculated "
+		"tic raised them -- the archive cannot take a sent message back\n",
+		g_suppressedxcmds);
 }
 
 /** Fills a tic's inputs with the last thing each player was known to be doing.

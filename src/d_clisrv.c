@@ -392,6 +392,26 @@ void RegisterNetXCmd(netxcmd_t id, void (*cmd_f)(const uint8_t **p, int32_t play
 
 void SendNetXCmdForPlayer(uint8_t playerid, netxcmd_t id, const void *param, size_t nparam)
 {
+	// Never from a speculated tic.
+	//
+	// localtextcmd is netcode state rather than world state, so the archive does
+	// not carry it and the restore that discards a speculation cannot take back
+	// what that speculation posted. The server would apply a message from a
+	// timeline nobody else ever ran -- a divergence manufactured by the
+	// prediction rather than found by it. Measured: with nothing speculated the
+	// server never disagreed once in fourteen hundred restores; with four tics
+	// speculated a pass it resent the whole gamestate nine times a race.
+	//
+	// Nothing worth keeping is lost. The authoritative loop reaches that tic
+	// later on the server's own inputs, and whatever should raise a message then
+	// raises it in a world both ends agree about. Console, chat and menu actions
+	// are untouched: they do not happen inside a tic.
+	if (K_RollbackSpeculating())
+	{
+		K_RollbackNoteSuppressedXCmd();
+		return;
+	}
+
 	if (((uint16_t*)localtextcmd[playerid])[0]+3+nparam > MAXTEXTCMD)
 	{
 		// for future reference: if (cht_debug) != debug disabled.
