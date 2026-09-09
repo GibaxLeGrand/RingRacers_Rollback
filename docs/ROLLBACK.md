@@ -1805,3 +1805,82 @@ to judge rubber-banding by. `playtest.sh <scenario> dedicated` still drops him.
 **Next, and it is also the point the sweep lost:** depth 7 **windowed**. Predicted
 before the run: offset about **+0.2**, roughly **60 percent** of our own inputs
 exactly right, and `deferred` **non-zero for the first time**.
+
+### The floor was `mindelay`, and the fix for it was already half written
+
+Depth 7 windowed came back **+1.89, +1.89, +1.98** -- mean **+1.93** -- against
+**+1.96** dedicated. Identical. **So the server's mode was not the cause of the
+depth-7 miss, and that explanation is refuted by its own check.** Put the four
+depths side by side and it was never a line:
+
+| depth | 12 | 9 | 7 | 5 |
+|---|---|---|---|---|
+| offset | -4.46 | -1.58 | **+1.93** | **+2.02** |
+
+Linear from 12 to 9, then **saturating at +2**. A line fitted to three points on
+one side of a plateau, and forecasting a fourth on the plateau is exactly where it
+had to fail.
+
+**The plateau is one line of code.** `UpdatePingTable` ends:
+
+```c
+else // We're a client, handle mindelay on the way out.
+{
+    target_lag = cv_mindelay.value;
+}
+```
+
+`target_lag` leaves as `wantdelay` on every packet, and the server does
+`faketic += (wantdelay - timegap)`. So **a client asks the server to hold the
+client's own input for `mindelay` tics**, and then cannot predict it, because the
+server applies it to a tic the client never spent it on. `cv_mindelay` defaults to
+**2**. The offsets on the plateau are **+1.93 and +1.96**.
+
+⚠ **A previous session diagnosed this exact mechanism.** The comment fifteen lines
+above says it in as many words -- "the floor is what the sending pipeline shifts
+the local input by... the client predicts tic N while the server applies that same
+input at tic N plus the floor" -- and lifted the floor in the `if (server)` branch.
+The client branch was left standing. The fix has been half-written since that day,
+and three of tonight's measurements were spent rediscovering the half that was
+missing.
+
+**Measured, same map, same scenario, depth 7, nothing else changed:**
+
+| | mindelay 2 | mindelay 0 | |
+|---|---|---|---|
+| contradictions | 292 | **75** | -74% |
+| corrections | 268 | **68** | -75% |
+| replayed tics | 1606 | **406** | -75% |
+| replayed tics a pass | 4.0 | **1.0** | |
+| **replay cost a tic** | **~10 ms** | **~2.5 ms** | of 28.6 |
+| offset | +1.89, spread over -1..+3 | **+1.00, one spike** | |
+
+The spread did not narrow, it **vanished**: 26 of 26 matches at +1, then 22 of 22,
+then 36 of 36. One value, exactly, every window.
+
+**The predictions, scored.** Offset was to be 0 and came back +1.00 -- wrong by a
+tic, with the mechanism confirmed. "About 70 percent exactly right" reads from the
+other side as contradictions falling 74 percent, and that landed. And `deferred`
+was to be non-zero: **still zero, the third time that call has failed.**
+
+⚠ This time the reason was read instead of assumed. The condition is
+`if (g_localwrong == false && ...)`, so the limiter **only ever defers somebody
+else's misprediction**. The host is stationary and has not been mispredicted once
+in any run. It is not broken; it has no work in this setup. Predicting that it
+would fire was reasoning from its shape instead of reading its condition, which is
+the fourth time in one evening that has cost a measurement.
+
+**What did not move: seven `Game state reloaded`, same as before.** Contradictions
+and cost are down by three quarters and the world still resynchronises just as
+often. It is not the same problem, and nothing here has touched it.
+
+**What is left, in order.**
+
+1. **The remaining +1**, which is now a single clean spike rather than a smear, so
+   it is findable. First candidate, from the reception path: the server's own
+   one-tic buffer, `if (netcmds[faketic][netconsole].flags & TICCMD_RECEIVED)
+   faketic++`.
+2. **The samples spent on no tic at all** are now the *majority* of what remains --
+   49 of 75, 46 of 68, 122 of 158. That is `rollback_pace`'s territory and it
+   **has still never run**, in five races.
+3. **The resyncs**, which are untouched and are the desync itself.

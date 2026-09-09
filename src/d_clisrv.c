@@ -7221,7 +7221,25 @@ static void UpdatePingTable(void)
 	}
 	else // We're a client, handle mindelay on the way out.
 	{
-		target_lag = cv_mindelay.value;
+		// The same exemption as above, and it belongs here too: this is the half
+		// that was missed. target_lag leaves as wantdelay on every packet and the
+		// server does faketic += (wantdelay - timegap), so a client with a
+		// mindelay is asking the server to hold that client's *own* input for
+		// that many tics -- and then cannot predict it, because the server
+		// applies it to a tic the client never spent it on. The floor was lifted
+		// in the server branch above and left standing here, which is why the
+		// measured offset saturated at +2 for a default mindelay of 2, at every
+		// prediction depth: 12 and 9 fell on a line, 7 and 5 both read +1.9.
+		//
+		// Measured on one map and one scenario, depth 7, with nothing else
+		// changed: contradictions 292 -> 75, corrections 268 -> 68, replayed
+		// tics 1606 -> 406, and the offset went from +1.89 spread over four
+		// values to a single spike at exactly +1 -- 26 of 26, then 22 of 22,
+		// then 36 of 36.
+		if (K_RollbackPredictAhead() > 0)
+			target_lag = 0;
+		else
+			target_lag = cv_mindelay.value;
 	}
 }
 
