@@ -717,7 +717,62 @@ the archive no longer carries -- none of it is in the archive, which is why the
 archive is clean. That is not a failure; it is the restore declining to rebuild
 state the renderer owns.
 
-### How it was closed: `MT_ITEM_DEBRIS` and an unsynchronised die
+### Then somebody drove, and it broke somewhere else entirely
+
+Same build, `ce17cc5`, twelve replays -- but with a person at the controls
+drifting, using items and hitting trick panels instead of a human sitting still.
+**Eight identical, four failures, and not one of them resembles a bot failure.**
+
+| | bots idle | a person driving |
+|---|---|---|
+| first differing byte | 136 000 to 145 000 | **562 to 671** |
+| which block | thinkers | **players** |
+| size | 8 000 to 29 000 bytes, a length shift | 2, 61, 134, 317 bytes, no shift |
+| named | `MT_ITEM_DEBRIS`, `MT_SHADOW` | **`steering`, `speed`, on player 0** |
+
+```
+2 bytes differ in 1 runs, from byte 562 to byte 563 of 183068
+  that is player 0 (Comodore), 21 bytes into their record -- steering
+317 bytes differ in 143 runs, from byte 647 to byte 183078 of 186846
+  that is player 0 (Comodore), 106 bytes into their record -- speed
+```
+
+`steering` is `-1` against `0`. `speed` is 15.76 against 15.79. Small, real, and
+in the simulation rather than beside it -- the first residue of this whole
+project that is neither decoration nor bookkeeping.
+
+**The inputs are not the cause**: zero input differences on all twelve, so `cmd`
+and `oldcmd` agree at the end of every replay. And the locator correctly said it
+could place none of it in an archived object, because none of it is in one.
+
+**Where it must come from.** `p_user.c` computes a human's steering by solving
+towards the angle their ticcmd carries, and that solver reads `cmd.latency`
+twice:
+
+```c
+if (player->drift && abs(player->drift) < 5 && player->cmd.latency)   // 2394
+angle_t leniency = leniency_base * min(player->cmd.latency, 6);       // 2416
+```
+
+Both are dead code for a bot, because `G_Ticker` sets a bot's latency to zero.
+That is exactly the pair this document predicted a soak could never reach, and
+one played race reached them.
+
+**What has not been shown yet** is *why* the two passes disagree, and the honest
+answer is that the current instruments cannot say. `K_ReportReplayInputs`
+compares the inputs the replay *ends* holding; nothing checks that each replayed
+tic was fed the same input the live tic used. By construction it should be --
+both read `netcmds[t]` -- unless `netcmds` for the local player is rewritten
+after its tic has run, which on a listen server is not obviously impossible.
+
+**Next instrument, and it is not a detour:** have the keeper record the ticcmd
+each tic actually used, one per ring slot, and have the replay compare what it
+feeds against what was recorded. That is the same comparison phase 3's packet
+half needs for its second gesture -- *detect*, "a real input arrived for a tic
+already run and it differs from what was predicted" -- so it is work the loop
+needs anyway, borrowed early to answer this.
+
+### How the bot-side residue was closed: `MT_ITEM_DEBRIS` and an unsynchronised die
 
 The locator answered on its first run. Five of six failures placed the first
 differing byte inside a named object, each on a unique 32-byte window:
