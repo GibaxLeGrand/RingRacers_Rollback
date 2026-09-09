@@ -1694,3 +1694,50 @@ was mispredicted 5 times`. Every previous measurement blamed this machine for
 every single contradiction, 1520 out of 1520 on one of them. That window is after
 the round ended and on another map, so it is a curiosity rather than a result --
 but it is the first time the remote prediction has ever been wrong at all.
+
+### The line holds: three depths, two races, residuals under a tenth of a tic
+
+The sweep ran depth 12 then 9 in one race, and the depth-5 point came from the
+race before it. Every offset is the weighted mean of the histogram over the
+window it was measured in.
+
+| depth | samples matched | mean offset | the line says | residual |
+|---|---|---|---|---|
+| 12 | 270 | **-4.46** | -4.42 | -0.04 |
+| 9 | 149 | **-1.58** | -1.65 | +0.07 |
+| 5 | 191 | **+2.02** | +2.04 | -0.03 |
+
+    offset = -0.923 x depth + 6.659,  zero at a depth of 7.21
+
+**The depth-9 point was written down as a prediction before the race was run**
+-- -1.7 was in the message that launched it -- and came back -1.58. Three points
+measured on two different evenings' worth of driving, on a line whose residuals
+are under a tenth of a tic, and a slope of -0.92 where the mechanism says -1.
+
+So the client's own misprediction is **entirely** accounted for by the prediction
+depth, and the depth that makes it vanish at this latency is **seven**. Nothing
+else needs to be true: not a labelling bug, not `mindelay`, not `maketic`, not
+frame-rate sampling. Those were all guesses at a number the histogram simply
+prints.
+
+⚠ **The depth-7 window was lost.** The round ended inside it -- three resyncs and
+a map change -- so the one measurement that would put the peak on zero is the one
+that did not survive. The line predicts it; it has not been seen. `playtest.sh
+lead7` exists for exactly that and is the next thing to run.
+
+**Identified and not explained: the share of samples spent on no tic at all rises
+as the depth falls.** 21 percent at depth 12, 54 percent at depth 9, 79 percent at
+depth 5. The depth-12 figure matches the fraction of passes that predict nothing
+almost exactly (84 of 400 passes, 21 percent), which would explain it entirely --
+but the depth-9 window has the same fraction of predicting passes, 80 percent, and
+reports 54. **The two do not reconcile and I do not know why.** It is not the
+resyncs: the depth-12 and depth-9 windows both carry none. Written down as an
+open question rather than given a story, because every story told about this
+offset before the histogram existed turned out to be wrong.
+
+**What this makes possible.** The right depth is a property of the connection and
+the histogram measures it directly: negative, run shallower; positive, run deeper;
+zero, stay. That is Psyonix's upstream throttle with the missing number supplied,
+and it is a small amount of code -- but it should wait until depth 7 has actually
+been seen to land on zero, because a controller built on an unconfirmed setpoint
+is a guess wearing a feedback loop.
