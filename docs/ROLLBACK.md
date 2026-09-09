@@ -1884,3 +1884,68 @@ often. It is not the same problem, and nothing here has touched it.
    49 of 75, 46 of 68, 122 of 158. That is `rollback_pace`'s territory and it
    **has still never run**, in five races.
 3. **The resyncs**, which are untouched and are the desync itself.
+
+### The pivot landed, is cheap, and did not fix the desync -- and the control did
+
+Two-clock mode built and measured on `58a0482`, binary verified by its sha and by
+its own command's string. `rollback_twoclock 4`, depth four, whole race.
+
+**The resyncs did not move.** Nine, against nine with the checksum-label fix and
+seven before it. So the consistency theory is refuted twice: not by labelling the
+value honestly, and not by making the value honest.
+
+⚠ **And here is the control that should have been counted hours earlier.**
+`playlog_off.txt`, written at 18:12, loop off, the same `rollback_lag 6`:
+
+    Game state reloaded: 0
+
+**Zero.** So 171 ms of artificial delay does not resynchronise a stock client, and
+the desync is unambiguously ours. That log sat on disk all evening while four
+different theories were argued over it. **A control is not a formality; it was the
+cheapest fact available and it was free the whole time.**
+
+**The cost, and a prediction wrong by a factor of four in the generous direction:**
+
+| | predicted before the run | measured |
+|---|---|---|
+| restore | 8.6 ms | **3.18 ms** |
+| a speculated tic | 2.5 ms | **0.38 ms** |
+| **a whole pass** | **~19 ms** | **4.71 ms, 16% of a tic** |
+
+The old figures were sixteen karts late in a race; this is two players early in
+one. Both are true and they are not the same measurement -- which is exactly the
+trap this document warns about, and I walked into it while writing the warning.
+**The pivot is affordable.** At this size it costs a sixth of a tic, and it is
+bounded and constant rather than bursting with the correction rate.
+
+**So the architecture is right, cheap, and something inside
+save -> speculate -> restore contaminates the confirmed world.**
+
+⚠ **Why every test in this project is blind to it.** Our oracle is a byte
+comparison of the **archive**. Anything the simulation reads that the archive does
+not carry is invisible to the round-trip test, to the soak, and to the replay
+checks, *by construction*. And the memory comparison has been reporting fifteen
+hundred to two thousand such fields per check all along -- `old_x`, `resetinterp`,
+shadows, `rollangle` -- filed as "presentation, costs the simulation nothing". That
+verdict was never tested; it was assumed from the field names. If one of them feeds
+the simulation, this is exactly what it would look like: clean archives, byte-exact
+replays, and a world that quietly drifts once you actually restore inside the live
+loop.
+
+**Next, and it is a discriminator rather than a fix.** A null speculation: save the
+frontier and restore it, running **zero** speculative tics.
+
+- resyncs still appear -> **the restore itself contaminates**, and the unarchived
+  state is the target.
+- resyncs vanish -> the restore is clean and the speculation's side effects are
+  escaping. First suspect: anything reached from `G_Ticker` that leaves the
+  machine, since a message queued in a world that is then thrown away is a message
+  the server acts on and nobody else ever had.
+
+Either way it costs one build and one race, and it splits the remaining problem in
+two. **Do not write another fix before it.**
+
+**Not measured, and recorded as not measured:** `rollback_smooth`. It was on for
+half a race and the report was "j'ai pas trop mesuré, maybe ça marche". It stays
+behind its switch with no claim attached.
+
