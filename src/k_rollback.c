@@ -767,6 +767,8 @@ static void K_CompareMobjs(const char *cmd)
 	uint32_t missing = 0;
 	uint32_t compared = 0;
 	uint32_t addresses = 0;
+	uint32_t mismatched = 0;
+	uint32_t differing = 0;
 
 	if (g_mobjcopy == NULL || g_mobjslot == NULL || g_mobjcopies == 0)
 		return;
@@ -793,6 +795,18 @@ static void K_CompareMobjs(const char *cmd)
 		}
 
 		was = g_mobjcopy + (sizeof (mobj_t) * (g_mobjslot[mo->mobjnum] - 1));
+
+		// mobjnum is handed out afresh by every save and never cleared, so the
+		// same number can name two different objects either side of a restore.
+		// The type is the cheapest thing that catches it, and without it this
+		// reported a ring's x, y and z as having moved when it was looking at two
+		// different rings.
+		if (((const mobj_t *)was)->type != mo->type)
+		{
+			mismatched++;
+			continue;
+		}
+
 		compared++;
 
 		for (at = 0; at < sizeof (mobj_t) && reported < 6; at++)
@@ -825,6 +839,7 @@ static void K_CompareMobjs(const char *cmd)
 				na += snprintf(after + na, sizeof (after) - na, "%02x ", now[at + k]);
 			}
 
+			if (reported < 6)
 			{
 				char text[160];
 
@@ -838,16 +853,21 @@ static void K_CompareMobjs(const char *cmd)
 				K_Finding(text);
 			}
 
-			reported++;
+			differing++;
+
+			if (reported < 6)
+				reported++;
+
 			at += run;
 		}
 	}
 
 	if (g_holdfindings == false || missing > 0)
 	{
-		CONS_Printf("%s: %u objects compared, %u appeared from nowhere, "
-			"%u differences shown, %u were pointer fields\n",
-			cmd, compared, missing, reported, addresses);
+		CONS_Printf("%s: %u objects compared, %u skipped on a type mismatch, "
+			"%u appeared from nowhere, %u field differences found and %u shown, "
+			"%u runs were pointer fields\n",
+			cmd, compared, mismatched, missing, differing, reported, addresses);
 	}
 }
 
@@ -951,6 +971,7 @@ typedef struct
 {
 	uint32_t offset;
 	uint32_t length;
+	uint32_t num;       // mobjnum, so the two captures can be checked for drift
 	mobjtype_t type;
 } diagrec_t;
 
@@ -1053,6 +1074,7 @@ static void K_CaptureRecords(diagset_t *set)
 
 		set->recs[set->count].offset = (uint32_t)used;
 		set->recs[set->count].length = (uint32_t)wrote;
+		set->recs[set->count].num = mo->mobjnum;
 		set->recs[set->count].type = mo->type;
 		set->count++;
 		used += wrote;
@@ -1091,6 +1113,7 @@ static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, 
 	uint32_t common = (before->count < after->count) ? before->count : after->count;
 	uint32_t reported = 0;
 	uint32_t differing = 0;
+	uint32_t samenumber = 0;
 	uint32_t i;
 
 	if (before->count != after->count)
@@ -1126,18 +1149,41 @@ static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, 
 		// said nothing about the others.
 		if (reported < 3)
 		{
-			CONS_Printf("%s: object %u (%s) changed: %u bytes became %u\n",
-				cmd, i, K_MobjTypeName(before->recs[i].type), la, lb);
+			CONS_Printf("%s: object %u (%s) changed: %u bytes became %u, "
+				"mobjnum %u before and %u after\n",
+				cmd, i, K_MobjTypeName(before->recs[i].type), la, lb,
+				before->recs[i].num, after->recs[i].num);
 			K_PrintRecordMasks("  before:", a, la);
 			K_PrintRecordMasks("  after: ", b, lb);
 			reported++;
 		}
 	}
 
+	// Whether the two captures are even lined up. This walks both lists by
+	// position and trusts that position N holds the same object on both sides,
+	// which is only true while the lists agree -- and a shift inside a run of
+	// hundreds of MT_RINGs slips straight past the type check above, making every
+	// ring after it "differ". That is how this reported seven hundred changed
+	// objects while the snapshot it was meant to be explaining differed by a
+	// single byte.
+	for (i = 0; i < common; i++)
+	{
+		if (before->recs[i].num == after->recs[i].num)
+			samenumber++;
+	}
+
 	// How big the thing examined was, every time, so a number is never read
 	// without knowing what it is a number out of.
-	CONS_Printf("%s: %u objects compared, %u differed, %u shown in full\n",
-		cmd, common, differing, reported);
+	CONS_Printf("%s: %u objects compared, %u differed, %u shown in full, "
+		"%u hold the same mobjnum on both sides\n",
+		cmd, common, differing, reported, samenumber);
+
+	if (samenumber < common)
+	{
+		CONS_Printf("%s: the two captures are NOT lined up, so the count above is "
+			"not a count of objects that changed -- read the snapshot comparison "
+			"instead\n", cmd);
+	}
 
 	if (differing == 0 && before->count == after->count)
 	{

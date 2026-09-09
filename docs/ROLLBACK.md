@@ -592,31 +592,61 @@ objects. So a sixteen-tic rollback late in a race is **40 to 52 ms of replay**
 against a 28.6 ms tic, where the early figure is 26 to 30 ms. Both are past a
 tic's budget; the depth cap is the answer, and phase 6 is where it gets picked.
 
-**What is left is scenery, and all of it is late in the race.** Four of the
-twelve replays differ, every one of them a deep replay past `leveltime` 1900,
-and the per-object pass names what changed:
+**What is left is late in the race, and the instrument that was supposed to
+explain it was lying.** Four or five of the twelve replays differ, every one of
+them a deep replay past `leveltime` 1900, and the snapshot puts its first
+difference around byte 136000 of 150000 -- in the thinkers block, about ninety
+percent of the way in.
 
-| object | record |
+The per-object pass was reported as naming four objects -- rings, a spring, an
+arrow sign. It was showing the first three of a list it never counted. Once it
+counted, on `6b2c796`:
+
+```
+rollback_replay: 2070 objects compared, 714 differed, 3 shown in full
+rollback_replay: 2031 objects compared, 1036 differed, 3 shown in full
+rollback_replay: 1964 objects compared, 1111 differed, 3 shown in full
+```
+
+**Seven hundred to eleven hundred objects out of two thousand cannot have changed
+in a snapshot whose first differing byte is ninety percent of the way through
+it.** The pass walks both captures by position and trusts that position N is the
+same object on both sides. It has a type check for exactly that, but a shift
+inside a run of hundreds of `MT_RING`s is `MT_RING` against `MT_RING`, so the
+check passes and every ring after the shift "differs". The four named objects
+were the first three entries of a misaligned walk, twice. **Discard that table;
+it was never evidence.** The records now carry `mobjnum` and the pass says how
+many positions hold the same object on both sides, and says plainly that its
+count means nothing when they do not.
+
+**The memory comparison is the one that held up.** It keys on `mobjnum` rather
+than on position, and with `K_NameMobjField` it now names the field. What it
+reports, over the whole run:
+
+| field | what it is |
 |---|---|
-| `MT_RING` (several, in two separate replays) | 51 bytes, same diff masks both sides |
-| `MT_YELLOWHORIZ` #166 (twice, the same object) | 63 bytes, `diff 86002001 diff2 00100000` both sides |
-| `MT_ARKARROW` | 97 bytes |
-| a freeslot `NDBL` | 67 bytes |
+| `old_x`, `old_y`, `old_z`, `old_x2`, `old_y2`, `old_angle2`, `old_scale2` | interpolation: where the renderer should draw from |
+| `resetinterp` | the flag that tells the renderer not to interpolate |
+| `whiteshadow`, `shadowcolor` | shadow appearance |
 
-Same masks and same lengths on both sides, so the archive is not being asked for
-different fields -- one value inside the record moved. On `MT_YELLOWHORIZ` it is
-four bytes, `0x77777770` against `0x2aaaaaa8`, which look like an angle.
+Every one of those is presentation, and the same family as the renderflags, the
+per-viewport visibility bits, `tilt` and the camera. None is in the archive, so
+the round-trip stays `IDENTICAL` while the structures differ -- which is exactly
+what "the restore does not rebuild interpolation state" looks like, and it costs
+the simulation nothing.
 
-**And that is as far as an archived record can take it.** A record is written
-under diff masks, so a place in one is not a field: reading it means walking the
-masks the way the archiver does, and the mobj archiver is 540 lines. The player
-side of exactly this problem was solved by naming the field instead
-(`P_NamePlayerField`), and the object twin of that walker was the plan -- but
-`K_CompareMobjs` already compares the **structures**, keyed by `mobjnum`, and
-reports an offset into `mobj_t`, which `cdb` turns into a name out of the pdb of
-the build that printed it. It was wired into `rollback_test` and
-`rollback_resim` only. It is wired into `rollback_replay` now, in six lines,
-**not yet measured.**
+It also reported an `MT_RING`'s `x`, `y` and `z` as having moved. That one is
+most likely **not real**: `mobjnum` is handed out afresh by every save and never
+cleared, so a number can name two different rings either side of a restore, and
+the comparison had no type check. It has one now, and counts what it skips.
+
+⚠ **A measurement hazard found the same way.** `rollback_test` performs a
+restore, and a restore does not put interpolation state back -- so dropping a
+`rollback_test` into the middle of a scenario changes the race that follows it.
+The twelve-replay runs of `e495c33` and `6b2c796` are therefore **not**
+comparable run to run (eight identical against seven), because the second
+scenario had a `rollback_test` in it. Keep measurement scenarios apart from
+scenarios that restore.
 
 Two of those took two turns of reasoning each and were settled by a number in
 one: the count of tics actually replayed exposed a loop that looked timed but
