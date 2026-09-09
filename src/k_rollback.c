@@ -2765,6 +2765,19 @@ static uint32_t g_specnosave;       // times the frontier could not be saved
 static uint32_t g_unspecus;         // microseconds spent putting the world back
 static uint32_t g_specus;           // and running the speculation forward
 
+// The discriminator: save the frontier and restore it, and run no speculative
+// tic at all. The world round-trips through the archive once a pass with nothing
+// happening in between.
+//
+// Two suspects remain for a desync the two-clock pivot did not fix, and they want
+// opposite work. Either the restore itself does not put everything back -- and it
+// cannot be caught by any test here, because our oracle compares archives and
+// what is missing is by definition not in one -- or the speculation has side
+// effects that escape the world it happens in, a message posted in a timeline
+// that is then discarded being the obvious one. This separates them: resyncs with
+// nothing speculated indict the restore, and their absence clears it.
+static dboolean g_nullspec;
+
 
 /** True while a correction is re-running tics that have already been played.
   *
@@ -3742,11 +3755,11 @@ void K_RollbackUnspeculate(void)
 
 void K_RollbackSpeculate(void)
 {
-	const int32_t ahead = K_RollbackTwoClock();
+	const int32_t ahead = g_nullspec ? 0 : K_RollbackTwoClock();
 	precise_t started;
 	int32_t i;
 
-	if (ahead <= 0)
+	if (K_RollbackTwoClock() <= 0)
 		return;
 
 	// The frontier: the world exactly as the authoritative loop left it. Saved
@@ -3786,6 +3799,24 @@ void K_RollbackSpeculate(void)
 	g_specpasses++;
 }
 
+/** Console command: rollback_nullspec [0/1]
+  *
+  * Saves and restores the frontier every pass and speculates nothing, so the only
+  * thing left running is the round trip through the archive. It answers one
+  * question and no others: does restoring, on its own, inside the live loop,
+  * change the world enough for the server to notice.
+  */
+static void Command_RollbackNullSpec_f(void)
+{
+	if (COM_Argc() > 1)
+		g_nullspec = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_nullspec: %s\n",
+		(g_nullspec
+			? "on -- the frontier is saved and restored every pass, and nothing is speculated"
+			: "off -- the speculation runs as usual"));
+}
+
 /** Console command: rollback_twoclock [tics]
   *
   * The pivot, behind its own switch and off by default. Mutually exclusive with
@@ -3817,8 +3848,9 @@ static void Command_RollbackTwoClock_f(void)
 		g_unspecus = g_specus = 0;
 	}
 
-	CONS_Printf("rollback_twoclock: %d tics of speculation on top of the confirmed world\n",
-		g_twoclock);
+	CONS_Printf("rollback_twoclock: %d tics of speculation on top of the confirmed world%s\n",
+		g_twoclock,
+		(g_nullspec ? " -- but NULL SPECULATION is on, so none of them run" : ""));
 	CONS_Printf("rollback_twoclock: %u speculations built, %u tics run by them, "
 		"%u could not be saved, %u left the world stranded\n",
 		g_specpasses, g_spectics, g_specnosave, g_specstranded);
@@ -4324,4 +4356,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_pace", Command_RollbackPace_f);
 	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
+	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
 }
