@@ -3134,6 +3134,114 @@ int32_t K_RollbackMaxDepth(void)
 	return g_maxdepth;
 }
 
+/** True when two inputs say the player pressed different things.
+  *
+  * Not a memcmp. A ticcmd also carries latency and flags, and neither is
+  * something anybody pressed: latency is a transport measurement that G_Ticker
+  * rewrites on arrival, and the flags say how the input travelled, not what it
+  * was. A rollback exists to correct what was *pressed*, so that is what this
+  * compares -- otherwise every single arrival looks like a contradiction and the
+  * detector cries wolf on every tic.
+  */
+static dboolean K_InputsDiffer(const ticcmd_t *a, const ticcmd_t *b)
+{
+	return (a->forwardmove != b->forwardmove
+		|| a->turning != b->turning
+		|| a->angle != b->angle
+		|| a->throwdir != b->throwdir
+		|| a->aiming != b->aiming
+		|| a->buttons != b->buttons
+		|| a->bot.turnconfirm != b->bot.turnconfirm
+		|| a->bot.spindashconfirm != b->bot.spindashconfirm
+		|| a->bot.itemconfirm != b->bot.itemconfirm);
+}
+
+// The detect half of a rollback, counting only. Nothing acts on this yet.
+static uint32_t g_arrivals;      // inputs that arrived for a tic already run
+static uint32_t g_contradicted;  // of those, how many said something different
+static uint32_t g_unrecorded;    // and how many the ring could no longer vouch for
+static tic_t g_correctfrom;      // the oldest tic that would have to be replayed
+static dboolean g_havecorrection;
+
+/** Called when the server's inputs for a tic land on a client.
+  *
+  * A rollback needs to know one thing from the network: that a tic it has
+  * already run was run on the wrong input. This is where that becomes visible,
+  * and for now it only counts -- correcting is the next piece, and a detector
+  * that has never been watched is not one to hang a correction on.
+  */
+void K_RollbackNoteArrival(tic_t tic)
+{
+	const ticcmd_t *used;
+	int32_t i;
+
+	if (g_keeping == false || gamestate != GS_LEVEL)
+		return;
+
+	// Not yet run, so nothing to contradict: this is simply the input arriving
+	// in time, which is the ordinary case and not interesting.
+	if (tic >= gametic)
+		return;
+
+	g_arrivals++;
+
+	used = K_InputsAsUsed(tic);
+
+	if (used == NULL)
+	{
+		// The ring has been round since. Counted rather than ignored, because a
+		// rollback that cannot reach back far enough is a real limit and not a
+		// non-event.
+		g_unrecorded++;
+		return;
+	}
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (playeringame[i] == false)
+			continue;
+
+		if (K_InputsDiffer(&netcmds[tic % BACKUPTICS][i], &used[i]) == false)
+			continue;
+
+		g_contradicted++;
+
+		if (g_havecorrection == false || tic < g_correctfrom)
+		{
+			g_correctfrom = tic;
+			g_havecorrection = true;
+		}
+
+		break;
+	}
+}
+
+/** Console command: rollback_detect
+  *
+  * What the network has been saying about tics already run.
+  */
+static void Command_RollbackDetect_f(void)
+{
+	CONS_Printf("rollback_detect: %u inputs arrived for tics already run, "
+		"%u of them contradicted what was used, %u came too late for the ring\n",
+		g_arrivals, g_contradicted, g_unrecorded);
+
+	if (g_havecorrection)
+	{
+		CONS_Printf("rollback_detect: the oldest tic needing a replay is %s, "
+			"which is %s tics back from %s\n",
+			sizeu1((size_t)g_correctfrom),
+			sizeu2((size_t)(gametic - g_correctfrom)), sizeu3((size_t)gametic));
+	}
+	else
+	{
+		CONS_Printf("rollback_detect: nothing has contradicted anything yet\n");
+	}
+
+	g_arrivals = g_contradicted = g_unrecorded = 0;
+	g_havecorrection = false;
+}
+
 /** Console command: rollback_maxdepth [tics]
   *
   * How far back a rollback may rewind. Latency beyond this has to be paid for
@@ -3225,4 +3333,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_delay", Command_RollbackDelay_f);
 	COM_AddDebugCommand("rollback_keep", Command_RollbackKeep_f);
 	COM_AddDebugCommand("rollback_replay", Command_RollbackReplay_f);
+	COM_AddDebugCommand("rollback_detect", Command_RollbackDetect_f);
 }

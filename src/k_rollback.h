@@ -40,6 +40,9 @@ void K_RollbackSoakTicker(void);
 // rollback_keep is on, then runs the soak. Does nothing otherwise.
 void K_RollbackTicker(void);
 
+/** Tells the rollback code that the server's inputs for a tic have arrived. */
+void K_RollbackNoteArrival(tic_t tic);
+
 // How far back a rollback may rewind before the latency has to be paid for
 // with input delay instead. Set by rollback_maxdepth.
 int32_t K_RollbackMaxDepth(void);

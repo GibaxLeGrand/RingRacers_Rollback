@@ -24,6 +24,7 @@
 #include "i_system.h"
 #include "i_video.h"
 #include "d_net.h"
+#include "k_rollback.h" // K_RollbackNoteArrival
 #include "d_netfil.h" // fileneedednum
 #include "d_main.h"
 #include "doomtype.h"
@@ -5929,6 +5930,13 @@ static void HandlePacketFromPlayer(int8_t node)
 					// copy the tics
 					pak = G_ScpyTiccmd(netcmds[i%BACKUPTICS], pak,
 						netbuffer->u.serverpak.numslots*sizeof (ticcmd_t));
+
+					// The ticcmds above are copied whatever tic they are for --
+					// only the textcmds below are gated on i >= gametic. So an
+					// input for a tic this client has already run lands here, and
+					// this is the one place that can notice it disagreeing with
+					// what that tic was actually run on. Counting only, for now.
+					K_RollbackNoteArrival(i);
 
 					// copy the textcmds
 					numtxtpak = *txtpak++;
