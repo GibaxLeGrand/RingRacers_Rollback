@@ -577,18 +577,46 @@ than by reading:
    the real loop: replay a tic through the live loop's own steps, not through a
    reconstruction of them.**
 
-**Measured on the build that fixed the input capture** (`758e7ca`, binary
-verified by its sha): **five replays out of six IDENTICAL**, at depths 1, 4, 8
-and 16, 140 to 153 KiB a snapshot, 1.65 to 2.4 ms per replayed tic. Before it,
-zero out of six.
+**Measured, each binary verified by its sha:**
 
-**What is left is one residue, and it has moved.** The sixth replay -- sixteen
-tics, late in the race, `leveltime` 1911 -- differs by one byte in the
-**thinkers** block, `0xd0` to `0xf8`. Every earlier survivor was in the players
-block; this is the first that is not. `rollback_replay` was reporting "no
-per-object comparison" for it, which is what names an object and its diff masks,
-so that pass is now wired in (it was only ever allocated by `rollback_resim`; the
-allocation is `K_NeedDiagSets` now, shared). **Not yet measured.**
+| build | replays | identical | input differences named |
+|---|---|---|---|
+| `9382bf1` and before | 6 | **0** | the inputs, every time |
+| `758e7ca` -- capture moved before the restore | 6 | **5** | 2 a replay (`latency`) |
+| `e495c33` -- replay goes through the live input step | 12 | **8** | **0** |
+
+**Cost, and the shape of it.** Early in a race a replayed tic is 1.6 to 1.9 ms
+and a snapshot 137 to 152 KiB. Late in the same race -- `leveltime` past 1900 --
+it is **2.3 to 3.2 ms** and 152 to 161 KiB, because the world has accumulated
+objects. So a sixteen-tic rollback late in a race is **40 to 52 ms of replay**
+against a 28.6 ms tic, where the early figure is 26 to 30 ms. Both are past a
+tic's budget; the depth cap is the answer, and phase 6 is where it gets picked.
+
+**What is left is scenery, and all of it is late in the race.** Four of the
+twelve replays differ, every one of them a deep replay past `leveltime` 1900,
+and the per-object pass names what changed:
+
+| object | record |
+|---|---|
+| `MT_RING` (several, in two separate replays) | 51 bytes, same diff masks both sides |
+| `MT_YELLOWHORIZ` #166 (twice, the same object) | 63 bytes, `diff 86002001 diff2 00100000` both sides |
+| `MT_ARKARROW` | 97 bytes |
+| a freeslot `NDBL` | 67 bytes |
+
+Same masks and same lengths on both sides, so the archive is not being asked for
+different fields -- one value inside the record moved. On `MT_YELLOWHORIZ` it is
+four bytes, `0x77777770` against `0x2aaaaaa8`, which look like an angle.
+
+**And that is as far as an archived record can take it.** A record is written
+under diff masks, so a place in one is not a field: reading it means walking the
+masks the way the archiver does, and the mobj archiver is 540 lines. The player
+side of exactly this problem was solved by naming the field instead
+(`P_NamePlayerField`), and the object twin of that walker was the plan -- but
+`K_CompareMobjs` already compares the **structures**, keyed by `mobjnum`, and
+reports an offset into `mobj_t`, which `cdb` turns into a name out of the pdb of
+the build that printed it. It was wired into `rollback_test` and
+`rollback_resim` only. It is wired into `rollback_replay` now, in six lines,
+**not yet measured.**
 
 Two of those took two turns of reasoning each and were settled by a number in
 one: the count of tics actually replayed exposed a loop that looked timed but

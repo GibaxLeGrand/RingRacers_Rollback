@@ -601,7 +601,6 @@ static uint8_t *g_mobjcopy;    // the structures as they were, back to back
 static uint16_t *g_mobjslot;   // mobjnum -> its place in there, plus one
 static uint32_t g_mobjcopies;
 
-/** Copies every archived object. Call while the save's mobjnums still stand. */
 /** True when a run of differing bytes belongs to an address rather than a field.
   *
   * Alignment used to be the test, and it was wrong in both directions. A
@@ -640,6 +639,77 @@ static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at
 		|| (b == 0 && K_LooksLikeAddress(a)));
 }
 
+/** Names the mobj_t field a byte offset lands in.
+  *
+  * Built from offsetof, not from the archiver. An archived record is written
+  * under diff masks, so a place in one is not a field and reading it means
+  * walking five hundred lines of archiver in step; an offset into the structure
+  * is a field, and the compiler already knows where every one of them starts.
+  * This is the object twin of P_NamePlayerField, and it exists because the last
+  * replay residue is scenery -- a ring, a spring, an arrow sign -- reported as
+  * "N bytes into mobj_t" and nothing more.
+  *
+  * The table is in declaration order, so the field an offset belongs to is the
+  * last one that starts at or before it.
+  *
+  * \return the field name, or NULL past the end of the structure.
+  */
+static const char *K_NameMobjField(size_t into)
+{
+	static const struct { size_t at; const char *name; } fields[] =
+	{
+#define F(x) { offsetof(mobj_t, x), #x }
+		F(thinker), F(x), F(y), F(z),
+		F(old_x), F(old_y), F(old_z), F(old_x2),
+		F(old_y2), F(old_z2), F(type), F(info),
+		F(bnext), F(bprev), F(angle), F(pitch),
+		F(roll), F(old_angle), F(old_pitch), F(old_roll),
+		F(old_angle2), F(old_pitch2), F(old_roll2), F(rollangle),
+		F(sprite), F(frame), F(sprite2), F(anim_duration),
+		F(renderflags), F(spritexscale), F(spriteyscale), F(spritexoffset),
+		F(spriteyoffset), F(old_spritexscale), F(old_spriteyscale), F(old_spritexoffset),
+		F(old_spriteyoffset), F(floorspriteslope), F(lightlevel), F(touching_sectorlist),
+		F(subsector), F(floorz), F(ceilingz), F(floorrover),
+		F(ceilingrover), F(floordrop), F(ceilingdrop), F(radius),
+		F(height), F(momx), F(momy), F(momz),
+		F(pmomz), F(tics), F(state), F(flags),
+		F(flags2), F(eflags), F(tid), F(tid_next),
+		F(tid_prev), F(skin), F(color), F(snext),
+		F(sprev), F(hnext), F(hprev), F(itnext),
+		F(health), F(movedir), F(movecount), F(target),
+		F(reactiontime), F(threshold), F(player), F(lastlook),
+		F(spawnpoint), F(tracer), F(friction), F(movefactor),
+		F(lastmomz), F(fuse), F(watertop), F(waterbottom),
+		F(mobjnum), F(scale), F(old_scale), F(old_scale2),
+		F(destscale), F(scalespeed), F(extravalue1), F(extravalue2),
+		F(cusval), F(cvmem), F(standingslope), F(resetinterp),
+		F(colorized), F(mirrored), F(shadowscale), F(whiteshadow),
+		F(shadowcolor), F(sprxoff), F(spryoff), F(sprzoff),
+		F(bakexoff), F(bakeyoff), F(bakezoff), F(bakexpiv),
+		F(bakeypiv), F(bakezpiv), F(terrain), F(terrainOverlay),
+		F(hitlag), F(waterskip), F(dispoffset), F(thing_args),
+		F(thing_stringargs), F(special), F(script_args), F(script_stringargs),
+		F(frozen), F(reappear), F(punt_ref), F(owner),
+		F(po_movecount),
+#undef F
+	};
+	const size_t count = sizeof (fields) / sizeof (fields[0]);
+	size_t i;
+
+	if (into >= sizeof (mobj_t))
+		return NULL;
+
+	for (i = 0; i < count; i++)
+	{
+		if (into < fields[i].at)
+			return (i > 0) ? fields[i - 1].name : NULL;
+	}
+
+	return fields[count - 1].name;
+}
+
+
+/** Copies every archived object. Call while the save's mobjnums still stand. */
 static void K_CopyMobjs(void)
 {
 	thinker_t *th;
@@ -738,10 +808,13 @@ static void K_CompareMobjs(const char *cmd)
 			{
 				char text[160];
 
+				const char *field = K_NameMobjField(at);
+
 				snprintf(text, sizeof (text),
-					"%s: %s #%u, %s bytes into mobj_t: %s bytes, %s-> %s",
+					"%s: %s #%u, %s bytes into mobj_t -- %s: %s bytes, %s-> %s",
 					cmd, K_MobjTypeName(mo->type), mo->mobjnum,
-					sizeu1(at), sizeu2(run), before, after);
+					sizeu1(at), (field != NULL) ? field : "past the end",
+					sizeu2(run), before, after);
 				K_Finding(text);
 			}
 
