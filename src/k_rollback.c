@@ -3232,6 +3232,14 @@ static void Command_RollbackDetect_f(void)
 			sizeu1((size_t)g_correctfrom),
 			sizeu2((size_t)(gametic - g_correctfrom)), sizeu3((size_t)gametic));
 	}
+	else if (g_contradicted > 0)
+	{
+		// Contradictions were seen and the loop has already dealt with them:
+		// K_RollbackCorrect clears the pending mark as it acts. Saying "nothing
+		// has contradicted anything" underneath a line reporting eleven of them
+		// is the report contradicting itself.
+		CONS_Printf("rollback_detect: none of them still pending -- the loop corrected them as they came\n");
+	}
 	else
 	{
 		CONS_Printf("rollback_detect: nothing has contradicted anything yet\n");

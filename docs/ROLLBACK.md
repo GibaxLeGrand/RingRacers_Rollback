@@ -1270,6 +1270,41 @@ supports it. A counter that starts at zero says nothing until something has had
 the chance to increment it, and the honest instrument would print how long it had
 been watching.
 
+### The loop fires: predict, detect and correct, end to end
+
+With `rollback_lag 6` -- six tics, 171 ms, store and forward on reception -- and
+`rollback_loop 4` on the client:
+
+```
+rollback_lag:    holding every peer packet for 6 tics (171 ms), 7 waiting, 0 dropped
+rollback_loop:   13 tics were run before the server confirmed them, furthest ahead 3
+rollback_loop:   8 corrections so far, 20 tics replayed by them, 0 reached further
+                 back than the ring
+rollback_detect: 11 inputs arrived for tics already run, 11 of them contradicted
+                 what was used, 0 came too late for the ring
+```
+
+**All three gestures fired, on a real client, against a separate server process,
+under real delay.** Predict ran tics before the server had confirmed them; detect
+saw the truth arrive for tics already run and disagree with what they had been
+run on; correct rewound and replayed, twenty tics across eight rollbacks, none of
+them reaching further back than the ring holds.
+
+Eleven contradictions against eight corrections is the expected shape: a
+correction starts from the *oldest* contradicted tic, so contradictions arriving
+together are paid for once.
+
+That is the first end-to-end proof that phase 3 works, and it took the lag knob
+to get it -- on a loopback all three counters sat at zero with nothing wrong
+anywhere.
+
+**What this does not yet show.** Nobody has looked at the screen while it
+happened; there is no measurement of what a correction costs in the middle of a
+tic rather than in a console command; the netxcmd hole from the predict commit is
+still open, so chat and cvar changes landing on a predicted tic are still lost;
+and none of this has run for longer than a scripted couple of minutes. It fires.
+It is not finished.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
