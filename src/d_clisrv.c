@@ -6851,6 +6851,26 @@ dboolean TryRunTics(tic_t realtics)
 			D_MapChange(-1, 0, encoremode, false, 2, false, forcespecialstage); // finish the map change
 	}
 
+	// Before anything samples the world, and in particular before NetUpdate
+	// builds this machine's ticcmd out of it.
+	//
+	// G_BuildTiccmd takes the angle it sends straight off the player's mobj
+	// (g_build_ticcmd.cpp:211, then :475). With the speculation still standing,
+	// that is a *speculated* angle, and the server applies it to its confirmed
+	// world -- so the player is steered by a heading from a timeline nobody else
+	// ever ran. Driving makes the two angles diverge; sitting still does not,
+	// which is exactly the shape the measurements had:
+	//
+	//   null speculation, driven, 1400 restores : 0 resyncs
+	//   four speculated tics, NOT driven        : 0 resyncs
+	//   four speculated tics, driven            : 9 resyncs
+	//
+	// The restore was never the problem and neither were netxcmds -- the guard
+	// against those refused precisely zero messages in every race. What leaked
+	// was the one thing a client always sends: its own input.
+	if (K_RollbackTwoClock() > 0)
+		K_RollbackUnspeculate();
+
 	NetUpdate();
 
 	if (demo.playback)
@@ -6882,13 +6902,13 @@ dboolean TryRunTics(tic_t realtics)
 	// line leaves runto equal to neededtic and nothing below changes at all.
 	runto = neededtic;
 
-	// Two-clock mode: put the confirmed world back before anything authoritative
-	// happens to it. runto is left at neededtic, so the loop below is the stock
+	// Two-clock mode leaves runto at neededtic, so the loop below is the stock
 	// one -- which is the whole point, and the reason consistancy[] can be
-	// trusted again.
+	// trusted. The world was already put back at the top of this function, which
+	// has to happen before NetUpdate rather than after it.
 	if (K_RollbackTwoClock() > 0)
 	{
-		K_RollbackUnspeculate();
+		// nothing further: the speculation is already undone
 	}
 	else if (client && gamestate == GS_LEVEL)
 	{
