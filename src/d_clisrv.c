@@ -7111,9 +7111,14 @@ static void UpdatePingTable(void)
 		else
 			target_lag = fastest;
 
-		// Don't gentleman below your mindelay -- unless rollback is paying, where
-		// a floor would put back exactly what turning it on removed.
-		if (rollbackpays == false && target_lag < (tic_t)cv_mindelay.value)
+		// Don't gentleman below your mindelay -- including when rollback is paying.
+		// The gentleman's delay is two things and only one of them is rollback's
+		// job: mindelay is the floor the player chose in their profile, and it
+		// buys jitter absorption cheaply, while the adaptive raise above is what
+		// covers the whole ping and is what rollback replaces. Zeroing both was
+		// wrong, and this document said so before I did it: a small fixed delay,
+		// with rollback covering the rest up to a depth worth paying for.
+		if (target_lag < (tic_t)cv_mindelay.value)
 			target_lag = (tic_t)cv_mindelay.value;
 
 		pingmeasurecount++;
