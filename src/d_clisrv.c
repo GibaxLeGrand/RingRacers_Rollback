@@ -7130,14 +7130,21 @@ static void UpdatePingTable(void)
 		else
 			target_lag = fastest;
 
-		// Don't gentleman below your mindelay -- including when rollback is paying.
-		// The gentleman's delay is two things and only one of them is rollback's
-		// job: mindelay is the floor the player chose in their profile, and it
-		// buys jitter absorption cheaply, while the adaptive raise above is what
-		// covers the whole ping and is what rollback replaces. Zeroing both was
-		// wrong, and this document said so before I did it: a small fixed delay,
-		// with rollback covering the rest up to a depth worth paying for.
-		if (target_lag < (tic_t)cv_mindelay.value)
+		// Don't gentleman below your mindelay -- unless rollback is paying, and
+		// this one was decided by a measurement rather than by argument.
+		//
+		// Keeping the floor sounded right: a small fixed delay absorbs jitter
+		// cheaply, and rollback covers the rest. But the floor is what the
+		// sending pipeline shifts the local input by, so with it in place the
+		// client predicts tic N with the input built this frame while the server
+		// applies that same input at tic N plus the floor. The two can never
+		// agree, and the detector said so in one line: every contradiction, 1520
+		// of 1520, was this machine mispredicting *itself*, with the other player
+		// predicted perfectly.
+		//
+		// Jitter absorption is worth having and this is not the way to get it
+		// while the loop is on. It comes back the moment the loop is off.
+		if (rollbackpays == false && target_lag < (tic_t)cv_mindelay.value)
 			target_lag = (tic_t)cv_mindelay.value;
 
 		pingmeasurecount++;
