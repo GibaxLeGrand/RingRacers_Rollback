@@ -1409,6 +1409,42 @@ against ~4200 played: seven replayed tics for every real one, about 17 ms of a
 28.6 ms budget, permanently. Even with perfect prediction that number is the one
 that decides whether this is viable, and it is measured now rather than guessed.
 
+### Where the played sessions actually got to
+
+Five played races across the evening, each one measured. What holds:
+
+**Responsiveness is solved and has stayed solved.** "Ça répond tout de suite",
+four races running. It took finding `cv_netticbuffer`, which makes the client
+stop short at the *end* of the tic loop and so never reach the condition for
+predicting at all.
+
+**Remote prediction is not the problem.** Two players, no bots, the other one
+standing still: the detector blamed **this machine, 1520 times out of 1520**. Not
+one wrong guess about the other player. Every theory about bot volatility or
+guessing what people will press was answered by that single line.
+
+**What is still open, honestly:**
+
+| | state |
+|---|---|
+| self-misprediction | **unexplained.** Neither `mindelay` (2 tics) nor `maketic` labelling (12 tics) accounted for it -- both were tried and the second is reverted, no measured benefit and corrections went from 2682 to 4022 |
+| netxcmds on a predicted tic | **lost.** Direct evidence: the idle host was auto-spectated on the server and the client never saw it |
+| resynchronisation | **absent.** In lockstep nothing recovers a divergence once it exists; the rollback only replays our own snapshots with better inputs |
+| cost | 45288 replayed tics against ~4200 played |
+
+⚠ **A note on how two of those were misread, because the pattern matters more
+than the cases.** A mid-race map change looked like the netxcmd hole; it was the
+race ending normally, and Gibax said so. I then dropped the netxcmd theory
+entirely -- and the spectator asymmetry, which that theory *does* explain, went
+with it. A partial correction knocked out a conclusion the evidence still
+supported. Separately, the spectator event itself was read as a symptom of the
+loop when the host had simply been idle for two minutes.
+
+Both errors are the same shape: reasoning from a symptom to a cause that fit,
+without checking. Every finding that held today came from reading the line
+instead -- `netticbuffer`, `D_Clearticcmd`, `K_CheckSpectateStatus`, the keeper's
+position mid-tic.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
