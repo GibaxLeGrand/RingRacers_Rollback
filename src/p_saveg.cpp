@@ -7527,7 +7527,16 @@ static void P_NetArchiveMisc(savebuffer_t *save, dboolean resending)
 	else
 		WRITEUINT8(save->p, 0x2e);
 
-	WRITEUINT32(save->p, livestudioaudience_timer);
+	// Advanced by the tic loop, not by the simulation: TryRunTics decrements it
+	// every TICRATE tics, in the same block as Schedule_Run. A replay drives
+	// P_Ticker by hand and never reaches that block, so it comes back one short
+	// whenever the tics it repeats cross a multiple of thirty-five -- which is at
+	// most once in sixteen, so the miss is always exactly one and only sometimes.
+	// It is a laugh track. Reproducing it in the replay would mean calling a
+	// netcode block that also runs scheduled commands, so a local snapshot leaves
+	// it out instead, the way it leaves out tilt and a debris roll.
+	if (localsnapshot == false)
+		WRITEUINT32(save->p, livestudioaudience_timer);
 
 	// Only the server uses this, but it
 	// needs synched for remote admins anyway.
@@ -7909,7 +7918,11 @@ static dboolean P_NetUnArchiveMisc(savebuffer_t *save, dboolean reloading)
 	if (READUINT8(save->p) == 0x2f)
 		paused = true;
 
-	livestudioaudience_timer = READUINT32(save->p);
+	// localrestore, not localsnapshot: the two flags are a pair, one per
+	// direction, and reading the writer's would give the right answer only for as
+	// long as a local save is always followed by a local load.
+	if (localrestore == false)
+		livestudioaudience_timer = READUINT32(save->p);
 
 	// Only the server uses this, but it
 	// needs synched for remote admins anyway.

@@ -1058,13 +1058,42 @@ Five `rollback_replay`, at depths 4, 8, 16, 16, 16:
 and `leveltime` underneath a client whose clock the server owns, and the fear was
 that this alone would get it dropped for inconsistency. It does not.
 
-**The residue is one byte and it repeats exactly.** Same offset both times, same
-transition both times -- `0x15` to `0x16` -- at two different points of the race.
-A value that lands on the same pair twice is not a tic counter. It is in the
-`misc` block, which is the one block with no field namer: `P_NamePlayerField`
-covers players and `K_NameMobjField` covers objects, and misc is written as a
-flat sequence with no diff masks, so its namer is the easy one of the three.
-That is the next instrument, and it is small.
+**The residue is one byte and it repeats exactly** -- same offset, same
+transition, `0x15` to `0x16`, at two different points of the race. A value
+landing on the same pair twice is not a tic counter, and the misc archiver
+answers what it is by being read rather than instrumented: byte 459 is the
+`0x2e`/`0x2f` paused marker, which was sitting in the hex window all along, and
+the field after it is `livestudioaudience_timer`. 21 against 22, off by one, in
+the direction of the replay having decremented it one time fewer.
+
+`TryRunTics` decrements it, in the tic loop, in the same block as
+`Schedule_Run`:
+
+```c
+if (Playing() && netgame && (gametic % TICRATE == 0))
+{
+	Schedule_Run();
+	if (cv_livestudioaudience.value)
+		LiveStudioAudience();
+}
+```
+
+A replay drives `P_Ticker` by hand and never reaches that block. Sixteen tics
+cross a multiple of thirty-five at most once, so the miss is **always exactly
+one and only sometimes** -- which is the entire shape of what was measured. And
+it needs `netgame`, so a listen server never showed it: this could only appear
+on the client.
+
+**Third of a kind.** `gametic` was the first thing `TryRunTics` does per tic that
+a hand-rolled replay missed, the input step was the second, and this is the
+third. The lesson has to be stated more strongly than it was: *replaying a tic by
+hand means reproducing everything the tic loop does around `P_Ticker`, and that
+list is not short.*
+
+It is a laugh track, and reproducing it would mean calling a netcode block that
+also runs scheduled commands -- real side effects that must not happen twice. So
+a local snapshot leaves it out, gated like `tilt` and the debris roll. Fifth
+member of the presentation family.
 
 ### Before phase 4 -- two instances with latency
 
