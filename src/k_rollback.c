@@ -3251,7 +3251,9 @@ static void Command_RollbackDetect_f(void)
 // of this existed.
 // ----------------------------------------------------------------------------
 
-static int32_t g_loopahead;   // how many tics the client may run past the server
+static int32_t g_loopahead;      // how many tics the client may run past the server
+static uint32_t g_predicted;     // tics actually run before the server confirmed them
+static int32_t g_furthestahead;  // the most it ever got in front
 
 /** How far ahead a predicted client may get.
   *
@@ -3281,9 +3283,17 @@ int32_t K_RollbackPredictAhead(void)
   * arrive -- it was guessed, and p_user reads that flag to decide how much to
   * trust the angle it came with.
   */
-void K_RollbackPredictInputs(tic_t tic)
+void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 {
 	int32_t i;
+
+	// Counted, because "the loop is on" and "the loop is doing anything" are two
+	// different claims and only one of them was ever printed. A prediction that
+	// never fires and a detector that never sees look identical from the outside.
+	g_predicted++;
+
+	if (ahead > g_furthestahead)
+		g_furthestahead = ahead;
 
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
@@ -3370,6 +3380,8 @@ static void Command_RollbackLoop_f(void)
 
 	CONS_Printf("rollback_loop: running up to %d tics ahead of the server "
 		"(the cap allows %d)\n", g_loopahead, K_RollbackPredictAhead());
+	CONS_Printf("rollback_loop: %u tics were run before the server confirmed them, furthest ahead %d\n",
+		g_predicted, g_furthestahead);
 	CONS_Printf("rollback_loop: %u corrections so far, %u tics replayed by them, "
 		"%u reached further back than the ring\n",
 		g_corrections, g_replayedtics, g_unreachable);

@@ -6845,7 +6845,7 @@ dboolean TryRunTics(tic_t realtics)
 			{
 				// Nobody has told us what happens in this tic yet, so repeat
 				// what everyone was last holding.
-				K_RollbackPredictInputs(gametic);
+				K_RollbackPredictInputs(gametic, (int32_t)(gametic - neededtic));
 			}
 
 			DEBFILE(va("============ Running tic %d (local %d)\n", gametic, localgametic));

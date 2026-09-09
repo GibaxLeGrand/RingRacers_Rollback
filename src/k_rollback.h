@@ -47,7 +47,7 @@ void K_RollbackNoteArrival(tic_t tic);
 int32_t K_RollbackPredictAhead(void);
 
 /** Fills a tic's inputs by repeating what each player was last known to hold. */
-void K_RollbackPredictInputs(tic_t tic);
+void K_RollbackPredictInputs(tic_t tic, int32_t ahead);
 
 /** True when a tic already run has been contradicted; the oldest one via from. */
 dboolean K_RollbackPending(tic_t *from);
