@@ -1872,6 +1872,48 @@ void G_UpdateAllPlayerPreferences(void)
 
 extern dboolean demosynced;
 
+/** Moves the tic's inputs out of netcmds and into the players.
+  *
+  * Pulled out of G_Ticker unchanged so that a replayed tic can take the same
+  * step. It is not a plain copy: a ticcmd arrives carrying the leveltime it was
+  * built at, and this is where that stamp becomes the control lag the
+  * simulation reads -- the drift leniency in p_user caps it at six, the item
+  * roulette uses it as a fudge. A rollback replay that wrote netcmds straight
+  * into players[].cmd handed the raw stamp to the simulation instead: 130 where
+  * the live tic had 2, and zero is what a bot is supposed to get.
+  */
+void G_MoveTiccmdsIntoPlayers(void)
+{
+	int32_t buf = gametic % BACKUPTICS;
+	ticcmd_t *cmd;
+	uint32_t i;
+
+	if (demo.playback)
+		return;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		cmd = &players[i].cmd;
+
+		if (playeringame[i])
+		{
+			G_CopyTiccmd(cmd, &netcmds[buf][i], 1);
+
+			// Use the leveltime sent in the player's ticcmd to determine control lag
+			if (K_PlayerUsesBotMovement(&players[i]))
+			{
+				// Never has lag
+				cmd->latency = 0;
+			}
+			else
+			{
+				//@TODO add a cvar to allow setting this max
+				cmd->latency = min(((leveltime & TICCMD_LATENCYMASK) - cmd->latency) & TICCMD_LATENCYMASK, MAXPREDICTTICS-1);
+			}
+		}
+	}
+}
+
 //
 // G_Ticker
 // Make ticcmd_ts for the players.
@@ -1879,8 +1921,6 @@ extern dboolean demosynced;
 void G_Ticker(dboolean run)
 {
 	uint32_t i;
-	int32_t buf;
-	ticcmd_t *cmd;
 
 	// see also SCR_DisplayMarathonInfo
 	if ((marathonmode & (MA_INIT|MA_INGAME)) == MA_INGAME && gamestate == GS_LEVEL)
@@ -2002,32 +2042,7 @@ void G_Ticker(dboolean run)
 			default: I_Error("gameaction = %d\n", gameaction);
 		}
 
-	buf = gametic % BACKUPTICS;
-
-	if (!demo.playback)
-	{
-		for (i = 0; i < MAXPLAYERS; i++)
-		{
-			cmd = &players[i].cmd;
-
-			if (playeringame[i])
-			{
-				G_CopyTiccmd(cmd, &netcmds[buf][i], 1);
-
-				// Use the leveltime sent in the player's ticcmd to determine control lag
-				if (K_PlayerUsesBotMovement(&players[i]))
-				{
-					// Never has lag
-					cmd->latency = 0;
-				}
-				else
-				{
-					//@TODO add a cvar to allow setting this max
-					cmd->latency = min(((leveltime & TICCMD_LATENCYMASK) - cmd->latency) & TICCMD_LATENCYMASK, MAXPREDICTTICS-1);
-				}
-			}
-		}
-	}
+	G_MoveTiccmdsIntoPlayers();
 
 	// do main actions
 	switch (gamestate)

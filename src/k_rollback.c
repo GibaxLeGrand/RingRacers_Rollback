@@ -892,6 +892,33 @@ static dboolean K_NeedScratch(void)
 static diagset_t g_recsfirst, g_recssecond, g_recsthird;
 
 
+/** Makes sure the per-object comparison has somewhere to write.
+  *
+  * Allocated on first use and kept: a soak runs a check hundreds of times, and
+  * taking three megabytes and giving them back each time fragments the zone
+  * until something innocent cannot find room. Every command that wants the
+  * per-object pass calls this, because the one that did not ended up reporting
+  * that it had run out of memory when it had simply never asked.
+  *
+  * \return true when all three sets are usable.
+  */
+static dboolean K_NeedDiagSets(void)
+{
+	if (g_recsfirst.bytes == NULL)
+	{
+		g_recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+		g_recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+		g_recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+		g_recssecond.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+		g_recsthird.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
+		g_recsthird.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
+	}
+
+	return (g_recsfirst.bytes != NULL && g_recsfirst.recs != NULL
+		&& g_recssecond.bytes != NULL && g_recssecond.recs != NULL
+		&& g_recsthird.bytes != NULL && g_recsthird.recs != NULL);
+}
+
 /** Archives every object the snapshot holds, one record per object.
   *
   * Walks the same list in the same order as the archiver, so record N here is
@@ -1955,15 +1982,7 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 		return false;
 	}
 
-	if (g_recsfirst.bytes == NULL)
-	{
-		g_recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
-		g_recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
-		g_recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
-		g_recssecond.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
-		g_recsthird.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
-		g_recsthird.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
-	}
+	K_NeedDiagSets();
 
 	first = g_first;
 	second = g_second;
@@ -2415,6 +2434,7 @@ static void Command_RollbackReplay_f(void)
 	int32_t ran = 0;
 	tic_t from, t, now;
 	tic_t ltbefore, ltafter, ltloaded;
+	dboolean records;
 
 	if (COM_Argc() > 1)
 		n = atoi(COM_Argv(1));
@@ -2451,6 +2471,12 @@ static void Command_RollbackReplay_f(void)
 		return;
 	}
 
+	// The byte offset alone said "the thinkers block", which is where the
+	// per-object pass earns its keep: it names the object and its diff masks on
+	// both sides. rollback_resim has had it from the start; this command was
+	// reporting that it had none.
+	records = K_NeedDiagSets();
+
 	// Into a scratch slot rather than the ring: the ring belongs to whatever
 	// the keeper put there, and a command has no business overwriting it.
 	if (!K_WriteSnapshot(g_second, now))
@@ -2475,6 +2501,11 @@ static void Command_RollbackReplay_f(void)
 		liveold[i] = players[i].oldcmd;
 	}
 
+	// Walks the living world, so it has to happen before the restore -- and
+	// outside the timed region below, because it archives every object.
+	if (records)
+		K_CaptureRecords(&g_recsfirst);
+
 	if (!K_LoadGameState(from))
 	{
 		CONS_Printf("rollback_replay: no snapshot for tic %s -- turn rollback_keep "
@@ -2490,20 +2521,23 @@ static void Command_RollbackReplay_f(void)
 
 	for (t = from + 1; t <= now; t++)
 	{
-		for (i = 0; i < MAXPLAYERS; i++)
-		{
-			if (playeringame[i])
-				players[i].cmd = netcmds[t % BACKUPTICS][i];
-		}
-
-		// The restore rewound gametic along with everything else -- the archive
+		// Which tic this is, first, because the inputs are indexed by it. The
+		// restore rewound gametic along with everything else -- the archive
 		// carries it -- and P_Ticker does not touch it: TryRunTics is what
-		// advances it, and this replays without going through TryRunTics. So
-		// the tic being replayed says which tic it is, exactly as the real loop
-		// would. Left alone, every replayed world ended up stamped with the tic
-		// it started from, which is what the comparison kept reporting at byte
-		// 22 of the misc block.
+		// advances it, and this replays without going through TryRunTics. Left
+		// alone, every replayed world ended up stamped with the tic it started
+		// from, which is what the comparison kept reporting at byte 22 of the
+		// misc block.
 		gametic = t;
+
+		// Through the step the live loop takes, rather than a raw copy out of
+		// netcmds: G_MoveTiccmdsIntoPlayers turns the leveltime stamp a ticcmd
+		// carries into the control lag the simulation reads, and a replay that
+		// skipped it fed the stamp itself -- latency 130 where the live tic had
+		// 2, and a bot's zero never written. Nothing has diverged on it yet,
+		// because both of its readers clamp, but it is an input the simulation
+		// reads.
+		G_MoveTiccmdsIntoPlayers();
 
 		P_Ticker(true);
 		ran++;
@@ -2518,6 +2552,9 @@ static void Command_RollbackReplay_f(void)
 	// the whole point of the command.
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
 	ltafter = leveltime;
+
+	if (records)
+		K_CaptureRecords(&g_recssecond);
 
 	// Named before they are put back, so the log still carries what the replay
 	// had arrived at rather than what this wrote over it.
@@ -2536,7 +2573,7 @@ static void Command_RollbackReplay_f(void)
 	}
 
 	K_ReportComparison("rollback_replay", "replay", present, "the world as it was",
-		g_first, "the replay", NULL, NULL, false);
+		g_first, "the replay", &g_recsfirst, &g_recssecond, records);
 
 	// Where leveltime went, because the tic counter is what the comparison keeps
 	// pointing at and two readings of it settle in one line what an afternoon of

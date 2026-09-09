@@ -249,6 +249,7 @@ void G_UpdateRecords(void);
 void G_UpdatePlayerPreferences(player_t *const player);
 void G_UpdateAllPlayerPreferences(void);
 
+void G_MoveTiccmdsIntoPlayers(void);
 void G_Ticker(dboolean run);
 dboolean G_Responder(event_t *ev);
 

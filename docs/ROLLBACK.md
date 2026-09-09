@@ -556,17 +556,39 @@ than by reading:
 4. The loop feeds each tic the input that ran, so it leaves `cmd` holding the
    last one and `oldcmd` the one before. Both are carried by a local snapshot,
    so the comparison reported them faithfully. Bookkeeping rather than a world
-   that went somewhere else, and both are put back -- **but from the wrong
-   side of the restore.**
+   that went somewhere else -- and the first attempt at putting them back read
+   them from the **wrong side of the restore**, so it wrote back the input of
+   the tic the replay starts from. Fixed by moving the capture up to before
+   `K_LoadGameState`, and the comparison now names the ticcmd field instead of
+   leaving a byte offset: `K_NameTiccmdDifferences` walks the eleven fields of a
+   ticcmd, and the count prints even when it is zero, because a difference that
+   is put back silently survived two builds exactly that way.
+5. **The replay copied `netcmds` straight into `players[].cmd`, and that step is
+   not a copy.** A ticcmd arrives carrying the `leveltime` it was built at
+   (`g_build_ticcmd.cpp:171`), and `G_Ticker` turns that stamp into the control
+   lag the simulation reads -- or zero, for a bot. The replay skipped the
+   conversion and handed the simulation the stamp: **latency 130 where the live
+   tic had 2**, on every one of six replays. Nothing diverged on it, because both
+   readers clamp (`min(latency, 6)` for drift leniency in `p_user.c:2416`, the
+   item roulette's fudge in `k_roulette.c:2041`), so it is a hazard rather than a
+   failure -- and the clamp is why six identical worlds did not catch it. The
+   step is now a function of its own, `G_MoveTiccmdsIntoPlayers`, called by
+   `G_Ticker` and by the replay, so there is only one of it. **General lesson for
+   the real loop: replay a tic through the live loop's own steps, not through a
+   reconstruction of them.**
 
-**A replay is not identical yet, and the next step is one line.** With
-`gametic` and both inputs handled, all six replays differ on exactly one
-field: `cmd`, on a bot -- named by the archiver's field table rather than
-decoded from a hex window. The capture of the pending inputs sits *after*
-`K_LoadGameState`, so it saves what the restore just put back instead of what
-the present was holding, and restoring that afterwards puts back the wrong
-pair. Move the capture to before the restore, beside the first reading of
-`leveltime`. Everything else already matches, at all four depths.
+**Measured on the build that fixed the input capture** (`758e7ca`, binary
+verified by its sha): **five replays out of six IDENTICAL**, at depths 1, 4, 8
+and 16, 140 to 153 KiB a snapshot, 1.65 to 2.4 ms per replayed tic. Before it,
+zero out of six.
+
+**What is left is one residue, and it has moved.** The sixth replay -- sixteen
+tics, late in the race, `leveltime` 1911 -- differs by one byte in the
+**thinkers** block, `0xd0` to `0xf8`. Every earlier survivor was in the players
+block; this is the first that is not. `rollback_replay` was reporting "no
+per-object comparison" for it, which is what names an object and its diff masks,
+so that pass is now wired in (it was only ever allocated by `rollback_resim`; the
+allocation is `K_NeedDiagSets` now, shared). **Not yet measured.**
 
 Two of those took two turns of reasoning each and were settled by a number in
 one: the count of tics actually replayed exposed a loop that looked timed but
@@ -630,6 +652,34 @@ Behind `cv_rollback`, off by default, so a build with it compiled in still
 plays exactly as a stock one until somebody turns it on. The soak stays on as
 the regression net: a rollback that breaks determinism will show up there
 first.
+
+### What needs somebody at the controls
+
+Most of this runs unattended: a scenario ends in `quit`, fifteen bots exercise
+items, damage, respawns and the finish line, and the two failures that ended
+phase 2 were on bot players. What bots **cannot** stand in for, so far:
+
+- **Anything the simulation only reads for a human.** `cmd.latency` is the clear
+  case: `G_Ticker` sets it to zero for any player using bot movement, so the
+  drift leniency and the roulette fudge that read it are **only ever nonzero for
+  a person driving**. A bots-only soak cannot exercise the path fault 5 above was
+  about -- it can only prove the worlds still agree, not that the value reaching
+  the simulation is right.
+- **Edge-triggered input.** A soak replays frozen inputs, so a button that
+  matters on its front -- item use, trick panels, spindash, e-brake, bail,
+  respawn -- is never pressed during a check. This is structural, not a gap in
+  coverage, and it is the blindness a real rollback loop fixes by replaying real
+  input. Until phase 3's packet half exists, only a person pressing buttons
+  reaches those.
+- **What no log records.** The camera jerk was found by watching, after four
+  builds of clean logs. Any change touching the camera, `tilt`, or interpolation
+  wants eyes on it before it is believed.
+- **Phase 4 onward.** Two instances with latency, a stock peer, and the
+  capability test's "does it stutter for me" are all judgements a person makes.
+
+So the division is: **measurements and regression runs are unattended, and a
+played race is asked for when a change touches what only a human drives** --
+named above, rather than asked for by reflex.
 
 ### Before phase 4 -- two instances with latency
 
