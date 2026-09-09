@@ -2051,7 +2051,6 @@ void G_Ticker(dboolean run)
 			if (demo.attract)
 				F_AttractDemoTicker();
 			P_Ticker(run); // tic the game
-			K_RollbackTicker(); // does nothing unless rollback_keep or _soak is on
 			F_TextPromptTicker();
 			AM_Ticker();
 			HU_Ticker();
@@ -2212,6 +2211,14 @@ void G_Ticker(dboolean run)
 			}
 		}
 	}
+
+	// Last, because a snapshot of tic N is supposed to be the world as N left
+	// it. This used to sit directly under P_Ticker, which is barely half way
+	// through a tic: K_CheckSpectateStatus, further down, still had a
+	// spectatorReentry to decrement. A replay then came back one short of the
+	// present no matter how many tics it repeated, because the tic it started
+	// from had been photographed mid-stride.
+	K_RollbackTicker(); // does nothing unless rollback_keep or _soak is on
 }
 
 //

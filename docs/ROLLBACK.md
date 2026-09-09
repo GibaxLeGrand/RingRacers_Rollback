@@ -1196,8 +1196,29 @@ truth rather than the flag-stripped mailbox -- **which is also the shape the rea
 correction takes**: write the input that actually arrived, then run the tic
 normally.
 
-**Not yet measured.** It either reproduces the twelve-of-twelve and five-of-five
-exactly, or the change is wrong -- there is no third outcome worth accepting.
+**Measured.** Listen server: **twelve replays, twelve IDENTICAL** -- the previous
+result reproduced exactly, so replaying whole tics costs nothing and the change
+stands. Client: `spectatorReentry` went from **17 out over 16 tics to 1**. Sixteen
+of the seventeen were the per-tic decrement the replay had been skipping. One was
+not.
+
+### The snapshot was being taken mid-tic
+
+One out over sixteen tics is not a per-tic miss; it is a boundary. And the
+boundary was in the keeper's own position: `K_RollbackTicker()` sat inside
+`G_Ticker`'s `GS_LEVEL` case **directly under `P_Ticker`** -- barely half way
+through a tic. `K_CheckSpectateStatus` is eighty lines further down the same
+function, and it still had a `spectatorReentry` to decrement.
+
+So the slot for tic N held the world *part way through* N, not as N left it. Its
+own comment claimed otherwise -- "the slot for tic N holds the world as N left
+it, which is where N+1 starts" -- which is the invariant somebody meant, written
+next to code that did not honour it. A replay restoring that slot and running N+1
+onwards was therefore always one tic's worth of tail-end work short, no matter
+how many tics it repeated.
+
+`K_RollbackTicker()` runs at the end of `G_Ticker` now. `G_Ticker` has no early
+return, so the end of it is the end of the tic. **Not yet measured.**
 
 ### Before phase 4 -- two instances with latency
 
