@@ -2315,6 +2315,7 @@ static void Command_RollbackReplay_f(void)
 	uint32_t us;
 	int32_t n = 4;
 	int32_t i;
+	ticcmd_t pending[MAXPLAYERS];
 	int32_t ran = 0;
 	tic_t from, t, now;
 	tic_t ltbefore, ltafter, ltloaded;
@@ -2375,6 +2376,14 @@ static void Command_RollbackReplay_f(void)
 
 	ltloaded = leveltime;
 
+	// The input each player is holding for the tic the game is about to run.
+	// The loop below overwrites it with the input of the last tic it replays,
+	// and a local snapshot carries cmd -- so without this the comparison
+	// reports a difference in player 0's cmd and nothing else, which is
+	// bookkeeping rather than a world that went somewhere different.
+	for (i = 0; i < MAXPLAYERS; i++)
+		pending[i] = players[i].cmd;
+
 	// The inputs of each tic as the netcode recorded them, rather than one tic's
 	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
 	started = I_GetPreciseTime();
@@ -2403,6 +2412,9 @@ static void Command_RollbackReplay_f(void)
 	// And forward to the tic the game is about to run, which is where the
 	// world this was compared against stands.
 	gametic = now + 1;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+		players[i].cmd = pending[i];
 
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
 	ltafter = leveltime;
