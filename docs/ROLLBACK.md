@@ -216,8 +216,8 @@ values as well as the decision.
 
 ### And what the ordering fix did to it
 
-Measured on the binary, not on the branch: the exe carries `<branch> <short
-sha> <subject>`, so a run is only counted if `grep` finds the commit's own sha
+Measured on the binary, not on the branch: the exe carries `<branch>\0<short
+sha>\0<subject>`, so a run is only counted if `grep` finds the commit's own sha
 in the file that ran. That check exists because a run was once reported against
 a stale binary -- the artifact of the *previous* commit, installed because
 `gh run list --limit 1` answers with the last finished run when the new one does
@@ -441,7 +441,7 @@ gcc -fsyntax-only -Wall -std=gnu11 -I <a folder holding a stub config.h> -I src 
 ```
 
 **Never measure against a binary without checking it is the one you built.**
-The exe carries `<branch> <seven-character sha> <commit subject>` in plain
+The exe carries `<branch>\0<seven-character sha>\0<commit subject>` in plain
 text, so:
 
 ```
@@ -556,8 +556,17 @@ than by reading:
 4. The loop feeds each tic the input that ran, so it leaves `cmd` holding the
    last one and `oldcmd` the one before. Both are carried by a local snapshot,
    so the comparison reported them faithfully. Bookkeeping rather than a world
-   that went somewhere else; both are put back now. **The fix for `oldcmd` is
-   built and running; its result is not in this document yet.**
+   that went somewhere else, and both are put back -- **but from the wrong
+   side of the restore.**
+
+**A replay is not identical yet, and the next step is one line.** With
+`gametic` and both inputs handled, all six replays differ on exactly one
+field: `cmd`, on a bot -- named by the archiver's field table rather than
+decoded from a hex window. The capture of the pending inputs sits *after*
+`K_LoadGameState`, so it saves what the restore just put back instead of what
+the present was holding, and restoring that afterwards puts back the wrong
+pair. Move the capture to before the restore, beside the first reading of
+`leveltime`. Everything else already matches, at all four depths.
 
 Two of those took two turns of reasoning each and were settled by a number in
 one: the count of tics actually replayed exposed a loop that looked timed but
