@@ -47,6 +47,7 @@
 #include "g_game.h" // players, playeringame
 #include "i_system.h" // I_GetPreciseTime()
 #include "info.h"
+#include "k_bot.h" // K_BuildBotTiccmd
 #include "k_grandprix.h" // grandprixinfo
 #include "m_random.h" // P_RandomFixed()
 #include "p_local.h" // thlist, P_Ticker()
@@ -3388,6 +3389,26 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 
 		if ((to->flags & TICCMD_RECEIVED) != 0)
 			continue;   // the real thing arrived first; nothing to guess
+
+		// A bot's input is not unknown either. It is computed from the world by
+		// K_BuildBotTiccmd, and this machine has a world -- so compute it rather
+		// than guess it. Repeat-last is a decent guess about a person, who holds
+		// a button for several tics at a time; it is a terrible one about a bot,
+		// which recomputes its angle and its confirmations every single tic. On a
+		// grid of fifteen bots that made every predicted tic wrong, every real
+		// input arrive as a contradiction, and the predicted world run away hard
+		// enough that the local input built from it was nonsense by the time the
+		// server saw it.
+		//
+		// Safe to call here: the only P_Random in k_bot.cpp is in
+		// K_UpdateMatchRaceBots, which picks a skin when a bot is created.
+		// K_BuildBotTiccmd itself draws nothing, so predicting with it cannot
+		// walk the synchronised RNG away from the server's.
+		if (K_PlayerUsesBotMovement(&players[i]))
+		{
+			K_BuildBotTiccmd(&players[i], to);
+			continue;
+		}
 
 		*to = netcmds[(tic - 1) % BACKUPTICS][i];
 		to->flags &= ~TICCMD_RECEIVED;

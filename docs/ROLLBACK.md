@@ -1363,6 +1363,52 @@ The log carries the numbers -- tics predicted, contradictions, corrections, tics
 replayed, and whether the delay queue dropped anything -- so the report wanted
 from a person is only the part the numbers cannot hold.
 
+### Played, at last: the input lag goes, and the world desyncs
+
+⚠ **The loop as it stands desyncs a real game.** Not a display artefact -- the
+bots stopped moving on the client, and the player's own kart was doing nonsense
+*on the server*. It stays behind `rollback_loop`, off by default, and must not be
+recommended to anybody until this is fixed.
+
+**And the input lag is gone.** "Ça répond tout de suite", after a whole day in
+which nothing moved that needle. That is the hard half of the problem and it is
+both felt and measured.
+
+What it took, in the order the measurements forced:
+
+| | predicted tics | lead held | corrections |
+|---|---|---|---|
+| loop on, first try | 25 of ~6300 | never measured | 11 |
+| the player's own input used instead of guessed | 30 of ~4000 | -- | 11 |
+| **the net tic reserve skipped** | **3017** | **12, always** | **2476** |
+
+`cv_netticbuffer` was the whole thing. The client deliberately stops short at the
+*end* of the tic loop, keeping tics in reserve, so `gametic` settles at
+`neededtic` minus the buffer and `gametic >= neededtic` -- the test for
+predicting -- can never be true. Three fixes aimed at *how* to predict changed
+nothing a player could feel, because nothing was predicting at all. A reserve is
+right for a delay-based client, which smooths jitter by never running dry, and
+wrong for a rollback one, whose method is to run ahead and be corrected.
+
+**Why it desyncs, as far as the numbers go.** 2000 arrivals, 2000 contradictions
+-- every single one. The grid is fifteen bots, and a bot recomputes its angle and
+its confirmations every tic, so repeat-last is wrong about it almost always.
+Repeat-last is a good guess about a *person*, who holds a button for several tics.
+The predicted world therefore runs away hard, and the local input is built from
+that world -- which is why the server saw the player's kart doing nonsense. The
+client was sending inputs computed in an imaginary world.
+
+**Next, and not a guarantee.** A bot's input is not unknown: `K_BuildBotTiccmd`
+computes it from the world, and this machine has a world. So predict bots by
+computing rather than guessing. Verified safe first -- the only `P_Random` in
+`k_bot.cpp` is in `K_UpdateMatchRaceBots`, picking a skin at creation, so the
+prediction cannot walk the synchronised RNG away from the server's.
+
+**And the cost, which is phase 6's question arriving early.** 29266 tics replayed
+against ~4200 played: seven replayed tics for every real one, about 17 ms of a
+28.6 ms budget, permanently. Even with perfect prediction that number is the one
+that decides whether this is viable, and it is measured now rather than guessed.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
