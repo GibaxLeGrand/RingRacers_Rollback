@@ -3157,6 +3157,9 @@ static uint32_t g_contradicted;  // of those, how many said something different
 static uint32_t g_unrecorded;    // and how many the ring could no longer vouch for
 static tic_t g_correctfrom;      // the oldest tic that would have to be replayed
 static dboolean g_havecorrection;
+static uint32_t g_corrections;   // rollbacks the loop has actually performed
+static uint32_t g_replayedtics;  // tics those rollbacks replayed
+static uint32_t g_unreachable;   // corrections wanted from before the ring reaches
 
 /** Called when the server's inputs for a tic land on a client.
   *
@@ -3235,6 +3238,141 @@ static void Command_RollbackDetect_f(void)
 
 	g_arrivals = g_contradicted = g_unrecorded = 0;
 	g_havecorrection = false;
+}
+
+// ----------------------------------------------------------------------------
+// The loop: predict, detect, correct.
+//
+// Off unless rollback_loop is turned on, and then only on a client. The three
+// gestures are one mechanism and only make sense together: a client that runs
+// ahead without correcting drifts away from the server and gets thrown off, and
+// a client that could correct but never runs ahead has nothing to correct --
+// which is exactly what the detector reported, three runs in a row, before any
+// of this existed.
+// ----------------------------------------------------------------------------
+
+static int32_t g_loopahead;   // how many tics the client may run past the server
+
+/** How far ahead a predicted client may get.
+  *
+  * Bounded by the ring, because a correction cannot reach further back than the
+  * oldest snapshot, and by the depth policy, because a rollback deeper than a
+  * tic's budget costs more than it saves. Two slots are kept back: one holds
+  * where a replay starts and one where it has to arrive.
+  */
+int32_t K_RollbackPredictAhead(void)
+{
+	int32_t cap = K_RollbackMaxDepth();
+
+	if (g_loopahead <= 0)
+		return 0;
+
+	if (cap > ROLLBACK_TICS - 2)
+		cap = ROLLBACK_TICS - 2;
+
+	return (g_loopahead < cap) ? g_loopahead : cap;
+}
+
+/** Fills a tic's inputs with the last thing each player was known to be doing.
+  *
+  * Repeat-last is the standard prediction and the right first one: it is correct
+  * whenever nobody changed what they were holding, which is most tics. The
+  * TICCMD_RECEIVED flag is cleared on the copy, because this input did not
+  * arrive -- it was guessed, and p_user reads that flag to decide how much to
+  * trust the angle it came with.
+  */
+void K_RollbackPredictInputs(tic_t tic)
+{
+	int32_t i;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		ticcmd_t *to = &netcmds[tic % BACKUPTICS][i];
+
+		if (playeringame[i] == false)
+			continue;
+
+		if ((to->flags & TICCMD_RECEIVED) != 0)
+			continue;   // the real thing arrived first; nothing to guess
+
+		*to = netcmds[(tic - 1) % BACKUPTICS][i];
+		to->flags &= ~TICCMD_RECEIVED;
+	}
+}
+
+/** True when the network has contradicted a tic that has already run.
+  *
+  * \return the oldest such tic through *from.
+  */
+dboolean K_RollbackPending(tic_t *from)
+{
+	if (g_havecorrection == false || g_loopahead <= 0)
+		return false;
+
+	if (from != NULL)
+		*from = g_correctfrom;
+
+	return true;
+}
+
+/** Restores the oldest contradicted tic and replays to the present.
+  *
+  * The same K_RollbackTo the test command uses, which is the point of having
+  * given it a name: the loop and the test cannot drift apart into two readings
+  * of the same idea.
+  */
+void K_RollbackCorrect(void)
+{
+	tic_t from;
+	int32_t ran;
+
+	if (K_RollbackPending(&from) == false)
+		return;
+
+	g_havecorrection = false;
+
+	if (gametic == 0 || from >= gametic)
+		return;
+
+	ran = K_RollbackTo(from, gametic - 1, NULL);
+
+	if (ran < 0)
+	{
+		// Further back than the ring reaches. Counted where it is counted, and
+		// not hidden: this is the limit the depth cap exists to keep us inside.
+		g_unreachable++;
+		return;
+	}
+
+	g_corrections++;
+	g_replayedtics += (uint32_t)ran;
+}
+
+/** Console command: rollback_loop [0/1]
+  *
+  * Turns the whole loop on. Off by default, so a build carrying it plays exactly
+  * as a stock one until somebody asks.
+  */
+static void Command_RollbackLoop_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_loopahead = atoi(COM_Argv(1));
+
+		if (g_loopahead < 0)
+			g_loopahead = 0;
+
+		// Running ahead without keeping snapshots would mean predicting with no
+		// way back, which is worse than not predicting at all.
+		if (g_loopahead > 0)
+			g_keeping = true;
+	}
+
+	CONS_Printf("rollback_loop: running up to %d tics ahead of the server "
+		"(the cap allows %d)\n", g_loopahead, K_RollbackPredictAhead());
+	CONS_Printf("rollback_loop: %u corrections so far, %u tics replayed by them, "
+		"%u reached further back than the ring\n",
+		g_corrections, g_replayedtics, g_unreachable);
 }
 
 /** Console command: rollback_maxdepth [tics]
@@ -3329,4 +3467,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_keep", Command_RollbackKeep_f);
 	COM_AddDebugCommand("rollback_replay", Command_RollbackReplay_f);
 	COM_AddDebugCommand("rollback_detect", Command_RollbackDetect_f);
+	COM_AddDebugCommand("rollback_loop", Command_RollbackLoop_f);
 }

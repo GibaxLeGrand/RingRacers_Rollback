@@ -43,6 +43,18 @@ void K_RollbackTicker(void);
 /** Tells the rollback code that the server's inputs for a tic have arrived. */
 void K_RollbackNoteArrival(tic_t tic);
 
+/** How many tics a predicting client may run past the server. Zero when off. */
+int32_t K_RollbackPredictAhead(void);
+
+/** Fills a tic's inputs by repeating what each player was last known to hold. */
+void K_RollbackPredictInputs(tic_t tic);
+
+/** True when a tic already run has been contradicted; the oldest one via from. */
+dboolean K_RollbackPending(tic_t *from);
+
+/** Restores the oldest contradicted tic and replays to the present. */
+void K_RollbackCorrect(void);
+
 // How far back a rollback may rewind before the latency has to be paid for
 // with input delay instead. Set by rollback_maxdepth.
 int32_t K_RollbackMaxDepth(void);

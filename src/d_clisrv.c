@@ -6756,6 +6756,7 @@ static void SV_Maketic(void)
 dboolean TryRunTics(tic_t realtics)
 {
 	dboolean ticking;
+	tic_t runto;   // how far the loop below may go: neededtic, plus prediction
 
 	// the machine has lagged but it is not so bad
 	if (realtics > TICRATE/7) // FIXME: consistency failure!!
@@ -6800,7 +6801,24 @@ dboolean TryRunTics(tic_t realtics)
 	}
 #endif
 
-	ticking = neededtic > gametic;
+	// Predict: a client may run past the tics the server has confirmed, on the
+	// last inputs it knows. A server has nothing to predict -- it *is* the thing
+	// everyone else is waiting for -- and outside a level there is no world to
+	// roll back to. Zero unless the loop is switched on, so on a stock run this
+	// line leaves runto equal to neededtic and nothing below changes at all.
+	runto = neededtic;
+
+	if (client && gamestate == GS_LEVEL)
+	{
+		runto += (tic_t)K_RollbackPredictAhead();
+
+		// Correct: before running anything, put right any tic the network has
+		// since contradicted, so the world the loop below starts from is the
+		// corrected one.
+		K_RollbackCorrect();
+	}
+
+	ticking = runto > gametic;
 
 	if (ticking)
 	{
@@ -6818,16 +6836,27 @@ dboolean TryRunTics(tic_t realtics)
 	if (ticking)
 	{
 		// run the count * tics
-		while (neededtic > gametic)
+		while (runto > gametic)
 		{
 			dboolean dontRun = false;
+			const dboolean predicted = (gametic >= neededtic);
+
+			if (predicted)
+			{
+				// Nobody has told us what happens in this tic yet, so repeat
+				// what everyone was last holding.
+				K_RollbackPredictInputs(gametic);
+			}
 
 			DEBFILE(va("============ Running tic %d (local %d)\n", gametic, localgametic));
 
 			ps_prevtictime = ps_tictime;
 			ps_tictime = I_GetPreciseTime();
 
-			dontRun = ExtraDataTicker();
+			// Not on a predicted tic: the netxcmds in that slot belong to a tic
+			// the server has not confirmed, and running them would be acting on
+			// a message nobody has sent yet -- and again for real afterwards.
+			dontRun = predicted ? false : ExtraDataTicker();
 
 			if (levelloading == false
 				|| gametic > levelstarttic + 5) // Don't lock-up if a malicious client is sending tons of netxcmds
