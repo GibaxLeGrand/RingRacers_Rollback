@@ -1036,10 +1036,35 @@ the exe, and each instance gets its own `latest-log.txt`. Fixing `i_main.cpp`
 would be one line but would move `latest-log.txt` for every recipe in this
 document, so the copy is cheaper.
 
-**What it proves so far**: server and client connect, race together, and both
-survive to a scripted `quit`. No rollback is exercised yet -- that is the next
-step, and it is the first thing here that needs the harness rather than the
-harness needing it.
+**And then the rollback was run on the client**, which is the first time any of
+this has touched a world it does not own. Everything before it was a listen
+server, where the local world *is* the authority.
+
+`rollback_test` on the client: **round-trip IDENTICAL** over 123341 bytes, and
+`consistancy before=10477 perturbed=27593 afterload=10477 -- PASS`. The restore
+is 7.9 ms there, of which `P_RelinkPointers` is 3.9.
+
+Five `rollback_replay`, at depths 4, 8, 16, 16, 16:
+
+| | |
+|---|---|
+| IDENTICAL | **3 of 5** |
+| input provenance | **0 disagreed**, every time |
+| the other 2 | **one byte**, at byte 460 both times, in the `misc` block |
+| replayed tic | 1.09 to 1.36 ms (8 racers, against 1.85 to 3.06 at sixteen) |
+| the client | left on its own scripted `quit`; no desync, no resynch, no assert |
+
+**Nothing threw the client off the server.** A local restore rewinds `gametic`
+and `leveltime` underneath a client whose clock the server owns, and the fear was
+that this alone would get it dropped for inconsistency. It does not.
+
+**The residue is one byte and it repeats exactly.** Same offset both times, same
+transition both times -- `0x15` to `0x16` -- at two different points of the race.
+A value that lands on the same pair twice is not a tic counter. It is in the
+`misc` block, which is the one block with no field namer: `P_NamePlayerField`
+covers players and `K_NameMobjField` covers objects, and misc is written as a
+flat sequence with no diff masks, so its namer is the easy one of the three.
+That is the next instrument, and it is small.
 
 ### Before phase 4 -- two instances with latency
 
