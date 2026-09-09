@@ -7097,13 +7097,23 @@ static void UpdatePingTable(void)
 			}
 		}
 
-		if (server_lagless)
+		// Rollback exists to pay for latency after the fact instead of up front, so
+		// when the loop is on it takes the delay's job rather than sitting on top
+		// of it. Measured the other way round first, and the measurement was the
+		// point: with the gentleman's delay still in charge it absorbed 171 ms by
+		// itself, the client was starved twenty-five times in three minutes, the
+		// loop corrected eleven -- and the player felt the input lag the delay was
+		// adding, which is exactly the cost rollback is supposed to remove.
+		const dboolean rollbackpays = (K_RollbackPredictAhead() > 0);
+
+		if (server_lagless || rollbackpays)
 			target_lag = 0;
 		else
 			target_lag = fastest;
 
-		// Don't gentleman below your mindelay
-		if (target_lag < (tic_t)cv_mindelay.value)
+		// Don't gentleman below your mindelay -- unless rollback is paying, where
+		// a floor would put back exactly what turning it on removed.
+		if (rollbackpays == false && target_lag < (tic_t)cv_mindelay.value)
 			target_lag = (tic_t)cv_mindelay.value;
 
 		pingmeasurecount++;
