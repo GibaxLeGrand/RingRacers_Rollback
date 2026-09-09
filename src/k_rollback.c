@@ -1845,9 +1845,10 @@ static void K_PrintGrid(const char *cmd)
 	// The map belongs on this line as much as the grid does: a measurement
 	// taken on a bare test map and read as one from a real course is wrong by
 	// more than the grid size, and nothing else here would say so.
-	CONS_Printf("%s: %s, %u racers (%u of them bots), %u spectators, %s\n",
+	CONS_Printf("%s: %s, %u racers (%u of them bots), %u spectators, %s, %s\n",
 		cmd, G_BuildMapName(gamemap), racers, bots, spectators,
-		(grandprixinfo.gp ? "Grand Prix" : "not a Grand Prix"));
+		(grandprixinfo.gp ? "Grand Prix" : "not a Grand Prix"),
+		(encoremode ? "Encore" : "not Encore"));
 }
 
 /** Says how two snapshots of what ought to be the same state compare.

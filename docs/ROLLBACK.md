@@ -1128,6 +1128,36 @@ re-running before they are believed.
 not end up on the map its filename promises. The context line is the only thing
 that would ever say so.
 
+### With the laugh track out: the client is clean
+
+Re-run on `8f08024`, same harness: `rollback_test` **round-trip IDENTICAL**, and
+**five replays out of five IDENTICAL** against three of five before. The one-byte
+misc residue is gone, which confirms it was `livestudioaudience_timer` and
+nothing else was hiding behind it.
+
+### Grand Prix and Encore, re-run with their context printed
+
+| | context the log actually printed | checks | failures |
+|---|---|---|---|
+| Grand Prix | `RR_NORTHERNDISTRICT, 8 racers (7 bots), Grand Prix` | 520 | 3 |
+| Encore | `RR_NORTHERNDISTRICT, 16 racers (15 bots), not a Grand Prix` | 520 | 2 |
+
+Grand Prix is confirmed the way this document's own trap predicts: **eight
+racers**, because the GP grid is hardcoded and `maxplayers` is not consulted.
+First Grand Prix soak this project has run.
+
+**All five failures, across both, are `MT_SHADOW`** -- 53 or 59 bytes into a 75
+or 81 byte record. That is the residue this document already had at 2 in 500 on
+Match Race. So breadth found nothing new, which is the result rather than the
+absence of one.
+
+⚠ **Encore is still not verified, and that is my own instrument's fault.** The
+context line was added one commit earlier precisely so a clean run would say what
+it ran on -- and it prints the map, the grid and whether it is a Grand Prix, but
+**not whether Encore is on**. The one dimension that soak exists to test is the
+one dimension it did not name. Fixed; that soak wants running once more before
+its number counts.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
