@@ -99,6 +99,15 @@ typedef struct
 	// giving up the first as well.
 	camera_t cameras[MAXSPLITSCREENPLAYERS];
 
+	// The input each player was holding when this tic ran, kept beside the
+	// archive for the same reason the cameras are: it is not part of the world,
+	// it is the record of what moved it. A replay reads netcmds to find the
+	// inputs of the tics it repeats, and nothing until now checked that what it
+	// reads there is still what the tic actually used. On a listen server the
+	// local player's slot in netcmds is written by the sending path, not by the
+	// tic, so "it must be the same" is an assumption and this is the measurement.
+	ticcmd_t usedcmds[MAXPLAYERS];
+
 	size_t used;
 	tic_t tic;
 	int16_t gamemap;
@@ -171,6 +180,15 @@ static dboolean K_WriteSnapshot(rollbackslot_t *slot, tic_t tic)
 			sizeu1(slot->used));
 
 	memcpy(slot->cameras, camera, sizeof (slot->cameras));
+
+	{
+		// Written after P_Ticker by the keeper, so this is the input the tic
+		// being recorded ran on.
+		int32_t i;
+
+		for (i = 0; i < MAXPLAYERS; i++)
+			slot->usedcmds[i] = players[i].cmd;
+	}
 
 	slot->tic = tic;
 	slot->gamemap = gamemap;
@@ -2596,6 +2614,27 @@ static void Command_RollbackKeep_f(void)
 	CONS_Printf("rollback_keep: %s\n", g_keeping ? "on" : "off");
 }
 
+/** The inputs the ring recorded for a tic, or NULL if it does not hold that tic.
+  *
+  * The slot has to be asked which tic it is: a ring of twenty is overwritten
+  * every twenty tics, and a comparison against the wrong tic's inputs would
+  * disagree constantly and look like a finding.
+  */
+static const ticcmd_t *K_InputsAsUsed(tic_t tic)
+{
+	const rollbackslot_t *slot;
+
+	if (rollbackring == NULL)
+		return NULL;
+
+	slot = &rollbackring[tic % ROLLBACK_TICS];
+
+	if (slot->valid == false || slot->tic != tic)
+		return NULL;
+
+	return slot->usedcmds;
+}
+
 /** Names the fields two inputs disagree on, decoded rather than left in hex.
   *
   * The snapshot comparison can only say "cmd, 204 bytes into their record",
@@ -2699,6 +2738,10 @@ static void Command_RollbackReplay_f(void)
 	int32_t n = 4;
 	int32_t i;
 	ticcmd_t livecmd[MAXPLAYERS], liveold[MAXPLAYERS];
+	struct { tic_t tic; int32_t who; ticcmd_t used, fed; } fedwrong[6];
+	uint32_t fedcount = 0;
+	uint32_t fedchecked = 0;
+	uint32_t fedunknown = 0;
 	int32_t ran = 0;
 	tic_t from, t, now;
 	tic_t ltbefore, ltafter, ltloaded;
@@ -2813,6 +2856,40 @@ static void Command_RollbackReplay_f(void)
 		// reads.
 		G_MoveTiccmdsIntoPlayers();
 
+		// Is that what the tic really ran on? Compared here, printed later:
+		// CONS_Printf inside this loop would land inside the timing.
+		{
+			const ticcmd_t *used = K_InputsAsUsed(t);
+
+			if (used == NULL)
+			{
+				fedunknown++;
+			}
+			else
+			{
+				fedchecked++;
+
+				for (i = 0; i < MAXPLAYERS; i++)
+				{
+					if (playeringame[i] == false)
+						continue;
+
+					if (memcmp(&players[i].cmd, &used[i], sizeof (ticcmd_t)) == 0)
+						continue;
+
+					if (fedcount < 6)
+					{
+						fedwrong[fedcount].tic = t;
+						fedwrong[fedcount].who = i;
+						fedwrong[fedcount].used = used[i];
+						fedwrong[fedcount].fed = players[i].cmd;
+					}
+
+					fedcount++;
+				}
+			}
+		}
+
 		P_Ticker(true);
 		ran++;
 	}
@@ -2833,6 +2910,27 @@ static void Command_RollbackReplay_f(void)
 	// Before the present is put back, because this compares against the world
 	// the replay arrived at.
 	K_CompareMobjs("rollback_replay");
+
+	// Whether this replay was even given the right inputs to repeat. Everything
+	// else it reports is about what the world did with them.
+	{
+		char fields[192];
+		uint32_t k;
+
+		CONS_Printf("rollback_replay: %u tics checked against the inputs they really "
+			"used, %u not recorded, %u disagreed\n",
+			fedchecked, fedunknown, fedcount);
+
+		for (k = 0; k < fedcount && k < 6; k++)
+		{
+			K_NameTiccmdDifferences(fields, sizeof (fields),
+				&fedwrong[k].used, &fedwrong[k].fed);
+
+			CONS_Printf("rollback_replay: tic %s, player %d fed something else -- %s\n",
+				sizeu1((size_t)fedwrong[k].tic), fedwrong[k].who,
+				(fields[0] != '\0') ? fields : "same fields, different padding");
+		}
+	}
 
 	// Named before they are put back, so the log still carries what the replay
 	// had arrived at rather than what this wrote over it.
