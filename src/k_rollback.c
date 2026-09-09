@@ -59,7 +59,8 @@
 // and sized for the worst a netgame savegame can be. Measured snapshots of a
 // full sixteen-kart race come to 120 KiB, so the ring was reserving twenty
 // megabytes to carry two and a half -- enough of the zone that an unrelated
-// allocation failed and took the game down with "not enough memory for item\n// roulette list".
+// allocation failed and took the game down with "not enough memory for item
+// roulette list".
 //
 // A quarter of that was still twice the largest snapshot then seen -- and it
 // was not enough, because 120 KiB is what a race weighs seconds after the
@@ -860,6 +861,24 @@ typedef struct
 
 // The working buffers a resimulation check needs, kept between checks.
 static rollbackslot_t *g_first, *g_second, *g_third;
+
+/** Allocates the slots the tests compare in, on first use.
+  *
+  * They were allocated inside the resimulation check, which meant any other
+  * command that used them wrote through a null pointer. rollback_replay did,
+  * on its first run.
+  */
+static dboolean K_NeedScratch(void)
+{
+	if (g_first == NULL)
+	{
+		g_first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		g_second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		g_third = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+	}
+
+	return (g_first != NULL && g_second != NULL && g_third != NULL);
+}
 static diagset_t g_recsfirst, g_recssecond, g_recsthird;
 
 
@@ -1910,13 +1929,16 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// Allocated once and kept. A soak runs this hundreds of times, and
 	// taking three megabytes and giving them back on every check fragments
 	// the zone until something innocent cannot find room -- which is exactly
-	// how a soak killed a session with "not enough memory for item roulette\n// list", an allocation that had nothing to do with any of this.
-	if (g_first == NULL)
+	// how a soak killed a session with "not enough memory for item roulette
+	// list", an allocation that had nothing to do with any of this.
+	if (K_NeedScratch() == false)
 	{
-		g_first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
-		g_second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
-		g_third = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		CONS_Printf("rollback_resim: not enough memory for the comparison slots\n");
+		return false;
+	}
 
+	if (g_recsfirst.bytes == NULL)
+	{
 		g_recsfirst.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
 		g_recsfirst.recs = (diagrec_t *)Z_Malloc(sizeof (diagrec_t) * ROLLBACK_DIAGRECS, PU_STATIC, NULL);
 		g_recssecond.bytes = (uint8_t *)Z_Malloc(ROLLBACK_DIAGBYTES, PU_STATIC, NULL);
@@ -2064,7 +2086,9 @@ static dboolean K_ResimCheck(int32_t tics, dboolean verbose)
 	// A third pass, from a restored state like the second. The first pass ran
 	// from the live world, and what the archive does not carry -- decoration,
 	// the C library's generator, anything nobody saves -- is left wherever the
-	// pass before put it. So first against second answers "does a restored\n// world behave like the live one", while second against third answers "is\n// the replay repeatable at all". The two failures need different fixes and
+	// pass before put it. So first against second answers "does a restored
+	// world behave like the live one", while second against third answers "is
+	// the replay repeatable at all". The two failures need different fixes and
 	// look identical without this.
 	if (K_LoadGameState(gametic))
 	{
@@ -2303,6 +2327,12 @@ static void Command_RollbackReplay_f(void)
 	if (n >= (int32_t)gametic)
 	{
 		CONS_Printf("rollback_replay: the game has not run that many tics yet\n");
+		return;
+	}
+
+	if (K_NeedScratch() == false)
+	{
+		CONS_Printf("rollback_replay: not enough memory for the comparison slot\n");
 		return;
 	}
 
