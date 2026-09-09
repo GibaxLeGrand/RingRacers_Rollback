@@ -2730,6 +2730,150 @@ static uint32_t K_ReportReplayInputs(const char *cmd,
 	return named;
 }
 
+#define ROLLBACK_FEEDKEPT 6
+
+/** What the inputs looked like on the way through a replay.
+  *
+  * netcmds is a mailbox, not a record: D_Clearticcmd zeroes the flags of every
+  * acknowledged tic. So a replay reading it gets the right buttons with the
+  * wrong flags, and p_user reads one of those flags to decide whether an input
+  * was dropped in transit. This counts the drift rather than assuming it away.
+  */
+typedef struct
+{
+	uint32_t checked;    // tics the ring still held a record for
+	uint32_t unknown;    // tics it did not
+	uint32_t disagreed;  // player-tics where netcmds differed from the record
+	uint32_t us;         // how long the replay took
+	tic_t loaded;        // leveltime immediately after the restore
+	struct { tic_t tic; int32_t who; ticcmd_t used, fed; } wrong[ROLLBACK_FEEDKEPT];
+} rollbackfeed_t;
+
+/** The correcting half of a rollback: restore a tic, replay forward to now.
+  *
+  * Pulled out of rollback_replay so the console command and the tic loop run the
+  * same code rather than two readings of the same idea. Everything this project
+  * has learned about replaying a tic by hand lives in here: gametic is kept in
+  * step because the tic loop is what normally advances it, the inputs go in
+  * through G_MoveTiccmdsIntoPlayers rather than by raw copy, and they come from
+  * the keeper's record rather than from netcmds, which loses its flags the
+  * moment a tic is acknowledged.
+  *
+  * \param feed optional; filled with what the inputs looked like on the way past.
+  * \return tics replayed, or -1 when there is no snapshot for that tic.
+  */
+static int32_t K_RollbackTo(tic_t from, tic_t now, rollbackfeed_t *feed)
+{
+	rollbackfeed_t discard;
+	precise_t started;
+	int32_t ran = 0;
+	int32_t i;
+	tic_t t;
+
+	if (feed == NULL)
+		feed = &discard;
+
+	memset(feed, 0, sizeof (*feed));
+
+	if (!K_LoadGameState(from))
+		return -1;
+
+	feed->loaded = leveltime;
+
+	// The inputs of each tic as the netcode recorded them, rather than one tic's
+	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
+	started = I_GetPreciseTime();
+
+	for (t = from + 1; t <= now; t++)
+	{
+		// Which tic this is, first, because the inputs are indexed by it. The
+		// restore rewound gametic along with everything else -- the archive
+		// carries it -- and P_Ticker does not touch it: TryRunTics is what
+		// advances it, and this replays without going through TryRunTics. Left
+		// alone, every replayed world ended up stamped with the tic it started
+		// from, which is what the comparison kept reporting at byte 22 of the
+		// misc block.
+		gametic = t;
+
+		// Through the step the live loop takes, rather than a raw copy out of
+		// netcmds: G_MoveTiccmdsIntoPlayers turns the leveltime stamp a ticcmd
+		// carries into the control lag the simulation reads, and a replay that
+		// skipped it fed the stamp itself -- latency 130 where the live tic had
+		// 2, and a bot's zero never written. Nothing has diverged on it yet,
+		// because both of its readers clamp, but it is an input the simulation
+		// reads.
+		G_MoveTiccmdsIntoPlayers();
+
+		// Is that what the tic really ran on? Compared here, printed later:
+		// CONS_Printf inside this loop would land inside the timing.
+		{
+			const ticcmd_t *used = K_InputsAsUsed(t);
+
+			if (used == NULL)
+			{
+				feed->unknown++;
+			}
+			else
+			{
+				feed->checked++;
+
+				for (i = 0; i < MAXPLAYERS; i++)
+				{
+					if (playeringame[i] == false)
+						continue;
+
+					if (memcmp(&players[i].cmd, &used[i], sizeof (ticcmd_t)) == 0)
+						continue;
+
+					if (feed->disagreed < ROLLBACK_FEEDKEPT)
+					{
+						feed->wrong[feed->disagreed].tic = t;
+						feed->wrong[feed->disagreed].who = i;
+						feed->wrong[feed->disagreed].used = used[i];
+						feed->wrong[feed->disagreed].fed = players[i].cmd;
+					}
+
+					feed->disagreed++;
+				}
+
+				// And replay on what really ran. netcmds is not a record of the
+				// past: D_Clearticcmd zeroes the flags of every acknowledged tic,
+				// so a tic replayed out of netcmds arrives with flags 0 --
+				// TICCMD_RECEIVED gone for a person, TICCMD_BOT gone for a bot.
+				// p_user reads the first of those to decide whether this input
+				// was dropped in transit, and takes a different steering branch
+				// when it thinks it was. That is why a played race diverged on
+				// steering and five hundred bot checks never did: the bot branch
+				// is chosen before the flag is ever consulted.
+				for (i = 0; i < MAXPLAYERS; i++)
+				{
+					if (playeringame[i])
+						players[i].cmd = used[i];
+				}
+			}
+		}
+
+		P_Ticker(true);
+		ran++;
+	}
+
+	// And forward to the tic the game is about to run, which is where the
+	// world this was compared against stands.
+	gametic = now + 1;
+
+	// Stopped before anything is printed: CONS_Printf writes to the log as well
+	// as the console, which costs milliseconds, and the per-tic figure below is
+	// the whole point of the command.
+
+
+	// Stopped before any caller prints anything: CONS_Printf writes to the log
+	// as well as the console and costs milliseconds, and the per-tic figure is
+	// the whole point of measuring at all.
+	feed->us = K_PreciseToMicros(I_GetPreciseTime() - started);
+
+	return ran;
+}
+
 /** Console command: rollback_replay [tics]
   *
   * Rewinds that many tics and replays them with the inputs that really ran,
@@ -2740,17 +2884,13 @@ static uint32_t K_ReportReplayInputs(const char *cmd,
 static void Command_RollbackReplay_f(void)
 {
 	rollbackslot_t *present;
-	precise_t started;
 	uint32_t us;
 	int32_t n = 4;
 	int32_t i;
 	ticcmd_t livecmd[MAXPLAYERS], liveold[MAXPLAYERS];
-	struct { tic_t tic; int32_t who; ticcmd_t used, fed; } fedwrong[6];
-	uint32_t fedcount = 0;
-	uint32_t fedchecked = 0;
-	uint32_t fedunknown = 0;
+	rollbackfeed_t feed;
 	int32_t ran = 0;
-	tic_t from, t, now;
+	tic_t from, now;
 	tic_t ltbefore, ltafter, ltloaded;
 	dboolean records;
 
@@ -2830,100 +2970,17 @@ static void Command_RollbackReplay_f(void)
 	// build that printed it. That is how the player side of this was read.
 	K_CopyMobjs();
 
-	if (!K_LoadGameState(from))
+	ran = K_RollbackTo(from, now, &feed);
+
+	if (ran < 0)
 	{
 		CONS_Printf("rollback_replay: no snapshot for tic %s -- turn rollback_keep "
 			"on and let %d tics go by\n", sizeu1(from), n);
 		return;
 	}
 
-	ltloaded = leveltime;
-
-	// The inputs of each tic as the netcode recorded them, rather than one tic's
-	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
-	started = I_GetPreciseTime();
-
-	for (t = from + 1; t <= now; t++)
-	{
-		// Which tic this is, first, because the inputs are indexed by it. The
-		// restore rewound gametic along with everything else -- the archive
-		// carries it -- and P_Ticker does not touch it: TryRunTics is what
-		// advances it, and this replays without going through TryRunTics. Left
-		// alone, every replayed world ended up stamped with the tic it started
-		// from, which is what the comparison kept reporting at byte 22 of the
-		// misc block.
-		gametic = t;
-
-		// Through the step the live loop takes, rather than a raw copy out of
-		// netcmds: G_MoveTiccmdsIntoPlayers turns the leveltime stamp a ticcmd
-		// carries into the control lag the simulation reads, and a replay that
-		// skipped it fed the stamp itself -- latency 130 where the live tic had
-		// 2, and a bot's zero never written. Nothing has diverged on it yet,
-		// because both of its readers clamp, but it is an input the simulation
-		// reads.
-		G_MoveTiccmdsIntoPlayers();
-
-		// Is that what the tic really ran on? Compared here, printed later:
-		// CONS_Printf inside this loop would land inside the timing.
-		{
-			const ticcmd_t *used = K_InputsAsUsed(t);
-
-			if (used == NULL)
-			{
-				fedunknown++;
-			}
-			else
-			{
-				fedchecked++;
-
-				for (i = 0; i < MAXPLAYERS; i++)
-				{
-					if (playeringame[i] == false)
-						continue;
-
-					if (memcmp(&players[i].cmd, &used[i], sizeof (ticcmd_t)) == 0)
-						continue;
-
-					if (fedcount < 6)
-					{
-						fedwrong[fedcount].tic = t;
-						fedwrong[fedcount].who = i;
-						fedwrong[fedcount].used = used[i];
-						fedwrong[fedcount].fed = players[i].cmd;
-					}
-
-					fedcount++;
-				}
-
-				// And replay on what really ran. netcmds is not a record of the
-				// past: D_Clearticcmd zeroes the flags of every acknowledged tic,
-				// so a tic replayed out of netcmds arrives with flags 0 --
-				// TICCMD_RECEIVED gone for a person, TICCMD_BOT gone for a bot.
-				// p_user reads the first of those to decide whether this input
-				// was dropped in transit, and takes a different steering branch
-				// when it thinks it was. That is why a played race diverged on
-				// steering and five hundred bot checks never did: the bot branch
-				// is chosen before the flag is ever consulted.
-				for (i = 0; i < MAXPLAYERS; i++)
-				{
-					if (playeringame[i])
-						players[i].cmd = used[i];
-				}
-			}
-		}
-
-		P_Ticker(true);
-		ran++;
-	}
-
-	// And forward to the tic the game is about to run, which is where the
-	// world this was compared against stands.
-	gametic = now + 1;
-
-	// Stopped before anything is printed: CONS_Printf writes to the log as well
-	// as the console, which costs milliseconds, and the per-tic figure below is
-	// the whole point of the command.
-	us = K_PreciseToMicros(I_GetPreciseTime() - started);
+	ltloaded = feed.loaded;
+	us = feed.us;
 	ltafter = leveltime;
 
 	if (records)
@@ -2946,15 +3003,15 @@ static void Command_RollbackReplay_f(void)
 		CONS_Printf("rollback_replay: %u tics checked, %u not recorded; netcmds "
 			"disagreed with what really ran on %u player-tics, replayed on the "
 			"record instead\n",
-			fedchecked, fedunknown, fedcount);
+			feed.checked, feed.unknown, feed.disagreed);
 
-		for (k = 0; k < fedcount && k < 6; k++)
+		for (k = 0; k < feed.disagreed && k < ROLLBACK_FEEDKEPT; k++)
 		{
 			K_NameTiccmdDifferences(fields, sizeof (fields),
-				&fedwrong[k].used, &fedwrong[k].fed);
+				&feed.wrong[k].used, &feed.wrong[k].fed);
 
 			CONS_Printf("rollback_replay: tic %s, player %d fed something else -- %s\n",
-				sizeu1((size_t)fedwrong[k].tic), fedwrong[k].who,
+				sizeu1((size_t)feed.wrong[k].tic), feed.wrong[k].who,
 				(fields[0] != '\0') ? fields : "same fields, different padding");
 		}
 	}
