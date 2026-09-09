@@ -6233,6 +6233,19 @@ static void GetPackets(void)
 // no more use random generator, because at very first tic isn't yet synchronized
 // Note: It is called consistAncy on purpose.
 //
+/** Records the consistency of the world as it stands, as tic's checksum.
+  *
+  * The tic loop does this itself, immediately after each tic; a replay does not,
+  * because it goes around the loop. So after a correction the stored checksum for
+  * every replayed tic still describes the world *before* the correction -- and
+  * that stale value is what gets sent and compared. Exported for the rollback
+  * replay, which is the only other thing that advances a tic.
+  */
+void D_RecordConsistancy(tic_t tic)
+{
+	consistancy[tic % BACKUPTICS] = Consistancy();
+}
+
 int16_t Consistancy(void)
 {
 	int32_t i;
@@ -6424,6 +6437,24 @@ static void CL_SendClientCmd(void)
 	size_t packetsize = 0;
 	dboolean mis = false;
 
+	// Which tic this client is willing to be judged on.
+	//
+	// The server compares the checksum we send against its own for the tic we
+	// label it with, and on a mismatch it resends the entire gamestate. A
+	// predicting client's world past neededtic is a *guess* -- being different is
+	// what predicting means -- so announcing its checksum is announcing a synch
+	// failure on purpose. Measured before this line existed: seven
+	// "Game state reloaded" in a two-minute race, unmoved by any other fix.
+	//
+	// So we report the newest tic the server has actually confirmed for us.
+	// consistancy[t] is the world at the *start* of tic t, written after tic t-1
+	// ran, so consistancy[neededtic] is the last one built entirely from inputs
+	// the server sent. The guarantee is not weakened: every confirmed tic is
+	// still checked, we simply stop offering speculation as evidence.
+	//
+	// Unchanged when the loop is off, because gametic never passes neededtic then.
+	const tic_t reporttic = (client && gametic > neededtic) ? neededtic : gametic;
+
 	netbuffer->packettype = PT_CLIENTCMD;
 
 	if (cl_packetmissed)
@@ -6433,7 +6464,7 @@ static void CL_SendClientCmd(void)
 	}
 
 	netbuffer->u.clientpak.resendfrom = (uint8_t)(neededtic & UINT8_MAX);
-	netbuffer->u.clientpak.client_tic = (uint8_t)(gametic & UINT8_MAX);
+	netbuffer->u.clientpak.client_tic = (uint8_t)(reporttic & UINT8_MAX);
 
 	if (gamestate == GS_WAITINGPLAYERS)
 	{
@@ -6498,7 +6529,7 @@ static void CL_SendClientCmd(void)
 
 		packetsize = sizeof (clientcmd_pak);
 		G_MoveTiccmd(&netbuffer->u.clientpak.cmd, &localcmds[0][0], 1);
-		netbuffer->u.clientpak.consistancy = LSBF_SHORT(consistancy[gametic % BACKUPTICS]);
+		netbuffer->u.clientpak.consistancy = LSBF_SHORT(consistancy[reporttic % BACKUPTICS]);
 
 		if (splitscreen) // Send a special packet with 2 cmd for splitscreen
 		{

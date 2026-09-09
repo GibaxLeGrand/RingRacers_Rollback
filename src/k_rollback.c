@@ -2897,6 +2897,15 @@ static int32_t K_RollbackTo(tic_t from, tic_t now, rollbackfeed_t *feed)
 		// input step, then the laugh track, then spectatorReentry. Four is
 		// enough to stop treating them as separate bugs.
 		G_Ticker(true);
+
+		// And the checksum of the world this tic just produced. The tic loop
+		// writes it right after each tic and a replay goes around the loop, so
+		// without this the stored value for every replayed tic still describes
+		// the world before the correction -- and that is the value that gets sent
+		// to the server and compared. A correction that silently invalidates the
+		// evidence of its own success is worse than no correction.
+		D_RecordConsistancy(t + 1);
+
 		ran++;
 	}
 
@@ -3547,6 +3556,7 @@ static int32_t g_worstburst;        // the most predicted tics one pass ever ran
 static int64_t g_burstsum;          // to say what a predicting pass typically runs
 
 static dboolean g_pacing;           // one predicted tic to a pass; off by default
+static dboolean g_smoothing;        // ease a correction rather than teleport it
 
 /** How far ahead a predicted client may get.
   *
@@ -3767,8 +3777,23 @@ dboolean K_RollbackPending(tic_t *from)
   */
 void K_RollbackCorrect(void)
 {
+	// Where every kart was drawn a moment ago, so a correction can be eased into
+	// rather than jumped to. Odamex nudges a mispredicted player from the wrong
+	// position to the right one over time (cl_prednudge) instead of snapping; ours
+	// moves the world instantly, which is what a played race reported as "des
+	// sauts nets".
+	//
+	// This touches the interpolation origin *only* -- old_x and friends, which the
+	// renderer reads and the simulation never does. Writing the corrected
+	// positions themselves would be inventing a world neither side agreed on,
+	// which in lockstep is a desync produced on purpose. So the kart arrives
+	// exactly where the server says; it just gets there over a tic instead of in
+	// no time at all.
+	fixed_t wasx[MAXPLAYERS], wasy[MAXPLAYERS], wasz[MAXPLAYERS];
+	dboolean wasdrawn[MAXPLAYERS];
 	tic_t from;
 	int32_t ran;
+	int32_t i;
 
 	if (K_RollbackPending(&from) == false)
 		return;
@@ -3777,6 +3802,22 @@ void K_RollbackCorrect(void)
 
 	if (gametic == 0 || from >= gametic)
 		return;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		wasdrawn[i] = false;
+
+		if (g_smoothing == false || playeringame[i] == false)
+			continue;
+
+		if (players[i].mo == NULL || P_MobjWasRemoved(players[i].mo))
+			continue;
+
+		wasx[i] = players[i].mo->x;
+		wasy[i] = players[i].mo->y;
+		wasz[i] = players[i].mo->z;
+		wasdrawn[i] = true;
+	}
 
 	ran = K_RollbackTo(from, gametic - 1, NULL);
 
@@ -3788,10 +3829,49 @@ void K_RollbackCorrect(void)
 		return;
 	}
 
+	// The restore rebuilt the world, so players[i].mo is a different object than
+	// the one measured above -- keyed by player, never by pointer.
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		mobj_t *mo;
+
+		if (wasdrawn[i] == false || playeringame[i] == false)
+			continue;
+
+		mo = players[i].mo;
+
+		if (mo == NULL || P_MobjWasRemoved(mo))
+			continue;
+
+		// Draw from where it was, to where it now is. Both orders of history, so
+		// the second-order term does not put the jump back in.
+		mo->old_x = mo->old_x2 = wasx[i];
+		mo->old_y = mo->old_y2 = wasy[i];
+		mo->old_z = mo->old_z2 = wasz[i];
+		mo->resetinterp = false;
+	}
+
 	g_corrections++;
 	g_replayedtics += (uint32_t)ran;
 	g_lastcorrection = gametic;
 	g_localwrong = false;
+}
+
+/** Console command: rollback_smooth [0/1]
+  *
+  * Off by default and deliberately separate from the loop, so one race can be
+  * read for whether the resyncs fell -- which is a number -- and then again for
+  * whether the snaps did, which only a person can say.
+  */
+static void Command_RollbackSmooth_f(void)
+{
+	if (COM_Argc() > 1)
+		g_smoothing = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_smooth: %s\n",
+		(g_smoothing
+			? "on -- a correction is drawn from where the kart was to where it now is"
+			: "off -- a correction moves the world at once, as it always has"));
 }
 
 /** Console command: rollback_loop [0/1]
@@ -4076,4 +4156,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_loop", Command_RollbackLoop_f);
 	COM_AddDebugCommand("rollback_lag", Command_RollbackLag_f);
 	COM_AddDebugCommand("rollback_pace", Command_RollbackPace_f);
+	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
 }

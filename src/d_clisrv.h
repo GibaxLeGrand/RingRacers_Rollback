@@ -710,6 +710,10 @@ ticcmd_t *D_LocalTiccmd(uint8_t ss);
    restored state against the one it was taken from. */
 int16_t Consistancy(void);
 
+/** Stores the current world's checksum as the given tic's. Used by the rollback
+  * replay, which advances tics without going through the tic loop that does it. */
+void D_RecordConsistancy(tic_t tic);
+
 tic_t GetLag(int32_t node);
 uint8_t GetFreeXCmdSize(uint8_t playerid);
 
