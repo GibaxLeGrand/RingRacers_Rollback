@@ -2932,8 +2932,13 @@ static void Command_RollbackReplay_f(void)
 		char fields[192];
 		uint32_t k;
 
-		CONS_Printf("rollback_replay: %u tics checked against the inputs they really "
-			"used, %u not recorded, %u disagreed\n",
+		// Not a failure line. The replay runs on the record, so this measures how
+		// far netcmds has drifted from what really happened -- which is the size
+		// of the problem phase 3's detect gesture has to solve, and that deserves
+		// a number rather than a shrug.
+		CONS_Printf("rollback_replay: %u tics checked, %u not recorded; netcmds "
+			"disagreed with what really ran on %u player-tics, replayed on the "
+			"record instead\n",
 			fedchecked, fedunknown, fedcount);
 
 		for (k = 0; k < fedcount && k < 6; k++)

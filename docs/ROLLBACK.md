@@ -717,7 +717,28 @@ the archive no longer carries -- none of it is in the archive, which is why the
 archive is clean. That is not a failure; it is the restore declining to rebuild
 state the renderer owns.
 
-### Then somebody drove, and it broke somewhere else entirely
+### Closed while driving too: twelve out of twelve
+
+`1b4c4a5`, binary verified, a person drifting and using items: **twelve replays,
+twelve IDENTICAL, no failures.** The same score as bots idle. The played-race
+divergence below is closed, and the section after it records how.
+
+The provenance line still reports a disagreement every time, and that is the
+point of it rather than a fault:
+
+```
+16 tics checked, 0 not recorded; netcmds disagreed with what really ran
+  on 240 player-tics, replayed on the record instead
+```
+
+240 is 15 of the 16 replayed tics times 16 players; the shallower depths give
+3 of 4 and 7 of 8. **Exactly one tic short every time** -- the most recent one,
+not yet acknowledged and so not yet cleared. That is a measurement of
+`D_Clearticcmd`'s reach: everything older than one tic has lost its flags. It is
+also the size of the problem phase 3's *detect* gesture has to solve, so the line
+is worth keeping as a number.
+
+### What it looked like before that: driving broke it somewhere bots never touched
 
 Same build, `ce17cc5`, twelve replays -- but with a person at the controls
 drifting, using items and hitting trick panels instead of a human sitting still.
