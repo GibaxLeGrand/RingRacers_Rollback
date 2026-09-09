@@ -429,6 +429,45 @@ one human and fifteen bots. **Idle: 2 failures in 500. Driving: 2 in 500.** Both
 0.4 percent, no crash over a full run, no unrepeatable replay. Nothing is wired
 into the tic loop; the game still plays as a stock build.
 
+### Resuming this, mechanically
+
+Nothing here can be built locally: Ring Racers needs SDL3, which the WSL
+toolchain does not have. The only path is the repository's GitHub Actions
+build, about four minutes, whose Windows job publishes a playable exe as an
+artifact. A single `.c` file can still be syntax-checked without it:
+
+```
+gcc -fsyntax-only -Wall -std=gnu11 -I <a folder holding a stub config.h> -I src -DHAVE_SDL src/k_rollback.c
+```
+
+**Never measure against a binary without checking it is the one you built.**
+The exe carries `<branch> <seven-character sha> <commit subject>` in plain
+text, so:
+
+```
+grep -q "$(git rev-parse --short=7 HEAD)" ringracers_rollback-netcode.exe
+```
+
+and refuse to run if it is missing. `gh run list --limit 1` answers with the
+*previous* run while the new one is still being created, which is how a whole
+measurement was once taken against the artifact of the commit before -- take
+the run by `headSha` instead.
+
+The game folder is `D:\RingRacers - 24 - Copie`. The scenarios live there and
+end in `quit`, so each run stops by itself:
+
+| file | what it does |
+|---|---|
+| `soak_northern.cfg`, `soak_greenhills.cfg`, `soak_speedway.cfg` | a soak of about 500 checks on one map, unattended |
+| `replay_test.cfg` | `rollback_keep` on, then `rollback_replay` at 1, 4, 8 and 16 tics |
+| `soak_client.cfg` | the soak a human plays under |
+| `netserver.cfg`, `netclient.cfg` | the two-instance harness, **written and never run** |
+
+A soak needs nobody: the two failures that ended phase 2 were on bot players,
+and fifteen bots exercise items, damage, respawns and the finish line. A human
+is needed only to judge feel, and to see things no log records -- which is how
+the camera jerk was found.
+
 ### Where each phase stands
 
 | phase | state | what it is waiting on |
@@ -485,14 +524,46 @@ perfect.
 
 ### Phase 3, where it stands
 
-**Done.** `rollback_keep` fills the ring during ordinary play, one save a tic,
-off by default. `rollback_replay <n>` rewinds that many tics and runs them again
-with the inputs the netcode recorded -- `netcmds` holds 512 of them -- then
-checks the world arrived where it already was, prices the replay per tic, and
-puts the world back either way. It is the first thing in this project that
-replays real input rather than frozen input, which is the blindness the soak
-could never fix. **Its measurement is still in flight and is not reported here
-yet.**
+**Done and measured.** `rollback_keep` fills the ring during ordinary play, one
+save a tic, off by default. `rollback_replay <n>` rewinds that many tics and
+runs them again with the inputs the netcode recorded -- `netcmds` holds 512 of
+them -- then checks the world arrived where it already was, prices the replay
+per tic, and puts the world back either way. It is the first thing in this
+project that replays real input rather than frozen input, which is the blindness
+the soak could never fix.
+
+**Cost, measured at four depths on RR_NORTHERNDISTRICT with sixteen karts:**
+1.7 to 2.6 ms per replayed tic, so a sixteen-tic rollback costs about 30 to
+40 ms of replay on top of a 6 ms restore. Against a 28.6 ms tic that is the
+budget question phase 6 exists to answer, and it says a deep rollback cannot
+be paid for inside one tic on this machine.
+
+**Four faults, in the order they were found**, each by the instrument rather
+than by reading:
+
+1. It wrote its snapshot through a null pointer and took the game down. The
+   slots the tests compare in were allocated inside the resimulation check, so
+   any other command that borrowed them found nothing. Allocated on first use
+   now, by whoever needs them.
+2. It replayed one tic too many. A console command runs at the top of
+   `TryRunTics`, **before** the tic loop, so `gametic` is the tic about to run
+   and the world is the one the tic before it left.
+3. **The restore rewinds `gametic`, and `P_Ticker` never advances it** --
+   `TryRunTics` does, and a replay that calls `P_Ticker` directly goes around
+   it. Every replayed world was stamped with the tic it started from. Worth
+   carrying into the real loop: replaying tics by hand means keeping `gametic`
+   by hand.
+4. The loop feeds each tic the input that ran, so it leaves `cmd` holding the
+   last one and `oldcmd` the one before. Both are carried by a local snapshot,
+   so the comparison reported them faithfully. Bookkeeping rather than a world
+   that went somewhere else; both are put back now. **The fix for `oldcmd` is
+   built and running; its result is not in this document yet.**
+
+Two of those took two turns of reasoning each and were settled by a number in
+one: the count of tics actually replayed exposed a loop that looked timed but
+had run nothing, and three readings of `leveltime` refuted both competing
+explanations at once. `P_NamePlayerField` named `cmd` and then `oldcmd` without
+anybody decoding a hex window, which is what that table was written for.
 
 **The packet half, located.** In the client's reception path (d_clisrv.c:5925)
 the server's tics are copied into `netcmds[i % BACKUPTICS]`, and the code
