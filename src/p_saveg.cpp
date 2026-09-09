@@ -8612,11 +8612,64 @@ const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t play
 		FIELD(1, "faultflash");
 	}
 
-	// Which objects are attached to this player. Past here the record's shape
-	// depends on this word, so the walk stops -- but naming the word itself is
-	// worth the two lines: the last two failures of a played race were a bit
-	// in it, and reading that took a hex window and the enum by hand.
-	FIELD(4, "flags (which objects are attached)");
+	// Which objects are attached to this player. The record's shape past here
+	// depends on this word -- so read it, and keep walking. Stopping here is what
+	// made a Skyscraper Leaps failure come back as "past the fields this can
+	// name", and the two survivors of a played race before it were a bit in this
+	// very word. Everything the walk gives up on is a field somebody has to
+	// decode from a hex window instead.
+	{
+		uint32_t attached = 0;
+
+		if (start + at + 4 <= length)
+			M_Memcpy(&attached, buffer + start + at, 4);
+
+		FIELD(4, "flags (which objects are attached)");
+
+		// In the order the archiver writes them, which is not the order the enum
+		// declares them in. Reading it off the writer is the only way to be sure,
+		// and a walker that guesses the order is worse than one that stops.
+#define ATTACHED(bit, label) \
+		do { \
+			if (attached & (bit)) \
+				FIELD(4, label); \
+		} while (0)
+
+		ATTACHED(SKYBOXVIEW, "skybox.viewpoint");
+		ATTACHED(SKYBOXCENTER, "skybox.centerpoint");
+		ATTACHED(AWAYVIEW, "awayview.mobj");
+		ATTACHED(FOLLOWITEM, "followmobj");
+		ATTACHED(HOVERHYUDORO, "hoverhyudoro");
+		ATTACHED(BALLHOGRETICULE, "ballhogreticule");
+		ATTACHED(STUMBLE, "stumbleIndicator");
+		ATTACHED(WAVEDASH, "wavedashIndicator");
+		ATTACHED(TRICKINDICATOR, "trickIndicator");
+		ATTACHED(WHIP, "whip");
+		ATTACHED(HAND, "hand");
+		ATTACHED(RINGSHOOTER, "ringShooter");
+		ATTACHED(FLICKYATTACKER, "flickyAttacker");
+		ATTACHED(FLICKYCONTROLLER, "powerup.flickyController");
+		ATTACHED(BARRIER, "powerup.barrier");
+		ATTACHED(STONESHOE, "stoneShoe");
+		ATTACHED(TOXOMISTERCLOUD, "toxomisterCloud");
+		ATTACHED(FLYBOT, "flybot");
+
+		FIELD(4, "followitem");
+		FIELD(4, "charflags");
+		FIELD(1, "kartspeed");
+		FIELD(1, "kartweight");
+		FIELD(1, "followerskin");
+		FIELD(1, "followerready");
+		FIELD(2, "followercolor");
+
+		ATTACHED(FOLLOWER, "follower");
+
+		FIELD(2, "nocontrol");
+		FIELD(1, "carry");
+		FIELD(2, "dye");
+
+#undef ATTACHED
+	}
 
 #undef FIELD
 
