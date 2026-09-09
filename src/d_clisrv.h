@@ -714,6 +714,11 @@ int16_t Consistancy(void);
   * replay, which advances tics without going through the tic loop that does it. */
 void D_RecordConsistancy(tic_t tic);
 
+/** Console command: records what the consistency checksum was looking at, tic by
+  * tic, so a synch failure can name a position, an item or an RNG seed instead of
+  * being guessed at. */
+void Command_RollbackBlame_f(void);
+
 tic_t GetLag(int32_t node);
 uint8_t GetFreeXCmdSize(uint8_t playerid);
 

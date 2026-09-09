@@ -4373,4 +4373,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
+	COM_AddDebugCommand("rollback_blame", Command_RollbackBlame_f);
 }

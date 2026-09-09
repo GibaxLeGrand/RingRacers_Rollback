@@ -163,6 +163,10 @@ static tic_t maketic;
 
 static int16_t consistancy[BACKUPTICS];
 
+#define BLAMELINE 192
+static char blameline[BACKUPTICS][BLAMELINE];
+static dboolean g_blame;
+
 // The newest tic the authoritative loop actually finished.
 //
 // In the two-clock mode that loop only ever runs confirmed tics, so this is the
@@ -5724,6 +5728,13 @@ static void HandlePacketFromPlayer(int8_t node)
 						netconsole+1, player_names[netconsole],
 						consistancy[realstart%BACKUPTICS],
 						LSBF_SHORT(netbuffer->u.clientpak.consistancy));
+
+				// And what the checksum was actually looking at, on this side, for
+				// the tic being refused. The client prints its own line for the
+				// same tic, so the two can be read against each other.
+				if (blameline[realstart % BACKUPTICS][0] != '\0')
+					CONS_Printf("rollback_blame: SERVER %s\n",
+						blameline[realstart % BACKUPTICS]);
 				DEBFILE(va("Restoring player %d (synch failure) [%update] %d!=%d\n",
 					netconsole, realstart, consistancy[realstart%BACKUPTICS],
 					LSBF_SHORT(netbuffer->u.clientpak.consistancy)));
@@ -6048,6 +6059,22 @@ static void HandlePacketFromPlayer(int8_t node)
 				PT_FileReceived();
 			break;
 		case PT_WILLRESENDGAMESTATE:
+			// Before the state comes back and overwrites everything, say what
+			// this side thought the world was. lastconfirmedtic is the tic this
+			// client last offered, which is the one the server refused.
+			if (blameline[lastconfirmedtic % BACKUPTICS][0] != '\0')
+			{
+				tic_t t;
+
+				for (t = (lastconfirmedtic > 2) ? (lastconfirmedtic - 2) : 0;
+					t <= lastconfirmedtic; t++)
+				{
+					if (blameline[t % BACKUPTICS][0] != '\0')
+						CONS_Printf("rollback_blame: CLIENT %s\n",
+							blameline[t % BACKUPTICS]);
+				}
+			}
+
 			PT_WillResendGamestate();
 			break;
 		case PT_SENDINGLUAFILE:
@@ -6271,6 +6298,71 @@ static void GetPackets(void)
 void D_RecordConsistancy(tic_t tic)
 {
 	consistancy[tic % BACKUPTICS] = Consistancy();
+}
+
+// What Consistancy() was looking at, tic by tic.
+//
+// Three theories about this desync have been written and refuted -- speculative
+// checksums, netxcmds escaping a discarded tic, a speculated angle being sent --
+// and each cost a build and a played race. So this stops guessing at the cause
+// and prints the thing itself.
+//
+// The search space is small: Consistancy hashes each player's x, y and itemtype,
+// and the synchronised RNG seeds, and MOBJCONSISTANCY is not defined in this
+// build. A position, an item, or a seed. Those are three different bugs and a
+// single line of text separates them.
+//
+// Both ends keep the same ring, so the client's line for tic N and the server's
+// line for tic N can be read side by side out of two logs on one machine.
+static void Consistancy_Describe(tic_t tic)
+{
+	char *out = blameline[tic % BACKUPTICS];
+	uint32_t rngsum = 0;
+	int32_t n = 0;
+	int32_t i;
+
+	if (g_blame == false)
+	{
+		out[0] = '\0';
+		return;
+	}
+
+	n += snprintf(out + n, BLAMELINE - n, "tic %u:", (uint32_t)tic);
+
+	for (i = 0; i < MAXPLAYERS && n < BLAMELINE - 40; i++)
+	{
+		if (!playeringame[i] || !players[i].mo || gamestate != GS_LEVEL)
+			continue;
+
+		n += snprintf(out + n, BLAMELINE - n, " p%d(%d,%d,i%d)",
+			i, (int32_t)players[i].mo->x, (int32_t)players[i].mo->y,
+			(int32_t)players[i].itemtype);
+	}
+
+	if (gamestate == GS_LEVEL)
+	{
+		for (i = 0; i < PRNUMSYNCED; i++)
+			rngsum += P_GetRandSeed((pr_class_t)i);
+	}
+
+	snprintf(out + n, BLAMELINE - n, " rngsum=%u", rngsum);
+}
+
+/** Console command: rollback_blame [0/1]
+  *
+  * Turns the per-tic record on. Run it on both windows: the server prints its own
+  * line for the tic it refused, and the client prints the lines it sent around
+  * the same time, so the two can be compared by tic number.
+  */
+void Command_RollbackBlame_f(void)
+{
+	if (COM_Argc() > 1)
+		g_blame = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_blame: %s\n",
+		(g_blame
+			? "on -- what the checksum was looking at is recorded every tic"
+			: "off"));
 }
 
 int16_t Consistancy(void)
@@ -7076,6 +7168,7 @@ dboolean TryRunTics(tic_t realtics)
 			gametic++;
 			consistancy[gametic % BACKUPTICS] = Consistancy();
 			lastconfirmedtic = gametic;
+			Consistancy_Describe(gametic);
 
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
 
