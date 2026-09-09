@@ -7496,27 +7496,7 @@ void NetUpdate(void)
 	UpdatePingTable();
 
 	if (client)
-	{
-		// maketic is the tic this machine is *making* an input for, and on a
-		// client it is normally pinned to the last tic the server confirmed.
-		// That is right when the client never runs ahead of the server, and
-		// wrong the moment it does: the loop simulates tic N with your input
-		// while this line labels that same input for tic N minus the lead, so
-		// the client and the server apply it to different tics and can never
-		// agree. Measured before it was understood -- every contradiction, 1520
-		// of 1520, was this machine mispredicting itself, and the offset was the
-		// whole twelve-tic lead rather than the two tics of mindelay I first
-		// blamed.
-		//
-		// It also explains a player being put into spectator on the server while
-		// still racing on the client: from the server's side that client had
-		// stopped supplying usable inputs, because every one of them was labelled
-		// for a tic already gone.
-		if (K_RollbackPredictAhead() > 0 && gamestate == GS_LEVEL)
-			maketic = gametic;
-		else
-			maketic = neededtic;
-	}
+		maketic = neededtic;
 
 	Local_Maketic(realtics); // make local tic, and call menu?
 
