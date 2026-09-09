@@ -640,6 +640,43 @@ most likely **not real**: `mobjnum` is handed out afresh by every save and never
 cleared, so a number can name two different rings either side of a restore, and
 the comparison had no type check. It has one now, and counts what it skips.
 
+**Then the comparison was asked how big the difference was, and the answer
+changed the shape of the problem.** On `dfe236c`, twelve replays, nine identical,
+and the three failures read:
+
+```
+8838 bytes differ in 2003 runs, from byte 138421 to byte 169360 of 169361
+  replay DIFFERS -- the replay is 169361 bytes, the world as it was was 169365
+80 bytes differ in 20 runs, from byte 139719 to byte 179613 of 181427
+10285 bytes differ in 2178 runs, from byte 145080 to byte 184103 of 184104
+```
+
+**Four bytes.** The replayed world archives to four bytes less than the world it
+is compared against, and from the first difference the two streams are offset by
+four, so they disagree in two thousand places all the way to the last byte. The
+eight thousand differing bytes are the *signature of a four-byte shift*, not two
+thousand changed values -- and without the count, the single offset that used to
+be reported could not tell the two apart. One record lost one field.
+
+That also explains the per-object pass: a four-byte shift in the stream is not
+what misaligned it, but the object list genuinely drifting is, and both were
+invisible behind a first-difference-only report and a cap of three.
+
+The byte at the divergence reads `0x33333330` against `0xaaaaaaa0`; the earlier
+sighting was `0x77777770` against `0x2aaaaaa8`. All four are exact multiples of
+twelve degrees as `angle_t` -- 72, 240, 168 and 60 -- which says an angle that
+advances in fixed steps, not a position.
+
+**So the instrument that was still missing is a way to name the record a
+snapshot offset falls in**, and the archive has no index. `K_LocateSnapshotRecord`
+does it without one: the two snapshots are identical up to the first difference,
+so the bytes just before it are a fingerprint, and the capture of the living world
+holds those same bytes split one record per object. Finding the fingerprint in the
+capture names the object and the offset inside its record, with no knowledge of
+the layout. It reports the window length it matched on and how many records
+matched, because a fingerprint that matches twice names nothing. **Not yet
+measured.**
+
 ⚠ **A measurement hazard found the same way.** `rollback_test` performs a
 restore, and a restore does not put interpolation state back -- so dropping a
 `rollback_test` into the middle of a scenario changes the race that follows it.

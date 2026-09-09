@@ -1108,6 +1108,89 @@ static void K_PrintRecordMasks(const char *label, const uint8_t *rec, uint32_t l
 }
 
 /** Names the objects whose archived record changed across a restore. */
+/** Says which archived object a byte offset in a snapshot falls inside.
+  *
+  * The snapshot has no index and its thinkers block cannot be walked without
+  * mirroring five hundred lines of archiver, so this works the other way round.
+  * The two snapshots are identical up to the first difference, so the bytes just
+  * before it are a fingerprint, and the capture of the living world holds those
+  * same bytes split into one record per object. Finding the fingerprint in the
+  * capture names the object and the offset inside its record, with no knowledge
+  * of the layout at all.
+  *
+  * It says how long a window it matched on and how many records matched it,
+  * because a fingerprint that matches twice names nothing, and one that matches
+  * nothing has to say so rather than point at record zero.
+  */
+static void K_LocateSnapshotRecord(const char *cmd, const rollbackslot_t *a,
+	size_t at, const diagset_t *recs)
+{
+	static const size_t windows[] = { 32, 16, 8 };
+	size_t w;
+
+	if (recs == NULL || recs->bytes == NULL || recs->count == 0)
+	{
+		CONS_Printf("%s: no capture of the living world to locate that byte in\n", cmd);
+		return;
+	}
+
+	for (w = 0; w < sizeof (windows) / sizeof (windows[0]); w++)
+	{
+		const size_t len = windows[w];
+		const uint8_t *want;
+		uint32_t hits = 0;
+		uint32_t hitrec = 0;
+		size_t hitinto = 0;
+		uint32_t i;
+
+		if (at < len)
+			continue;
+
+		want = a->buffer + (at - len);
+
+		for (i = 0; i < recs->count; i++)
+		{
+			const uint8_t *rec = recs->bytes + recs->recs[i].offset;
+			const size_t rl = recs->recs[i].length;
+			size_t q;
+
+			if (rl < len)
+				continue;
+
+			for (q = 0; q + len <= rl; q++)
+			{
+				if (memcmp(rec + q, want, len) == 0)
+				{
+					hits++;
+					hitrec = i;
+					hitinto = q + len;
+				}
+			}
+		}
+
+		if (hits == 0)
+			continue;
+
+		if (hits > 1)
+		{
+			CONS_Printf("%s: the %s bytes before the difference match %s records, "
+				"so they name none of them\n",
+				cmd, sizeu1(len), sizeu2((size_t)hits));
+			continue;
+		}
+
+		CONS_Printf("%s: that byte is object %u (%s), %s bytes into its record "
+			"of %u -- matched on a window of %s bytes\n",
+			cmd, hitrec, K_MobjTypeName(recs->recs[hitrec].type),
+			sizeu1(hitinto), recs->recs[hitrec].length, sizeu2(len));
+		K_PrintRecordMasks("  its masks:", recs->bytes + recs->recs[hitrec].offset,
+			recs->recs[hitrec].length);
+		return;
+	}
+
+	CONS_Printf("%s: could not place that byte in any archived object\n", cmd);
+}
+
 static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, const diagset_t *after)
 {
 	uint32_t common = (before->count < after->count) ? before->count : after->count;
@@ -1848,6 +1931,13 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 			"sits at the end -- in the '%s' block\n",
 			cmd, P_LocateSnapshotBlock(a->buffer, a->used, shared));
 	}
+
+	// Which object that first differing byte belongs to. Worked out from the
+	// capture of the living world rather than from the record comparison, because
+	// the record comparison lines the two captures up by position and has been
+	// caught being out of step.
+	if (records)
+		K_LocateSnapshotRecord(cmd, a, at, recsa);
 
 	// Which object, and which of its fields -- the byte offset above says
 	// neither on its own.
