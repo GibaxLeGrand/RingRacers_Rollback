@@ -429,6 +429,16 @@ one human and fifteen bots. **Idle: 2 failures in 500. Driving: 2 in 500.** Both
 0.4 percent, no crash over a full run, no unrepeatable replay. Nothing is wired
 into the tic loop; the game still plays as a stock build.
 
+⚠ **Read that rate as a rate and nothing more.** It comes from a byte-for-byte
+`memcmp`, so the pass/fail verdict is sound -- but every *description* of what a
+failure consisted of, anywhere in this document before the phase 3 section, was
+produced by instruments since caught reporting a first offset only, a cap of
+three with no count, and a per-object walk that lined up unrelated objects. "Two
+failures in five hundred" does **not** mean two bytes, two objects, or two
+fields. One failure measured properly turned out to be a four-byte shift that
+made eight thousand bytes differ. When reading an old figure here, check whether
+the instrument behind it could count.
+
 ### Resuming this, mechanically
 
 Nothing here can be built locally: Ring Racers needs SDL3, which the WSL
