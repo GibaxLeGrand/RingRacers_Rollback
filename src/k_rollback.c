@@ -2387,9 +2387,22 @@ static void Command_RollbackReplay_f(void)
 				players[i].cmd = netcmds[t % BACKUPTICS][i];
 		}
 
+		// The restore rewound gametic along with everything else -- the archive
+		// carries it -- and P_Ticker does not touch it: TryRunTics is what
+		// advances it, and this replays without going through TryRunTics. So
+		// the tic being replayed says which tic it is, exactly as the real loop
+		// would. Left alone, every replayed world ended up stamped with the tic
+		// it started from, which is what the comparison kept reporting at byte
+		// 22 of the misc block.
+		gametic = t;
+
 		P_Ticker(true);
 		ran++;
 	}
+
+	// And forward to the tic the game is about to run, which is where the
+	// world this was compared against stands.
+	gametic = now + 1;
 
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
 	ltafter = leveltime;
