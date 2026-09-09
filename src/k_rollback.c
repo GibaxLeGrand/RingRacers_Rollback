@@ -650,62 +650,76 @@ static dboolean K_RunIsAddress(const uint8_t *was, const uint8_t *now, size_t at
   * "N bytes into mobj_t" and nothing more.
   *
   * The table is in declaration order, so the field an offset belongs to is the
-  * last one that starts at or before it.
+  * last one that starts at or before it, and it also records whether that field
+  * holds pointers -- which settles the question K_RunIsAddress could only guess
+  * at. That guess has been wrong in both directions twice in this file: an
+  * address whose bytes do not look like one was reported as a field, and a field
+  * whose bytes did was thrown away. The declaration knows.
   *
-  * \return the field name, or NULL past the end of the structure.
+  * \return the field name, or NULL past the end of the structure. When
+  *         ispointer is not NULL it is set to whether that field holds pointers.
   */
-static const char *K_NameMobjField(size_t into)
+static const char *K_NameMobjField(size_t into, dboolean *ispointer)
 {
-	static const struct { size_t at; const char *name; } fields[] =
+	static const struct { size_t at; const char *name; dboolean ptr; } fields[] =
 	{
-#define F(x) { offsetof(mobj_t, x), #x }
-		F(thinker), F(x), F(y), F(z),
+#define F(x) { offsetof(mobj_t, x), #x, false }
+#define P(x) { offsetof(mobj_t, x), #x, true }
+		P(thinker), F(x), F(y), F(z),
 		F(old_x), F(old_y), F(old_z), F(old_x2),
-		F(old_y2), F(old_z2), F(type), F(info),
-		F(bnext), F(bprev), F(angle), F(pitch),
+		F(old_y2), F(old_z2), F(type), P(info),
+		P(bnext), P(bprev), F(angle), F(pitch),
 		F(roll), F(old_angle), F(old_pitch), F(old_roll),
 		F(old_angle2), F(old_pitch2), F(old_roll2), F(rollangle),
 		F(sprite), F(frame), F(sprite2), F(anim_duration),
 		F(renderflags), F(spritexscale), F(spriteyscale), F(spritexoffset),
 		F(spriteyoffset), F(old_spritexscale), F(old_spriteyscale), F(old_spritexoffset),
-		F(old_spriteyoffset), F(floorspriteslope), F(lightlevel), F(touching_sectorlist),
-		F(subsector), F(floorz), F(ceilingz), F(floorrover),
-		F(ceilingrover), F(floordrop), F(ceilingdrop), F(radius),
+		F(old_spriteyoffset), P(floorspriteslope), F(lightlevel), P(touching_sectorlist),
+		P(subsector), F(floorz), F(ceilingz), P(floorrover),
+		P(ceilingrover), F(floordrop), F(ceilingdrop), F(radius),
 		F(height), F(momx), F(momy), F(momz),
-		F(pmomz), F(tics), F(state), F(flags),
-		F(flags2), F(eflags), F(tid), F(tid_next),
-		F(tid_prev), F(skin), F(color), F(snext),
-		F(sprev), F(hnext), F(hprev), F(itnext),
-		F(health), F(movedir), F(movecount), F(target),
-		F(reactiontime), F(threshold), F(player), F(lastlook),
-		F(spawnpoint), F(tracer), F(friction), F(movefactor),
+		F(pmomz), F(tics), P(state), F(flags),
+		F(flags2), F(eflags), F(tid), P(tid_next),
+		P(tid_prev), P(skin), F(color), P(snext),
+		P(sprev), P(hnext), P(hprev), P(itnext),
+		F(health), F(movedir), F(movecount), P(target),
+		F(reactiontime), F(threshold), P(player), F(lastlook),
+		P(spawnpoint), P(tracer), F(friction), F(movefactor),
 		F(lastmomz), F(fuse), F(watertop), F(waterbottom),
 		F(mobjnum), F(scale), F(old_scale), F(old_scale2),
 		F(destscale), F(scalespeed), F(extravalue1), F(extravalue2),
-		F(cusval), F(cvmem), F(standingslope), F(resetinterp),
+		F(cusval), F(cvmem), P(standingslope), F(resetinterp),
 		F(colorized), F(mirrored), F(shadowscale), F(whiteshadow),
 		F(shadowcolor), F(sprxoff), F(spryoff), F(sprzoff),
 		F(bakexoff), F(bakeyoff), F(bakezoff), F(bakexpiv),
-		F(bakeypiv), F(bakezpiv), F(terrain), F(terrainOverlay),
+		F(bakeypiv), F(bakezpiv), P(terrain), P(terrainOverlay),
 		F(hitlag), F(waterskip), F(dispoffset), F(thing_args),
-		F(thing_stringargs), F(special), F(script_args), F(script_stringargs),
-		F(frozen), F(reappear), F(punt_ref), F(owner),
+		P(thing_stringargs), F(special), F(script_args), P(script_stringargs),
+		F(frozen), F(reappear), P(punt_ref), P(owner),
 		F(po_movecount),
+#undef P
 #undef F
 	};
 	const size_t count = sizeof (fields) / sizeof (fields[0]);
 	size_t i;
 
 	if (into >= sizeof (mobj_t))
-		return NULL;
-
-	for (i = 0; i < count; i++)
 	{
-		if (into < fields[i].at)
-			return (i > 0) ? fields[i - 1].name : NULL;
+		if (ispointer != NULL)
+			*ispointer = false;
+		return NULL;
 	}
 
-	return fields[count - 1].name;
+	for (i = 0; i + 1 < count; i++)
+	{
+		if (into < fields[i + 1].at)
+			break;
+	}
+
+	if (ispointer != NULL)
+		*ispointer = fields[i].ptr;
+
+	return fields[i].name;
 }
 
 
@@ -762,6 +776,7 @@ static void K_CompareMobjs(const char *cmd)
 		const mobj_t *mo = (const mobj_t *)th;
 		const uint8_t *was;
 		const uint8_t *now = (const uint8_t *)mo;
+		dboolean pointerfield = false;
 		size_t at;
 
 		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
@@ -792,7 +807,12 @@ static void K_CompareMobjs(const char *cmd)
 			for (run = 0; at + run < sizeof (mobj_t) && was[at + run] != now[at + run]; run++)
 				;
 
-			if (K_RunIsAddress(was, now, at, sizeof (mobj_t)))
+			// Asked of the declaration rather than of the bytes: a pointer
+			// field legitimately differs after a restore, and whether these
+			// particular bytes happen to look like an address says nothing.
+			K_NameMobjField(at, &pointerfield);
+
+			if (pointerfield)
 			{
 				addresses++;
 				at += run;
@@ -808,7 +828,7 @@ static void K_CompareMobjs(const char *cmd)
 			{
 				char text[160];
 
-				const char *field = K_NameMobjField(at);
+				const char *field = K_NameMobjField(at, NULL);
 
 				snprintf(text, sizeof (text),
 					"%s: %s #%u, %s bytes into mobj_t -- %s: %s bytes, %s-> %s",
@@ -826,7 +846,7 @@ static void K_CompareMobjs(const char *cmd)
 	if (g_holdfindings == false || missing > 0)
 	{
 		CONS_Printf("%s: %u objects compared, %u appeared from nowhere, "
-			"%u differences shown, %u runs were addresses\n",
+			"%u differences shown, %u were pointer fields\n",
 			cmd, compared, missing, reported, addresses);
 	}
 }
