@@ -1741,3 +1741,67 @@ zero, stay. That is Psyonix's upstream throttle with the missing number supplied
 and it is a small amount of code -- but it should wait until depth 7 has actually
 been seen to land on zero, because a controller built on an unconfirmed setpoint
 is a guess wearing a feedback loop.
+
+### Depth 7: the prediction failed, and the failure is the useful part
+
+Run on a **dedicated** server -- no host player, because the antigrief timer
+(`cv_antigrief`, 30 s) had been auto-spectating the idle host partway through
+every previous race, putting a state change in the middle of every measurement.
+That timer only ticks during a race (`P_CheckRaceGriefing` is called from
+`P_Ticker`) so it cannot be waited out beforehand, and no console command
+spectates.
+
+| window | n | mean offset |
+|---|---|---|
+| 1 | 343 | **+2.00** |
+| 2 | 440 | **+1.91** |
+| 3 | 442 | **+1.96** |
+
+**The line said +0.20.** Missed by 1.8 tics, and steady across three windows, so
+not noise. Two things changed at once -- the depth and the server mode -- and that
+was said before the run rather than after it. The simplest reading is the server:
+a dedicated one does not render, so it spends our inputs about two tics earlier
+against our clock. Under that reading the setpoint is about **9 dedicated and 7.2
+windowed**, and the two cannot be separated without a windowed depth-7 run.
+
+**So the prediction about the stutter was never tested, rather than refuted.** It
+was: offset zero, therefore `g_localwrong` false, therefore the reconciliation
+limiter finally engages. The offset was not zero, we mispredicted ourselves on
+**100 percent** of contradictions (471/471, 568/568, 637/637), and
+`0 more were deferred` printed in every window, as it has in every window of every
+run this project has ever taken.
+
+**What a person reported, against what the log says:**
+
+| played | measured |
+|---|---|
+| "ça répond tout de suite" | holding, five races running. Responsiveness is not the open problem. |
+| "ça stutter quand même" | 4.4 replayed tics a pass, **9 to 13 ms of a 28.6 ms tic**. Half of what depth 12 cost (7.4 a pass) and still enormous. |
+| "des sauts nets" | **seven** `Game state reloaded` in one race -- with a single player and no remote prediction at all. The world diverges on its own. |
+| "son qui pète un peu" | the replay is muted, but a sound *already playing* keeps a 3D origin that jumps with the correction. Hypothesis, not a finding. |
+
+⚠ **What the distribution says about the whole approach.** At depth 7 the offsets
+are `+1 x78, +2 x263, +3 x91`. Shift that by two to centre it and **263 of 442 --
+60 percent -- would land exactly right**, and on those tics `g_localwrong` would be
+false and the limiter would defer for the first time. So tuning the depth is worth
+real money. But it **caps at about 60 percent**, because the offset is a
+*distribution* and not a point, and the setpoint itself moves with the server's
+mode. A tuned depth is a palliative with a moving target.
+
+**The actual fix is the one the slides name.** The client sends one ticcmd a pass
+with no tic on it and the server stamps it with its own `maketic`; that is why our
+own input, which is not a guess at all, arrives as a contradiction. Label the
+input with the tic it is for and have the server buffer it, and self-misprediction
+stops existing rather than being centred. `0f47a3d` aimed at this and was reverted
+-- it labelled without giving the server anywhere to put the labelled input, which
+is the half the GDC slides say matters.
+
+**The harness keeps its window again.** Watching the server is worth something no
+log gives, and the host was never the problem -- the antigrief bascule was. So
+`playserver.cfg` sets `antigrief 0`, the host stays a stationary racer for the
+whole race, nothing changes state mid-window, and there is a second kart on screen
+to judge rubber-banding by. `playtest.sh <scenario> dedicated` still drops him.
+
+**Next, and it is also the point the sweep lost:** depth 7 **windowed**. Predicted
+before the run: offset about **+0.2**, roughly **60 percent** of our own inputs
+exactly right, and `deferred` **non-zero for the first time**.
