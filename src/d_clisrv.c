@@ -6810,32 +6810,7 @@ dboolean TryRunTics(tic_t realtics)
 
 	if (client && gamestate == GS_LEVEL)
 	{
-		const int32_t ahead = K_RollbackPredictAhead();
-
-		if (ahead > 0)
-		{
-			// The clock drives the loop, not the mailbox.
-			//
-			// A delayed client is never starved: the server's tics arrive at
-			// thirty-five a second, six tics stale, so there is always a
-			// confirmed tic waiting and the client never reaches for a predicted
-			// one. Measured, not guessed -- thirty predicted tics in four
-			// thousand passes, with the server "ahead by one on average". Being
-			// fed on time and late *is* the input lag, and waiting to run out of
-			// tics before predicting means never predicting at all.
-			//
-			// So the client advances on real time and predicts whatever has not
-			// arrived, capped at how far past the server it is willing to be --
-			// because that cap is what a correction has to replay, and the ring
-			// is what has to hold it.
-			const tic_t byclock = gametic + (tic_t)realtics;
-
-			if (byclock > runto)
-				runto = byclock;
-
-			if (runto > neededtic + (tic_t)ahead)
-				runto = neededtic + (tic_t)ahead;
-		}
+		runto += (tic_t)K_RollbackPredictAhead();
 
 		// How far behind the server this client is before it runs anything. If
 		// that is never zero, it never runs out of confirmed tics and predict
