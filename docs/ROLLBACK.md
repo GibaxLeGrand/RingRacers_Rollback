@@ -482,13 +482,20 @@ the camera jerk was found.
 
 | phase | state | what it is waiting on |
 |---|---|---|
-| 1. Restore breakdown | done enough | `P_RelinkPointers` is 3.7 ms of 5.6 and has never been broken down further. Not blocking anything. |
-| 2. Soak the determinism | **done enough** -- three maps, player state clean, residue is scenery | nothing blocking |
-| 3. Rollback loop behind a switch | **started** -- the ring fills during play and a replay runs on real inputs | the packet half, which needs two instances |
-| 4. Two instances with latency | not started | needs 3, and a lag knob the game does not have |
-| 5. Against a stock build | not started | needs 3, and a wire-format audit that has never been done |
-| 6. Capability test in the menus | not started | needs 3 for figures that mean anything |
-| 7. Alpha with people | not started | needs 3 through 6 |
+| 1. Restore breakdown | done enough | `P_RelinkPointers` is 4.7 ms of 8.6 late in a race and has never been broken down further. Not blocking anything. |
+| 2. Soak the determinism | **done** -- five maps or modes, player state clean, every surviving failure an `MT_SHADOW` | nothing |
+| 3. Rollback loop behind a switch | **fires end to end** -- predict, detect and correct all counted on a real client under 171 ms | a played race, a correction timed inside a tic, and the netxcmd hole |
+| 4. Two instances with latency | **done, and it came first** -- the harness runs and the lag knob exists, because phase 3 could not be tested without either | nothing |
+| 5. Against a stock build | not started | the wire-format audit is **written** now; needs a stock build to talk to |
+| 6. Capability test in the menus | not started | needs a correction timed inside a tic, not inside a console command |
+| 7. Alpha with people | not started | needs 3 finished and 6 |
+
+⚠ **Phase 4 was not skipped, it was overtaken.** Both of its pieces turned out to
+be prerequisites for finishing phase 3 rather than the step after it: two
+instances, because a listen server's world is its own authority and proves
+nothing about a client; and the lag knob, because on a loopback every counter in
+the loop reads zero with nothing wrong anywhere. The plan had them in the wrong
+order and two measurements said so, on the same day.
 
 ### What is left in phase 2
 
@@ -518,6 +525,22 @@ read and understood.
 A snapshot was 120 KiB seconds after the start and 318 KiB three minutes in,
 because the world accumulates objects, so the 11 ms restore wants taking again
 late in a long race. That number is the whole budget question.
+
+### What is left in phase 3, in the order it should be taken
+
+1. **A played race across the harness**, with the loop on and off at the same
+   latency. Nobody has watched a screen while a correction happened. Corrections
+   land every few seconds at 171 ms; whether that reads as rubber-banding, as a
+   snap, or as nothing at all is not in any log and cannot be.
+2. **A correction timed inside a tic.** Every cost in this document was measured
+   inside a console command, which is a quiet moment. Phase 6 exists to answer
+   "can this machine run rollback", and it cannot be answered with those numbers.
+3. **The netxcmd hole.** `ExtraDataTicker` is skipped on predicted tics and the
+   correction path does not run it either, so chat, cvar changes and map votes
+   landing on a predicted tic are lost. The fix is for detect to force a
+   correction when a confirmed tic carries netxcmds. This must be closed before
+   the switch is ever recommended to anybody.
+4. **A long run.** Nothing has run longer than a scripted two minutes.
 
 ### Before phase 3 -- the rollback loop
 
@@ -1304,6 +1327,41 @@ tic rather than in a console command; the netxcmd hole from the predict commit i
 still open, so chat and cvar changes landing on a predicted tic are still lost;
 and none of this has run for longer than a scripted couple of minutes. It fires.
 It is not finished.
+
+### The played test, and why it needs a control
+
+Two instances, one to play on. In the game folder:
+
+```
+./playtest.sh off     # 171 ms of delay, rollback loop OFF -- the control
+./playtest.sh on      # 171 ms of delay, rollback loop ON
+```
+
+Each opens a server window to be left alone and a client window to drive in, on
+RR_NorthernDistrict with four bots. The client quits itself after about three
+minutes and its log is saved as `playlog_off.txt` or `playlog_on.txt`.
+
+⚠ **Run both, same track, same session.** With only the "on" run, any report of
+how it felt describes the 171 ms and not the rollback: a delay that large is
+plainly noticeable on its own, and it is present in both runs. The control is
+what turns "it felt laggy" into a usable answer.
+
+What to look at, in order of what no log can record:
+
+1. **Other karts.** A correction rewinds and replays them. Do they rubber-band,
+   snap, or stutter? Corrections land every few seconds at this delay.
+2. **Your own kart.** With the loop on, the client acts on your input without
+   waiting for the server, so it should feel *more* responsive than the control,
+   not less. If it feels worse, that is the finding.
+3. **Anything that repeats.** A sound played twice, an item used twice, a
+   position that jumps back: that is a tic being replayed with a side effect that
+   should not have been repeated.
+4. **Chat and menus.** Known broken while the loop is on -- netxcmds landing on a
+   predicted tic are lost. Confirming it is broken is still worth a line.
+
+The log carries the numbers -- tics predicted, contradictions, corrections, tics
+replayed, and whether the delay queue dropped anything -- so the report wanted
+from a person is only the part the numbers cannot hold.
 
 ### Before phase 4 -- two instances with latency
 
