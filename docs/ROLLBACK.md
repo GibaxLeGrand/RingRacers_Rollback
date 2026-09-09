@@ -1445,6 +1445,13 @@ without checking. Every finding that held today came from reading the line
 instead -- `netticbuffer`, `D_Clearticcmd`, `K_CheckSpectateStatus`, the keeper's
 position mid-tic.
 
+### Confirmed by ear: the replay is silent now
+
+The sound had been "complètement buggé" on the client -- a replayed tic remaking
+every sound the tic made the first time, several times a second. With the replay
+muted, Gibax reports it is fine. No counter in this project reports that, and
+none could.
+
 ### The self-misprediction, named at last
 
 The ticcmd namer, pointed at our own input, answers in four lines:
