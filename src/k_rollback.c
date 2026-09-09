@@ -2317,6 +2317,7 @@ static void Command_RollbackReplay_f(void)
 	int32_t i;
 	int32_t ran = 0;
 	tic_t from, t, now;
+	tic_t ltbefore, ltafter, ltloaded;
 
 	if (COM_Argc() > 1)
 		n = atoi(COM_Argv(1));
@@ -2363,6 +2364,7 @@ static void Command_RollbackReplay_f(void)
 
 	present = g_second;
 	from = now - (tic_t)n;
+	ltbefore = leveltime;
 
 	if (!K_LoadGameState(from))
 	{
@@ -2370,6 +2372,8 @@ static void Command_RollbackReplay_f(void)
 			"on and let %d tics go by\n", sizeu1(from), n);
 		return;
 	}
+
+	ltloaded = leveltime;
 
 	// The inputs of each tic as the netcode recorded them, rather than one tic's
 	// inputs repeated. netcmds holds BACKUPTICS of them, far more than the ring.
@@ -2388,6 +2392,7 @@ static void Command_RollbackReplay_f(void)
 	}
 
 	us = K_PreciseToMicros(I_GetPreciseTime() - started);
+	ltafter = leveltime;
 
 	if (!K_WriteSnapshot(g_first, now))
 	{
@@ -2397,6 +2402,14 @@ static void Command_RollbackReplay_f(void)
 
 	K_ReportComparison("rollback_replay", "replay", present, "the world as it was",
 		g_first, "the replay", NULL, NULL, false);
+
+	// Where leveltime went, because the tic counter is what the comparison keeps
+	// pointing at and two readings of it settle in one line what an afternoon of
+	// reasoning could not: whether the restore lands where it should, and
+	// whether a replayed tic advances the clock at all.
+	CONS_Printf("rollback_replay: leveltime %s at the start, %s after the restore, "
+		"%s after the replay\n",
+		sizeu1((size_t)ltbefore), sizeu2((size_t)ltloaded), sizeu3((size_t)ltafter));
 
 	// What it replayed, not just how long it took: a loop that ran no tics at
 	// all would otherwise report a time and look like it had worked.
