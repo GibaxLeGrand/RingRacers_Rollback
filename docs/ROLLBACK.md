@@ -1610,3 +1610,87 @@ every one of these runs.
 the other kart rubber-bands, whether your own kart still answers at once with
 pacing on, and whether anything repeats itself -- a sound, an item, a position
 that jumps back.
+
+### Answered: the self-misprediction is the prediction depth, and it is measured
+
+Two played races on `cdbdca3`, binary verified by its sha and by the presence of
+the new command's own string. RR_SkyscraperLeaps, two players, the host idle,
+`rollback_lag 6` (171 ms, held on reception).
+
+**First race, depth 12 throughout.** Over a thousand passes:
+
+```
+1000 passes, 782 predicted something, 208 predicted more than one tic -- worst 12, 1 typically
+1140 contradictions, player 1 -- THIS MACHINE : 1140.  The other player: 0.
+448 were samples this machine did run a tic on, 692 it never ran at all
+  the server used it 5 tics earlier than we did, 194 times
+  the server used it 4 tics earlier than we did, 209 times
+```
+
+**Both readings the instruments were built to separate are true, and they are not
+alternatives.** Sixty-one percent of the contradictions are a sample this machine
+made, sent, and spent no tic on. Of the ones it did spend, ninety percent sit at a
+**repeated offset of four to five tics**, in one direction: the server uses our
+input four or five tics *before* the tic we spend it on.
+
+⚠ That offset is neither of the two numbers guessed at it. `mindelay` said two,
+`maketic` labelling said twelve; the answer is four to five, and it is between
+them. Note also that the matcher breaks ties toward offset zero, so a peak away
+from zero is not something the instrument could have manufactured.
+
+**Second race: the depth changed inside one race, and the peak moved with it.**
+Window one at depth 12, then `rollback_loop 5`, then five hundred more passes:
+
+| | depth 12 | depth 5 |
+|---|---|---|
+| passes | 500 | 500 |
+| contradictions | 419 | 898 |
+| matched a sample we ran | 341 | 191 |
+| never ran at all | 78 | 707 |
+| peak of the histogram | **-5 x192, -4 x121** | **+2 x117, +3 x55** |
+| weighted mean offset | **-4.40** | **+2.02** |
+| `Game state reloaded` | 0 | **3** |
+
+Seven tics of depth moved the offset by 6.42 tics: **a slope of -0.92, which is
+one for one inside the noise.** The self-misprediction is not a mystery and it is
+not a labelling bug. **The prediction depth *is* the offset**, and there is
+exactly one depth at which our input lands on the tic the server uses it for.
+Straight line through the two points: **7.2**.
+
+That follows from what the code does rather than being fitted to it. A client
+sends one ticcmd a pass with **no tic on it**, and the server stamps it with its
+own `maketic` on arrival. Which tic we *spend* a sample on is our choice; which
+tic the server *assigns* it to is the round trip's. They coincide at one depth,
+and that depth is a property of the connection, not a constant.
+
+⚠ **What is confounded and must not be read as a result.** The depth-5 window
+carries **three full state resynchronisations**; the depth-12 window carries none.
+So the doubling of contradictions and the jump in "never ran at all" cannot be
+attributed to the depth rather than to the resync storm they happened inside. The
+*shape* of the histogram is clean -- a shape is not a rate -- and it is the shape
+that moved. The rates need a run without resyncs before they mean anything.
+
+**Two things follow.**
+
+1. **Free, and next: depth 7.** No build. If the peak lands on zero the model is
+   complete; if it does not, the model is wrong and the straight line was a
+   coincidence of two points. A sweep -- 12, 9, 7, 6 in one race, one reporting
+   window each -- tests the line rather than one point on it.
+2. **Then the depth stops being a constant.** The right depth is set by the round
+   trip and nothing in this code measures it. That is exactly Psyonix's *upstream
+   throttle*, and the thing that would drive it is now in hand: the offset
+   histogram itself. Negative, run shallower; positive, run deeper. The slides
+   said a client should be paced by the server; this says by how much, in tics,
+   from a number the client already prints.
+
+**Still open, unchanged by this:** the sixty-one percent of samples spent on no
+tic at all -- `rollback_pace` exists for that and **has still never run**, because
+both races quit before reaching it. The console `wait` counts get eaten, most
+likely by the resyncs; the scenarios now put the switch in the first window
+instead of the fourth.
+
+**And a first in the whole project:** in the last window, `player 0 (Comodore)
+was mispredicted 5 times`. Every previous measurement blamed this machine for
+every single contradiction, 1520 out of 1520 on one of them. That window is after
+the round ended and on another map, so it is a curiosity rather than a result --
+but it is the first time the remote prediction has ever been wrong at all.
