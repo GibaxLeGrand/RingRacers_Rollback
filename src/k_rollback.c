@@ -773,7 +773,7 @@ static void K_CompareMobjs(const char *cmd)
 	if (g_mobjcopy == NULL || g_mobjslot == NULL || g_mobjcopies == 0)
 		return;
 
-	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ] && reported < 6; th = th->next)
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
 	{
 		const mobj_t *mo = (const mobj_t *)th;
 		const uint8_t *was;
@@ -809,7 +809,7 @@ static void K_CompareMobjs(const char *cmd)
 
 		compared++;
 
-		for (at = 0; at < sizeof (mobj_t) && reported < 6; at++)
+		for (at = 0; at < sizeof (mobj_t); at++)
 		{
 			char before[32], after[32];
 			size_t run, k;
@@ -1765,11 +1765,32 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 	// where they stopped agreeing rather than only that they differ.
 	const size_t shared = (a->used < b->used) ? a->used : b->used;
 	size_t at;
+	size_t bytesdiffer = 0;
+	size_t runs = 0;
+	size_t last = 0;
+	size_t scan;
 
 	for (at = 0; at < shared; at++)
 	{
 		if (a->buffer[at] != b->buffer[at])
 			break;
+	}
+
+	// How much differs, not only where it starts. Every report of this residue
+	// so far has been a single offset, which says nothing about whether one
+	// value moved or a thousand did -- and the per-object pass that was supposed
+	// to answer that turned out to be comparing unrelated objects. One extra
+	// pass over a hundred and fifty kilobytes settles it.
+	for (scan = at; scan < shared; scan++)
+	{
+		if (a->buffer[scan] == b->buffer[scan])
+			continue;
+
+		bytesdiffer++;
+		last = scan;
+
+		if (scan == at || a->buffer[scan - 1] == b->buffer[scan - 1])
+			runs++;
 	}
 
 	if (a->used == b->used && at == shared)
@@ -1778,6 +1799,10 @@ static dboolean K_ReportComparison(const char *cmd, const char *what,
 			cmd, what, sizeu1(a->used));
 		return true;
 	}
+
+	CONS_Printf("%s: %s bytes differ in %s runs, from byte %s to byte %s of %s\n",
+		cmd, sizeu1(bytesdiffer), sizeu2(runs), sizeu3(at), sizeu4(last),
+		sizeu5(shared));
 
 	if (a->used != b->used)
 	{
