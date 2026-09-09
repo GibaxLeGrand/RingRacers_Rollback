@@ -1238,6 +1238,38 @@ The conclusion does not change -- a deep rollback does not fit in a 28.6 ms tic
 and the depth cap is the answer -- but the cap moves down, and phase 6 has to
 pick it against these figures rather than the old ones.
 
+### The loop is built, and it cannot fire on a loopback
+
+`rollback_loop` turns on predict, detect and correct together, off by default. On
+the harness, with it on:
+
+```
+this machine is the client, gamestate 1 (a level is 1)
+0 tics were run before the server confirmed them, furthest ahead 0
+over 700 tic loops the server was ahead by 2 at worst, 1 on average
+```
+
+Both gate conditions are true, the block runs seven hundred times, and predict
+never fires **because the client is never starved**. The server is one to two
+tics ahead of it at all times, so `gametic` never reaches `neededtic` and there
+is never a tic left to guess at. Detect agrees from the other end: zero inputs
+have ever arrived for a tic already run.
+
+⚠ **So the artificial latency knob is not a phase 4 convenience. It is a
+prerequisite for testing phase 3's second half at all**, and phase 3 cannot be
+finished without it. That is the second time today the plan has been reordered by
+a measurement rather than by an argument: detect reporting zero moved predict
+ahead of it this morning, and this moves the lag knob ahead of both.
+
+⚠ **And a caution about reading these numbers, which cost me two wrong claims.**
+The first `rollback_loop` report said "over 0 tic loops" and I read it as "never".
+It was taken immediately after the switch was thrown, before a single tic loop
+had run with it on -- *not yet*, not *never*. On that misreading I announced the
+latency hypothesis refuted; the second sample, seven hundred loops later,
+supports it. A counter that starts at zero says nothing until something has had
+the chance to increment it, and the honest instrument would print how long it had
+been watching.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.
