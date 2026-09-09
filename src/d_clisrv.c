@@ -163,6 +163,13 @@ static tic_t maketic;
 
 static int16_t consistancy[BACKUPTICS];
 
+// The newest tic the authoritative loop actually finished.
+//
+// In the two-clock mode that loop only ever runs confirmed tics, so this is the
+// newest checksum that describes a world built entirely from inputs the server
+// sent -- the only kind worth offering it.
+static tic_t lastconfirmedtic;
+
 static uint8_t player_joining = false;
 uint8_t hu_redownloadinggamestate = 0;
 
@@ -6453,7 +6460,15 @@ static void CL_SendClientCmd(void)
 	// still checked, we simply stop offering speculation as evidence.
 	//
 	// Unchanged when the loop is off, because gametic never passes neededtic then.
-	const tic_t reporttic = (client && gametic > neededtic) ? neededtic : gametic;
+	// In the two-clock mode the authoritative loop never runs a guess, so the
+	// newest tic it finished is the newest honest checksum there is. Otherwise
+	// fall back to the tic index the server has confirmed -- which labels the
+	// value correctly but cannot make it true, and that gap is why the two-clock
+	// mode exists.
+	const tic_t reporttic =
+		(client && K_RollbackTwoClock() > 0 && lastconfirmedtic != 0)
+			? lastconfirmedtic
+			: ((client && gametic > neededtic) ? neededtic : gametic);
 
 	netbuffer->packettype = PT_CLIENTCMD;
 
@@ -6847,7 +6862,15 @@ dboolean TryRunTics(tic_t realtics)
 	// line leaves runto equal to neededtic and nothing below changes at all.
 	runto = neededtic;
 
-	if (client && gamestate == GS_LEVEL)
+	// Two-clock mode: put the confirmed world back before anything authoritative
+	// happens to it. runto is left at neededtic, so the loop below is the stock
+	// one -- which is the whole point, and the reason consistancy[] can be
+	// trusted again.
+	if (K_RollbackTwoClock() > 0)
+	{
+		K_RollbackUnspeculate();
+	}
+	else if (client && gamestate == GS_LEVEL)
 	{
 		runto += (tic_t)K_RollbackPredictAhead();
 
@@ -7012,6 +7035,7 @@ dboolean TryRunTics(tic_t realtics)
 
 			gametic++;
 			consistancy[gametic % BACKUPTICS] = Consistancy();
+			lastconfirmedtic = gametic;
 
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
 
@@ -7067,6 +7091,13 @@ dboolean TryRunTics(tic_t realtics)
 	// spends it, and how many go unspent is half of the question.
 	if (client && gamestate == GS_LEVEL)
 		K_RollbackNotePass(predictedthispass);
+
+	// And rebuild the speculation on top of the confirmed world, so what the
+	// player sees and acts in is ahead of what the server has confirmed. Every
+	// pass, unconditionally: the world was put back at the top of this function,
+	// and leaving it there would show the player the past.
+	if (K_RollbackTwoClock() > 0)
+		K_RollbackSpeculate();
 
 	return ticking;
 }

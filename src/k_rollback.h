@@ -61,6 +61,25 @@ void K_RollbackNotePass(int32_t predicted);
 /** True when the loop may run only one predicted tic per pass of TryRunTics. */
 dboolean K_RollbackPacing(void);
 
+/** How many tics the speculation runs ahead of the confirmed world. Zero when
+  * the two-clock mode is off, which is the default. */
+int32_t K_RollbackTwoClock(void);
+
+/** True while speculative tics are being run. Sound, the snapshot keeper and
+  * anything else that must not happen twice sit these out: a speculation is
+  * thrown away and rebuilt every pass, so its side effects would repeat. */
+dboolean K_RollbackSpeculating(void);
+
+/** Puts the confirmed world back, undoing the last pass's speculation. Called
+  * before the authoritative tic loop, so that loop starts where the server
+  * left it. Does nothing when there is no speculation standing. */
+void K_RollbackUnspeculate(void);
+
+/** Saves the confirmed world and runs the speculation forward from it. Called
+  * after the authoritative tic loop, so what the player sees and acts in is
+  * ahead of what the server has confirmed. */
+void K_RollbackSpeculate(void);
+
 /** True while a correction is re-running tics. Sound and other outside-the-world
   * effects should sit those out: the tic already happened once. */
 dboolean K_RollbackReplaying(void);

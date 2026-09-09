@@ -2735,6 +2735,37 @@ static uint32_t K_ReportReplayInputs(const char *cmd,
 
 static dboolean g_replaying;     // true while a correction is re-running tics
 
+// The two-clock mode.
+//
+// The authoritative clock, gametic, runs only tics the server has confirmed --
+// the stock loop, untouched -- so consistancy[] always describes a world built
+// entirely from inputs the server sent, and the client never announces the
+// checksum of something it guessed. The speculation runs on top of that, from a
+// snapshot, and is thrown away and rebuilt every pass.
+//
+// This is SRB2 NetPlus's shape, and it is here because the alternative was
+// measured: hoisting gametic itself past neededtic made the client report
+// speculative checksums, and the server answered with seven full state resends a
+// race. Reporting the confirmed tic's index instead did not help, and the reason
+// is the argument for this whole change -- consistancy[neededtic] had been
+// computed when that tic was still a guess, and confirming it later recomputes
+// nothing. **A checksum of a confirmed timeline requires actually keeping one.**
+//
+// It also deletes work rather than adding it: with the speculation rebuilt every
+// pass from the latest inputs, there is nothing to detect and nothing to correct.
+// No pending rollback, no rate limiter, no self-misprediction to centre.
+static int32_t g_twoclock;          // tics of speculation; 0 = off
+static tic_t g_confirmedtic;        // the frontier the speculation was spun from
+static dboolean g_speculated;       // a speculation is standing and must be undone
+static dboolean g_speculating;      // and one is being run right now
+static uint32_t g_specpasses;       // speculations built
+static uint32_t g_spectics;         // tics they ran
+static uint32_t g_specstranded;     // times the confirmed world could not be restored
+static uint32_t g_specnosave;       // times the frontier could not be saved
+static uint32_t g_unspecus;         // microseconds spent putting the world back
+static uint32_t g_specus;           // and running the speculation forward
+
+
 /** True while a correction is re-running tics that have already been played.
   *
   * Anything that reaches outside the simulation -- sound, most obviously --
@@ -2742,7 +2773,11 @@ static dboolean g_replaying;     // true while a correction is re-running tics
   */
 dboolean K_RollbackReplaying(void)
 {
-	return g_replaying;
+	// A speculation counts. It is re-run from scratch every pass, so a sound
+	// started in one would be started again, and again, for as long as the tic
+	// stays unconfirmed. The sound arrives when the authoritative loop reaches
+	// that tic for real -- later by the lead, and once.
+	return (g_replaying || g_speculating);
 }
 
 /** True when two inputs say the player pressed different things.
@@ -3115,7 +3150,11 @@ void K_RollbackTicker(void)
 	// After the tic, so the slot for tic N holds the world as N left it, which
 	// is where N+1 starts. The soak's checks already save and load on that
 	// convention.
-	if (g_keeping && gamestate == GS_LEVEL && g_soakbusy == false)
+	// Not while speculating. These tics are thrown away and re-derived next pass,
+	// so keeping them would fill the ring with worlds nobody will ever go back to
+	// -- and the one slot that matters, the confirmed frontier, is written by
+	// K_RollbackSpeculate itself.
+	if (g_keeping && gamestate == GS_LEVEL && g_soakbusy == false && g_speculating == false)
 		K_SaveGameState(gametic);
 
 	K_RollbackSoakTicker();
@@ -3662,6 +3701,133 @@ dboolean K_RollbackPacing(void)
 	return (g_loopahead > 0 && g_pacing);
 }
 
+int32_t K_RollbackTwoClock(void)
+{
+	if (g_twoclock <= 0 || client == false || gamestate != GS_LEVEL)
+		return 0;
+
+	return g_twoclock;
+}
+
+dboolean K_RollbackSpeculating(void)
+{
+	return g_speculating;
+}
+
+void K_RollbackUnspeculate(void)
+{
+	precise_t started;
+
+	if (g_speculated == false)
+		return;
+
+	g_speculated = false;
+
+	started = I_GetPreciseTime();
+
+	if (K_LoadGameState(g_confirmedtic) == false)
+	{
+		// The confirmed world is gone -- the ring went round, or the map changed
+		// under us. Counted rather than papered over: the authoritative loop is
+		// about to run from whatever the speculation left, which is the one
+		// situation this mode exists to prevent, and it must be visible.
+		g_specstranded++;
+		return;
+	}
+
+	gametic = g_confirmedtic;
+
+	g_unspecus += K_PreciseToMicros(I_GetPreciseTime() - started);
+}
+
+void K_RollbackSpeculate(void)
+{
+	const int32_t ahead = K_RollbackTwoClock();
+	precise_t started;
+	int32_t i;
+
+	if (ahead <= 0)
+		return;
+
+	// The frontier: the world exactly as the authoritative loop left it. Saved
+	// before a single speculative tic runs, because this is what the next pass
+	// has to come back to.
+	g_confirmedtic = gametic;
+
+	if (K_SaveGameState(gametic) == false)
+	{
+		g_specnosave++;
+		return;
+	}
+
+	started = I_GetPreciseTime();
+	g_speculating = true;
+
+	for (i = 0; i < ahead; i++)
+	{
+		// Your own input is not a guess and goes in as itself; everyone else is
+		// predicted. Same step the old loop used, and the only part of it worth
+		// keeping.
+		K_RollbackPredictInputs(gametic, i);
+
+		// The whole tic, through the live loop's own entry point. Driving
+		// P_Ticker directly missed everything G_Ticker does around the
+		// simulation, and that cost four separate bug hunts to learn once.
+		G_Ticker(true);
+
+		gametic++;
+		g_spectics++;
+	}
+
+	g_speculating = false;
+	g_speculated = true;
+
+	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_specpasses++;
+}
+
+/** Console command: rollback_twoclock [tics]
+  *
+  * The pivot, behind its own switch and off by default. Mutually exclusive with
+  * rollback_loop by construction rather than by checking: one advances the
+  * authoritative clock and the other refuses to.
+  */
+static void Command_RollbackTwoClock_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		const int32_t want = atoi(COM_Argv(1));
+
+		// Turning it off leaves a speculation standing, and the world would keep
+		// it for good. Put the confirmed world back on the way out.
+		if (want <= 0 && g_speculated)
+			K_RollbackUnspeculate();
+
+		g_twoclock = (want > 0) ? want : 0;
+
+		if (g_twoclock > 0)
+		{
+			// The old loop hoists gametic; this one refuses to. Running both
+			// would be two answers to the same question.
+			g_loopahead = 0;
+			g_keeping = true;
+		}
+
+		g_specpasses = g_spectics = g_specstranded = g_specnosave = 0;
+		g_unspecus = g_specus = 0;
+	}
+
+	CONS_Printf("rollback_twoclock: %d tics of speculation on top of the confirmed world\n",
+		g_twoclock);
+	CONS_Printf("rollback_twoclock: %u speculations built, %u tics run by them, "
+		"%u could not be saved, %u left the world stranded\n",
+		g_specpasses, g_spectics, g_specnosave, g_specstranded);
+	CONS_Printf("rollback_twoclock: %u us putting the world back, %u us running it "
+		"forward -- %u us a pass, against 28571 for a whole tic\n",
+		g_unspecus, g_specus,
+		(uint32_t)(g_specpasses ? ((g_unspecus + g_specus) / g_specpasses) : 0));
+}
+
 /** Fills a tic's inputs with the last thing each player was known to be doing.
   *
   * Repeat-last is the standard prediction and the right first one: it is correct
@@ -4157,4 +4323,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_lag", Command_RollbackLag_f);
 	COM_AddDebugCommand("rollback_pace", Command_RollbackPace_f);
 	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
+	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 }
