@@ -1158,6 +1158,47 @@ it ran on -- and it prints the map, the grid and whether it is a Grand Prix, but
 one dimension it did not name. Fixed; that soak wants running once more before
 its number counts.
 
+### Detect reports zero, and that decides the order
+
+Wired into the client's reception path and run at the harness three times over a
+race: **zero inputs arrived for a tic already run.** Not zero contradictions --
+zero arrivals. Nothing to detect.
+
+Which is the answer the plan needed and did not have. A client never runs ahead
+of the tics it has been sent, so no input can ever come back for a tic it has
+already done. **Predict has to come first**, and detect is dead code until it
+does. That is worth having found by measuring rather than by writing predict and
+wondering why the detector stayed silent.
+
+### Encore, finally counted
+
+`RR_NORTHERNDISTRICT, 16 racers (15 bots), not a Grand Prix, Encore` --
+**530 checks, 2 failures**, both `MT_SHADOW`. Same residue as everywhere else.
+Encore is now a soaked mode rather than a claimed one.
+
+### Fourth of a kind, and the end of treating them one at a time
+
+The client's fifth replay left one byte: `player 0, 194 bytes into their record --
+spectatorReentry`, 904 against 921. `K_CheckSpectateStatus` decrements it, and it
+is called from **`G_Ticker`**, which a replay driving `P_Ticker` by hand never
+reaches.
+
+That is the fourth: `gametic`, then the input step, then
+`livestudioaudience_timer`, now `spectatorReentry`. Four times the same shape --
+something the tic loop does around the simulation, missed by a replay that only
+simulates. Gating each one out of the snapshot as it appears is a treadmill.
+
+**So the replay runs whole tics now.** `G_Ticker` moves the inputs into the
+players, calls `P_Ticker` itself, and does everything else a tic does; calling it
+subsumes all four and whatever the fifth would have been. The recorded inputs are
+written into `netcmds` before the call, so `G_Ticker`'s own copy picks up the
+truth rather than the flag-stripped mailbox -- **which is also the shape the real
+correction takes**: write the input that actually arrived, then run the tic
+normally.
+
+**Not yet measured.** It either reproduces the twelve-of-twelve and five-of-five
+exactly, or the change is wrong -- there is no third outcome worth accepting.
+
 ### Before phase 4 -- two instances with latency
 
 - Phase 3 working behind its switch, with the soak still passing.

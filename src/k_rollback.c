@@ -2731,6 +2731,28 @@ static uint32_t K_ReportReplayInputs(const char *cmd,
 	return named;
 }
 
+/** True when two inputs say the player pressed different things.
+  *
+  * Not a memcmp. A ticcmd also carries latency and flags, and neither is
+  * something anybody pressed: latency is a transport measurement that G_Ticker
+  * rewrites on arrival, and the flags say how the input travelled, not what it
+  * was. A rollback exists to correct what was *pressed*, so that is what this
+  * compares -- otherwise every single arrival looks like a contradiction and the
+  * detector cries wolf on every tic.
+  */
+static dboolean K_InputsDiffer(const ticcmd_t *a, const ticcmd_t *b)
+{
+	return (a->forwardmove != b->forwardmove
+		|| a->turning != b->turning
+		|| a->angle != b->angle
+		|| a->throwdir != b->throwdir
+		|| a->aiming != b->aiming
+		|| a->buttons != b->buttons
+		|| a->bot.turnconfirm != b->bot.turnconfirm
+		|| a->bot.spindashconfirm != b->bot.spindashconfirm
+		|| a->bot.itemconfirm != b->bot.itemconfirm);
+}
+
 #define ROLLBACK_FEEDKEPT 6
 
 /** What the inputs looked like on the way through a replay.
@@ -2787,74 +2809,68 @@ static int32_t K_RollbackTo(tic_t from, tic_t now, rollbackfeed_t *feed)
 
 	for (t = from + 1; t <= now; t++)
 	{
-		// Which tic this is, first, because the inputs are indexed by it. The
-		// restore rewound gametic along with everything else -- the archive
-		// carries it -- and P_Ticker does not touch it: TryRunTics is what
-		// advances it, and this replays without going through TryRunTics. Left
-		// alone, every replayed world ended up stamped with the tic it started
-		// from, which is what the comparison kept reporting at byte 22 of the
-		// misc block.
+		const ticcmd_t *used;
+
+		// Which tic this is, first, because the inputs are indexed by it and
+		// because the restore rewound gametic along with everything else. The
+		// archive carries it, and nothing inside a tic advances it: TryRunTics
+		// does, and this replays without going through TryRunTics.
 		gametic = t;
 
-		// Through the step the live loop takes, rather than a raw copy out of
-		// netcmds: G_MoveTiccmdsIntoPlayers turns the leveltime stamp a ticcmd
-		// carries into the control lag the simulation reads, and a replay that
-		// skipped it fed the stamp itself -- latency 130 where the live tic had
-		// 2, and a bot's zero never written. Nothing has diverged on it yet,
-		// because both of its readers clamp, but it is an input the simulation
-		// reads.
-		G_MoveTiccmdsIntoPlayers();
+		used = K_InputsAsUsed(t);
 
-		// Is that what the tic really ran on? Compared here, printed later:
-		// CONS_Printf inside this loop would land inside the timing.
+		if (used == NULL)
 		{
-			const ticcmd_t *used = K_InputsAsUsed(t);
+			feed->unknown++;
+		}
+		else
+		{
+			feed->checked++;
 
-			if (used == NULL)
+			// What netcmds would have handed this tic, against what the tic
+			// really ran on. Compared before the truth is written in, because
+			// afterwards there is nothing left to compare.
+			for (i = 0; i < MAXPLAYERS; i++)
 			{
-				feed->unknown++;
+				if (playeringame[i] == false)
+					continue;
+
+				if (K_InputsDiffer(&netcmds[t % BACKUPTICS][i], &used[i]) == false)
+					continue;
+
+				if (feed->disagreed < ROLLBACK_FEEDKEPT)
+				{
+					feed->wrong[feed->disagreed].tic = t;
+					feed->wrong[feed->disagreed].who = i;
+					feed->wrong[feed->disagreed].used = used[i];
+					feed->wrong[feed->disagreed].fed = netcmds[t % BACKUPTICS][i];
+				}
+
+				feed->disagreed++;
 			}
-			else
+
+			// And put the truth where the tic will look for it. netcmds is a
+			// mailbox rather than a record -- D_Clearticcmd empties the flags of
+			// every acknowledged tic -- so a replay that trusted it fed the
+			// simulation an input that looked dropped in transit, and p_user
+			// steers differently when it thinks that. This is also the shape the
+			// real correction takes: write the input that actually arrived, then
+			// run the tic normally.
+			for (i = 0; i < MAXPLAYERS; i++)
 			{
-				feed->checked++;
-
-				for (i = 0; i < MAXPLAYERS; i++)
-				{
-					if (playeringame[i] == false)
-						continue;
-
-					if (memcmp(&players[i].cmd, &used[i], sizeof (ticcmd_t)) == 0)
-						continue;
-
-					if (feed->disagreed < ROLLBACK_FEEDKEPT)
-					{
-						feed->wrong[feed->disagreed].tic = t;
-						feed->wrong[feed->disagreed].who = i;
-						feed->wrong[feed->disagreed].used = used[i];
-						feed->wrong[feed->disagreed].fed = players[i].cmd;
-					}
-
-					feed->disagreed++;
-				}
-
-				// And replay on what really ran. netcmds is not a record of the
-				// past: D_Clearticcmd zeroes the flags of every acknowledged tic,
-				// so a tic replayed out of netcmds arrives with flags 0 --
-				// TICCMD_RECEIVED gone for a person, TICCMD_BOT gone for a bot.
-				// p_user reads the first of those to decide whether this input
-				// was dropped in transit, and takes a different steering branch
-				// when it thinks it was. That is why a played race diverged on
-				// steering and five hundred bot checks never did: the bot branch
-				// is chosen before the flag is ever consulted.
-				for (i = 0; i < MAXPLAYERS; i++)
-				{
-					if (playeringame[i])
-						players[i].cmd = used[i];
-				}
+				if (playeringame[i])
+					netcmds[t % BACKUPTICS][i] = used[i];
 			}
 		}
 
-		P_Ticker(true);
+		// The whole tic, not just the simulation. G_Ticker moves the inputs into
+		// the players, calls P_Ticker itself, and does a list of other things a
+		// tic does -- K_CheckSpectateStatus among them, which is what advances
+		// spectatorReentry. Driving P_Ticker alone meant every one of those was
+		// missed, and they were being found one at a time: gametic, then the
+		// input step, then the laugh track, then spectatorReentry. Four is
+		// enough to stop treating them as separate bugs.
+		G_Ticker(true);
 		ran++;
 	}
 
@@ -3133,28 +3149,6 @@ static int32_t g_maxdepth = ROLLBACK_TICS;
 int32_t K_RollbackMaxDepth(void)
 {
 	return g_maxdepth;
-}
-
-/** True when two inputs say the player pressed different things.
-  *
-  * Not a memcmp. A ticcmd also carries latency and flags, and neither is
-  * something anybody pressed: latency is a transport measurement that G_Ticker
-  * rewrites on arrival, and the flags say how the input travelled, not what it
-  * was. A rollback exists to correct what was *pressed*, so that is what this
-  * compares -- otherwise every single arrival looks like a contradiction and the
-  * detector cries wolf on every tic.
-  */
-static dboolean K_InputsDiffer(const ticcmd_t *a, const ticcmd_t *b)
-{
-	return (a->forwardmove != b->forwardmove
-		|| a->turning != b->turning
-		|| a->angle != b->angle
-		|| a->throwdir != b->throwdir
-		|| a->aiming != b->aiming
-		|| a->buttons != b->buttons
-		|| a->bot.turnconfirm != b->bot.turnconfirm
-		|| a->bot.spindashconfirm != b->bot.spindashconfirm
-		|| a->bot.itemconfirm != b->bot.itemconfirm);
 }
 
 // The detect half of a rollback, counting only. Nothing acts on this yet.
