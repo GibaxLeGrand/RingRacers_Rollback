@@ -523,8 +523,9 @@ late in a long race. That number is the whole budget question.
 
 1. The whip explained, or shown to be presentation and excluded on purpose.
 2. Two more maps and Battle, at 300 checks each, with nothing unexplained.
-3. The restore cost re-measured late in a race, because that is what decides
-   whether a rollback fits in a tic at all.
+3. ~~The restore cost re-measured late in a race~~ -- **done**: 8.6 ms against
+   6.8 early, `P_RelinkPointers` 4.7 of it, and a sixteen-tic replay 31 to 49 ms
+   on top. A deep rollback does not fit in a tic; the cap is the answer.
 
 Not more than that. A soak replays frozen inputs, which is structurally blind to
 everything edge-triggered; a real rollback replaying real inputs is a strictly
@@ -687,7 +688,36 @@ the layout. It reports the window length it matched on and how many records
 matched, because a fingerprint that matches twice names nothing. **Not yet
 measured.**
 
-### The residue, named: `MT_ITEM_DEBRIS` and an unsynchronised die
+### Closed: twelve replays out of twelve, byte for byte
+
+On `ce17cc5`, binary verified by its sha, on a scenario with no restore of its
+own in it: **twelve replays, twelve IDENTICAL, no input differences, clean
+exit.** Depths 1, 4, 8 and 16, carried from `leveltime` 902 out to 3718 -- over a
+hundred seconds into the race, not an opening lap.
+
+| | early in the race | late in the race |
+|---|---|---|
+| snapshot | 152 KiB | 156 to 187 KiB |
+| a replayed tic | 1.85 ms | 1.97 to 3.06 ms |
+| a 16-tic replay | -- | 31 to 49 ms |
+| restore, whole | 6.8 ms | **8.6 ms** |
+| of which `P_RelinkPointers` | 3.5 ms | **4.7 ms** |
+
+So a sixteen-tic rollback late in a race is about **54 ms**, or one and nine
+tenths of a tic. It does not fit, and the depth cap is what answers that -- phase
+6's question, now with numbers that are not opening-lap numbers.
+
+**That is the third of the three things phase 3 was waiting on.** The restore
+cost late in a race is measured, and `P_RelinkPointers` is still more than half
+of it.
+
+The memory comparison still reports fifteen hundred to two thousand field
+differences per check. All of it is interpolation, shadows, and the `rollangle`
+the archive no longer carries -- none of it is in the archive, which is why the
+archive is clean. That is not a failure; it is the restore declining to rebuild
+state the renderer owns.
+
+### How it was closed: `MT_ITEM_DEBRIS` and an unsynchronised die
 
 The locator answered on its first run. Five of six failures placed the first
 differing byte inside a named object, each on a unique 32-byte window:
