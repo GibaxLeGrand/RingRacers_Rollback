@@ -3941,6 +3941,18 @@ void K_RollbackApplyServerState(void)
 
 	g_correctused++;
 
+	// P_MoveOrigin goes through P_CheckPosition, which parks the thing it is
+	// testing in g_tm.thing and leaves it there for the caller. The ticker
+	// brackets its own work with P_MapStart/P_MapEnd, and this runs outside the
+	// ticker -- so it has to bracket itself, or the next legitimate P_MapStart
+	// dies on "g_tm.thing set!". Which is exactly what the first run that
+	// applied a correction did, within seconds of the first one arriving.
+	//
+	// Only around the applying path: the measuring path touches nothing, and the
+	// drift figures already taken with it should stay comparable.
+	if (g_correctapply)
+		P_MapStart();
+
 	for (k = 0; k < g_correctn; k++)
 	{
 		const struct rollbackkart_t *c = &g_correctkart[k];
@@ -3995,6 +4007,9 @@ void K_RollbackApplyServerState(void)
 		p->itemtype = c->itemtype;
 		p->itemamount = c->itemamount;
 	}
+
+	if (g_correctapply)
+		P_MapEnd();
 }
 
 /** Prints a frac count as units with three decimals, into a caller's buffer. */
