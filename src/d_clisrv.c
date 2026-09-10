@@ -122,6 +122,13 @@ tic_t jointimeout = (3*TICRATE);
 static dboolean sendingsavegame[MAXNETNODES]; // Are we sending the savegame?
 static dboolean resendingsavegame[MAXNETNODES]; // Are we resending the savegame?
 static tic_t savegameresendcooldown[MAXNETNODES]; // How long before we can resend again?
+
+// How many full-state resends the light correction channel stood in for.
+// Declared beside the cooldown it shares, and above HandlePacketFromPlayer,
+// which is the function that increments it -- the third time on this branch that
+// a counter has been declared next to the code that prints it instead of the
+// code that uses it first.
+static uint32_t suppressedresends;
 static tic_t freezetimeout[MAXNETNODES]; // Until when can this node freeze the server before getting a timeout?
 
 // Incremented by cv_joindelay when a client joins, decremented each tic.
@@ -5090,6 +5097,7 @@ static void HandlePacketFromAwayNode(int8_t node)
 			break;
 
 		case PT_CLIENTCMD:
+		case PT_STATECORRECTION:
 			break; // This is not an "unknown packet"
 
 		case PT_SERVERTICS:
@@ -5720,6 +5728,33 @@ static void HandlePacketFromPlayer(int8_t node)
 				&& !resendingsavegame[node] && savegameresendcooldown[node] <= I_GetTime()
 				&& !SV_ResendingSavegameToAnyone())
 			{
+				// With the light correction channel on, a checksum mismatch is
+				// not news. This server has been telling that client where every
+				// kart is a few times a second; answering the mismatch with a
+				// 318 KiB file transfer and a visible hitch would be repairing
+				// with a sledgehammer something a 600 byte packet is already
+				// holding together.
+				//
+				// This is the line where compatibility with stock servers is
+				// given up rather than bent, and it is the point of the whole
+				// exercise: a predicting client stutters *because* a stock server
+				// resends here.
+				//
+				// The cooldown is still stamped, so the notice below throttles at
+				// the same five seconds a real resend would have -- which keeps
+				// the count comparable with every measurement taken before today.
+				if (K_RollbackCorrectSuppress())
+				{
+					savegameresendcooldown[node] = I_GetTime() + 5 * TICRATE;
+					suppressedresends++;
+
+					CONS_Printf("rollback_correct: consistency mismatch for "
+						"player %d at tic %u -- resend suppressed, corrections "
+						"are on (%u so far)\n",
+						netconsole + 1, (uint32_t)realstart, suppressedresends);
+					break;
+				}
+
 				// Tell the client we are about to resend them the gamestate
 				netbuffer->packettype = PT_WILLRESENDGAMESTATE;
 				HSendPacket(node, true, 0, 0);
@@ -6011,6 +6046,52 @@ static void HandlePacketFromPlayer(int8_t node)
 							"IRC or Discord so it can be fixed.\n", (int32_t)realstart, (int32_t)realend, (int32_t)neededtic);*/
 			}
 			break;
+		case PT_STATECORRECTION:
+			// Only accept a correction from the server: it is the only machine
+			// entitled to say where anything is.
+			if (node != servernode)
+			{
+				CONS_Alert(CONS_WARNING, M_GetText("%s received from non-host %d\n"), "PT_STATECORRECTION", node);
+				if (server)
+					SendKick(netconsole, KICK_MSG_CON_FAIL);
+				break;
+			}
+
+			if (server)
+				break;   // a listen server hears its own broadcast
+
+			{
+				const statecorrection_pak *in = &netbuffer->u.statecorrection;
+				struct rollbackkart_t karts[MAXPLAYERS];
+				uint8_t n = in->numkarts;
+				uint8_t k;
+
+				if (n > MAXPLAYERS)
+					n = MAXPLAYERS;
+
+				// Copied field by field into the simulation's own shape rather
+				// than cast: the packet is packed and the struct is not, and a
+				// reinterpret would work on this compiler and rot on the next.
+				for (k = 0; k < n; k++)
+				{
+					karts[k].slot = in->kart[k].slot;
+					karts[k].x = in->kart[k].x;
+					karts[k].y = in->kart[k].y;
+					karts[k].z = in->kart[k].z;
+					karts[k].momx = in->kart[k].momx;
+					karts[k].momy = in->kart[k].momy;
+					karts[k].momz = in->kart[k].momz;
+					karts[k].angle = in->kart[k].angle;
+					karts[k].hitlag = in->kart[k].hitlag;
+					karts[k].rings = in->kart[k].rings;
+					karts[k].itemtype = in->kart[k].itemtype;
+					karts[k].itemamount = in->kart[k].itemamount;
+				}
+
+				K_RollbackNoteServerState(in->tic, karts, n);
+			}
+			break;
+
 		case PT_PING:
 			// Only accept PT_PING from the server.
 			if (node != servernode)
@@ -6727,6 +6808,78 @@ static void CL_SendClientCmd(void)
 
 // send the server packet
 // send tic from firstticstosend to maketic-1
+/** Sends every client a light state correction: where the karts actually are.
+  *
+  * The stock alternative is SV_SendSaveGame, which is a 120 to 318 KiB file
+  * transfer, one client at a time, with a five second cooldown and a load that
+  * costs about 11 ms on a machine that is drawing. This is 38 bytes a kart --
+  * 608 for a full grid -- so it can go out every few tics instead of being
+  * rationed, which is the difference between a correction and a repair.
+  *
+  * Sent unreliably on purpose: an acknowledgement and a retransmit are worth
+  * nothing here, because the next correction is a few tics behind this one and
+  * says something more recent. A dropped correction costs nothing; a delayed
+  * one is worse than no correction at all.
+  */
+static void SV_SendStateCorrection(void)
+{
+	int32_t i;
+	uint8_t n = 0;
+	size_t size;
+
+	netbuffer->packettype = PT_STATECORRECTION;
+	netbuffer->u.statecorrection.tic = (uint32_t)gametic;
+	netbuffer->u.statecorrection.reserved = 0;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		statekart_pak *k;
+
+		if (playeringame[i] == false || players[i].mo == NULL)
+			continue;
+
+		k = &netbuffer->u.statecorrection.kart[n++];
+
+		k->slot = (uint8_t)i;
+		k->flags = 0;
+
+		k->x = players[i].mo->x;
+		k->y = players[i].mo->y;
+		k->z = players[i].mo->z;
+
+		k->momx = players[i].mo->momx;
+		k->momy = players[i].mo->momy;
+		k->momz = players[i].mo->momz;
+
+		k->angle = players[i].mo->angle;
+		k->hitlag = players[i].mo->hitlag;
+
+		k->rings = players[i].rings;
+		k->itemtype = players[i].itemtype;
+		k->itemamount = players[i].itemamount;
+	}
+
+	netbuffer->u.statecorrection.numkarts = n;
+
+	// The karts array is last in the packed struct, so an unused tail can just
+	// be left off the wire. A two-kart correction is 82 bytes, not 614.
+	size = sizeof (statecorrection_pak)
+		- ((MAXPLAYERS - (size_t)n) * sizeof (statekart_pak));
+
+	for (i = 0; i < MAXNETNODES; i++)
+	{
+		if (nodeingame[i] == false || i == 0)
+			continue;
+
+		// A client that is in the middle of receiving a whole savegame is about
+		// to have everything overwritten anyway.
+		if (resendingsavegame[i] || sendingsavegame[i])
+			continue;
+
+		HSendPacket(i, false, 0, size);
+	}
+}
+
 static void SV_SendTics(void)
 {
 	tic_t realfirsttic, lasttictosend, i;
@@ -6983,6 +7136,14 @@ dboolean TryRunTics(tic_t realtics)
 	}
 
 	GetPackets();
+
+	// A correction has to be measured and applied against the *confirmed* world,
+	// which exists exactly here: the speculation was undone above, GetPackets has
+	// just read whatever the server sent, and the authoritative loop below has
+	// not run yet. Anywhere earlier and the karts being compared are speculated;
+	// anywhere later and they have already moved on.
+	if (client && gamestate == GS_LEVEL)
+		K_RollbackApplyServerState();
 
 #ifdef DEBUGFILE
 	if (debugfile && (realtics || neededtic > gametic))
@@ -7834,6 +7995,16 @@ void NetUpdate(void)
 				D_Clearticcmd(tictoclear);                    // Clear the maketic the new tic
 
 			SV_SendTics();
+
+			// And, if this server has been asked for them, a light correction on
+			// top of the inputs. After the tics rather than before, so a client
+			// that reads both in one pass measures the correction against a world
+			// it has already advanced with those inputs.
+			if (K_RollbackCorrectRate() > 0 && gamestate == GS_LEVEL
+				&& (gametic % (tic_t)K_RollbackCorrectRate()) == 0)
+			{
+				SV_SendStateCorrection();
+			}
 
 			neededtic = maketic; // The server is a client too
 		}

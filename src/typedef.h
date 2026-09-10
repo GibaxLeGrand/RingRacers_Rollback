@@ -73,6 +73,8 @@ TYPEDEF (serverinfo_pak);
 TYPEDEF (serverrefuse_pak);
 TYPEDEF (askinfo_pak);
 TYPEDEF (msaskinfo_pak);
+TYPEDEF (statekart_pak);
+TYPEDEF (statecorrection_pak);
 TYPEDEF (plrinfo);
 TYPEDEF (filesneededconfig_pak);
 TYPEDEF (doomdata_t);

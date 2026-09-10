@@ -106,6 +106,10 @@ typedef enum
 	PT_CLIENT4MIS,
 	PT_BASICKEEPALIVE,// Keep the network alive during wipes, as tics aren't advanced and NetUpdate isn't called
 
+	PT_STATECORRECTION, // Server, to a client: where the karts actually are.
+	                    // Breaks compatibility with stock servers by existing,
+	                    // which is deliberate -- see statecorrection_pak.
+
 	PT_CANFAIL,       // This is kind of a priority. Anything bigger than CANFAIL
 	                  // allows HSendPacket(*, true, *, *) to return false.
 	                  // In addition, this packet can't occupy all the available slots.
@@ -447,6 +451,49 @@ struct voice_pak
 #define VOICE_PAK_FLAGS_RESERVED1_BIT 0x80
 #define VOICE_PAK_FLAGS_RESERVED_BITS (VOICE_PAK_FLAGS_RESERVED0_BIT | VOICE_PAK_FLAGS_RESERVED1_BIT)
 
+// One kart's kinematics, as the authoritative server had them on a tic it has
+// confirmed. Thirty-eight bytes.
+struct statekart_pak
+{
+	uint8_t slot;      // player number, so a partial list is still readable
+	uint8_t flags;     // reserved; zero for now
+	int32_t x, y, z;   // fixed_t
+	int32_t momx, momy, momz;
+	uint32_t angle;    // angle_t
+	int32_t hitlag;
+	int16_t rings;
+	int8_t itemtype;
+	uint8_t itemamount;
+} ATTRPACK;
+
+// The light correction channel.
+//
+// Stock Ring Racers has exactly one way to correct a client: send it the whole
+// savegame as a file transfer -- 120 KiB at the start of a race and 318 KiB
+// three minutes in -- one client at a time, with a five second cooldown, and a
+// load that costs about 11 ms on a machine that is drawing. That is a repair,
+// not a correction, and a predicting client needs the opposite: something small
+// enough to send constantly.
+//
+// Sixteen karts of statekart_pak is 608 bytes against 318 KiB. A factor of five
+// hundred is what makes a correction every few tics affordable at all: at one
+// every four tics that is under 6 KB/s a client, where the same cadence with
+// whole snapshots would be 2.8 MB/s. The arithmetic is why this packet carries
+// kinematics and not a state dump.
+//
+// It is also the best instrument this branch has had for the drift it is
+// chasing. Every correction is a measurement of the gap between one client and
+// the server, on a named tic, for every kart -- continuously, instead of only
+// when the consistency checksum trips and the resend cooldown allows it. So the
+// receiving side measures whether or not it applies anything.
+struct statecorrection_pak
+{
+	uint32_t tic;       // the confirmed tic these describe
+	uint8_t numkarts;
+	uint8_t reserved;
+	statekart_pak kart[MAXPLAYERS];
+} ATTRPACK;
+
 //
 // Network packet data
 //
@@ -488,6 +535,7 @@ struct doomdata_t
 		say_pak say;							// I don't care anymore.
 		reqmapqueue_pak reqmapqueue;			// Formerly XD_REQMAPQUEUE
 		voice_pak voice;                        // Unreliable voice data, variable length
+		statecorrection_pak statecorrection;    //         614 bytes
 	} u; // This is needed to pack diff packet types data together
 } ATTRPACK;
 

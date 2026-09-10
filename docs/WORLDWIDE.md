@@ -37,7 +37,7 @@ loses that, and it is not recoverable cheaply.**
 | correct the client when the server disagrees | this is where it stands open -- see section 2 | **partly** |
 | interpolation to smooth the correction | frame interpolation already exists stock (`r_fps.h`, `R_InterpolateMobjState`); correction smoothing was written on this branch and is **unmeasured** | **exists, unproven** |
 | the client should be able to add delay to *its own* simulation, GGPO-style | does not exist. `cv_mindelay` sends `wantdelay` to the *server* -- the opposite knob | **missing, and cheap to add** |
-| the server should broadcast state every N tics ("Server Time Step") | does not exist, and cannot exist in the form described -- see section 5 | **priced, and refused as stated** |
+| the server should broadcast state every N tics ("Server Time Step") | **built** on 2026-09-10, in the form the arithmetic allows: kinematics per kart, not a state dump -- see sections 5 and 8 | **done, unmeasured** |
 | correct only some players, not the whole world | the archive is whole-world and all-or-nothing -- see section 3 | **missing; it is the main cost lever** |
 
 ## 2. Audit: what stock Ring Racers can already resynchronise
@@ -203,6 +203,14 @@ snapshot ring is a state stream with a one-machine wire.** Every correction it
 makes costs no bandwidth at all. Predicting less (section 3) makes it cheaper
 still.
 
+⚠ **Superseded the same day.** Gibax gave up stock-server compatibility
+explicitly and asked for lighter states, so the middle of that table got built
+rather than argued about: **kinematics per kart instead of a state dump.** What
+was refused above is a *snapshot* every N tics; what exists now is 38 bytes a
+kart. Section 8 has the layout and the numbers. Per-entity deltas and relevance
+-- the parts that would let a server stream the *world* rather than the karts --
+are still a project and still unbuilt.
+
 ## 6. What this reading changes about the desync
 
 The open statement is: *a speculated tic modifies state the archive does not
@@ -309,3 +317,108 @@ three of them and adds one.
 And one thing the pricing removes from the plan: **the wire change stays
 unspent.** State streaming is costed in section 5; the trigger for reopening it is
 Phase D reporting that remote karts look wrong on screen no matter the smoothing.
+
+---
+
+## 8. The driven bot race, and the light correction channel
+
+Two things happened on 2026-09-10 after the sections above were written.
+
+### 8.1 The discriminator answered, and it closed a category
+
+`playtest.sh botdesync`, unchanged from the unattended run so the two are
+comparable, with a person driving. Nine resyncs. The blame lines from both ends,
+diffed per kart on each refused tic:
+
+- **The driven human diverges on eight of the nine refusals**, by up to 330
+  units. So **"bots" was never the category.**
+- **The parked host is byte-identical on all nine**, every kart, every tic.
+
+That is the reading section 6 predicted: *a general divergence, visible only on
+what is moving.* The earlier conclusion was an artefact of two stationary karts,
+and the same shape as the undriven race that once looked like a fix.
+
+### 8.2 Three things that fall out of the same nine lines
+
+**The refusals are cooldown-limited, not periodic.** Tics 1897, 2086, 2276,
+2466, 2654, 2843, 3042, 3231, 3421 -- spacings of 189, 190, 190, 188, 189, 199,
+189, 190. `savegameresendcooldown` is `I_GetTime() + 5 * TICRATE`, which is 175
+tics plus a round trip. **So the client is diverging continuously and nine is a
+floor, not a count.** Every resync figure in this journal is a measurement of
+the cooldown as much as of the bug.
+
+**The causal order is now fixed, and the RNG is downstream.** On the first
+refusal the differences are **sub-unit** -- 0.007, 0.013 and 0.034 units -- and
+`rngsum` is *identical*. Only later does `rngsum` diverge. Given section 4, that
+is exactly the expected chain: positions drift, a roulette's draw count depends
+on the kart's distance, so the shared seed follows the positions apart. **The
+RNG was never a cause and can be struck off for good.**
+
+**Cost, incidentally: 9.5 ms a pass at nine karts with somebody driving** --
+33% of a tic, already past Phase B's 30% line at nine of sixteen.
+
+### 8.3 The archive gap, enumerated at field level
+
+`mobj_t` has 122 fields and **17 are never named in `p_saveg.cpp`**; `player_t`
+has 352 and **6 are never named**. And the oracle that has said "byte-identical"
+twelve times out of twelve is **structurally blind to every one of them**: it
+compares archives, and these fields are not in an archive. That is why five
+instruments came back clean.
+
+Sorted, they are interpolation origins (`old_z`, `old_x2`, `old_scale`, ...),
+rebuilt links (`touching_sectorlist`, `tid_next`), camera (`bob`,
+`deltaviewheight`, `cameraOffset`, `fovadd`) and `karthud` -- whose 199 gameplay
+references turn out to be sound and camera on inspection. Two are real defects
+even so:
+
+- **`old_z` is never restored.** The load does `mobj->x = mobj->old_x = ...` for
+  x, y, angle, pitch and roll (`p_saveg.cpp:5205`) and nothing at all for
+  `old_z`. `K_PuntHazard` reads `z - old_z` as a motion vector
+  (`k_collide.cpp:1402`) -- bounded, because it takes the max with momentum, so
+  it is not the drift, but it is wrong.
+- **`K_HandleLapIncrement` reads `old_x`/`old_y` as simulation** for the
+  false-start penalty (`p_spec.c:1981`), and after a restore those hold the
+  current position rather than the previous one.
+
+Neither explains a continuous sub-unit drift on every moving kart. **The hunt is
+still open, and the next instrument is in 8.4 rather than in another field
+comparison.**
+
+### 8.4 The light correction channel, as built
+
+`PT_STATECORRECTION`, server to client, unreliable, sent every N tics:
+
+| | |
+|---|---|
+| per kart | 38 bytes: x/y/z, momx/momy/momz, angle, hitlag, rings, itemtype, itemamount |
+| full grid | **608 bytes**, against **318 KiB** for a snapshot -- a factor of 500 |
+| at one every four tics | under **6 KB/s** a client, where snapshots would be 2.8 MB/s |
+| applied | on the *confirmed* world, right after `GetPackets()` in `TryRunTics`: the speculation is undone, the packet is read, the authoritative loop has not run |
+| moved with | `P_MoveOrigin`, which keeps the interpolation origin, so a kart slides to where the server says instead of appearing there |
+
+**And it is the best instrument this branch has had for the drift.** Every
+correction measures the gap between one client's confirmed world and the
+server's, on a named tic, for every kart, *continuously* -- where the checksum
+could only ever say "these differ", once per cooldown.
+
+So measurement and correction are separate knobs, and measurement is the
+default:
+
+- `rollback_correct N 0` on the server -- **the control.** Corrections are sent
+  and measured; the server still resends the full state on a mismatch, so the
+  resync count stays comparable with everything measured before today.
+- `rollback_correct N` -- **the change.** Corrections stand in for the resend.
+  This is the line where stock-server compatibility is given up, and the point
+  of the exercise: a predicting client stutters *because* a stock server resends
+  here.
+- `rollback_drift` on the client -- prints mean and worst error in fractions of
+  a unit. `rollback_drift 1` also applies them.
+
+Scenarios: `playtest.sh drift` (control) and `playtest.sh correct` (change),
+both six bots on `RR_SkyscraperLeaps` so they can run driven or unattended.
+
+**Unmeasured, and what to look for.** Whether the drift curve is flat or
+diverging decides everything after it: flat means corrections alone make this
+shippable and the remaining bug is cosmetic; diverging means a correction every
+four tics is fighting a leak and the leak still has to be found. Either way the
+number replaces nine years of resync counts with a distance in units.

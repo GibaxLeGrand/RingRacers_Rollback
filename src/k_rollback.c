@@ -2785,6 +2785,34 @@ static dboolean g_nullspec;
 // that works are indistinguishable from the outside.
 static uint32_t g_suppressedxcmds;
 
+// The light correction channel, receiving side.
+//
+// What this measures is the thing this branch has never been able to see: the
+// gap between one client's confirmed world and the server's, on a named tic,
+// for every kart, continuously. The consistency checksum only ever said "these
+// differ" -- once per five seconds at best, because the resend it triggers has
+// a cooldown, so nine refusals in a race is a floor and not a count.
+//
+// Measurement is separated from correction on purpose, and measurement is the
+// default. A run that moves the karts changes the thing being measured, and
+// this project has already read one confounded number as a fix.
+static int32_t g_correctrate;       // tics between sends; 0 = off (server side)
+static dboolean g_correctsuppress;  // and whether they replace the full resend
+static dboolean g_correctapply;     // move the karts, or only measure them
+static dboolean g_correctpending;
+static uint32_t g_correcttic;
+static uint8_t g_correctn;
+static struct rollbackkart_t g_correctkart[MAXPLAYERS];
+
+static uint32_t g_corrections;      // corrections received
+static uint32_t g_correctlate;      // ... that named a tic already behind us
+static uint32_t g_driftsamples;     // kart-corrections measured
+static uint64_t g_driftsum;         // total position error, in 1/65536 units
+static uint64_t g_driftmax;
+static int32_t g_driftworst = -1;
+static uint32_t g_driftmoved;       // karts actually put back
+static uint32_t g_driftrefused;     // ... and karts the move refused to place
+
 
 /** True while a correction is re-running tics that have already been played.
   *
@@ -3829,6 +3857,223 @@ static void Command_RollbackNullSpec_f(void)
 			: "off -- the speculation runs as usual"));
 }
 
+int32_t K_RollbackCorrectRate(void)
+{
+	return g_correctrate;
+}
+
+dboolean K_RollbackCorrectSuppress(void)
+{
+	return (g_correctrate > 0 && g_correctsuppress);
+}
+
+void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
+	uint8_t n)
+{
+	if (n > MAXPLAYERS)
+		n = MAXPLAYERS;
+
+	// Newest wins. An older correction that overtook a newer one describes a
+	// world this client has already left, and applying it would move the karts
+	// backwards -- which is the one thing a correction must never do.
+	if (g_correctpending && g_correcttic > tic)
+		return;
+
+	g_correcttic = tic;
+	g_correctn = n;
+	memcpy(g_correctkart, karts, n * sizeof (struct rollbackkart_t));
+	g_correctpending = true;
+	g_corrections++;
+}
+
+/** The distance between two fixed-point coordinates, in 1/65536 of a unit.
+  *
+  * Kept in fracunits rather than units because the first divergence measured on
+  * this branch was seven thousandths of a unit, and a figure rounded to units
+  * reports that as zero. In 64 bits so a difference of two coordinates at
+  * opposite ends of a big map cannot wrap.
+  */
+static uint64_t K_FracError(int32_t a, int32_t b)
+{
+	const int64_t d = (int64_t)a - (int64_t)b;
+
+	return (uint64_t)((d < 0) ? -d : d);
+}
+
+void K_RollbackApplyServerState(void)
+{
+	uint8_t k;
+
+	if (g_correctpending == false)
+		return;
+
+	g_correctpending = false;
+
+	if (gamestate != GS_LEVEL)
+		return;
+
+	// A correction for a tic this client has already run past is still a
+	// measurement -- the karts have moved on since, so the number is an upper
+	// bound rather than the error at that tic. Counted so a run can say how
+	// often that happened instead of quietly mixing the two.
+	if (g_correcttic != (uint32_t)gametic)
+		g_correctlate++;
+
+	for (k = 0; k < g_correctn; k++)
+	{
+		const struct rollbackkart_t *c = &g_correctkart[k];
+		player_t *p;
+		uint64_t err;
+
+		if (c->slot >= MAXPLAYERS || playeringame[c->slot] == false)
+			continue;
+
+		p = &players[c->slot];
+
+		if (p->mo == NULL || P_MobjWasRemoved(p->mo))
+			continue;
+
+		err = K_FracError(p->mo->x, c->x)
+			+ K_FracError(p->mo->y, c->y)
+			+ K_FracError(p->mo->z, c->z);
+
+		g_driftsamples++;
+		g_driftsum += err;
+
+		if (err > g_driftmax)
+		{
+			g_driftmax = err;
+			g_driftworst = (int32_t)c->slot;
+		}
+
+		if (g_correctapply == false)
+			continue;
+
+		// P_MoveOrigin rather than P_SetOrigin: it keeps the interpolation
+		// origin, so the kart is drawn sliding to where the server says rather
+		// than appearing there. It can also refuse, when the destination is
+		// blocked -- and a correction that shoves a kart into geometry is worse
+		// than one that is a tic late, so the refusal is counted, not forced.
+		if (P_MoveOrigin(p->mo, c->x, c->y, c->z) == false)
+		{
+			g_driftrefused++;
+		}
+		else
+		{
+			g_driftmoved++;
+		}
+
+		p->mo->momx = c->momx;
+		p->mo->momy = c->momy;
+		p->mo->momz = c->momz;
+		p->mo->angle = c->angle;
+		p->mo->hitlag = c->hitlag;
+
+		p->rings = c->rings;
+		p->itemtype = c->itemtype;
+		p->itemamount = c->itemamount;
+	}
+}
+
+/** Prints a frac count as units with three decimals, into a caller's buffer. */
+static const char *K_DescribeFrac(uint64_t frac, char *buf, size_t len)
+{
+	snprintf(buf, len, "%u.%03u units",
+		(uint32_t)(frac / FRACUNIT),
+		(uint32_t)(((frac % FRACUNIT) * 1000) / FRACUNIT));
+
+	return buf;
+}
+
+/** Console command: rollback_correct [tics]
+  *
+  * Server side. Asks the server to send every client a light state correction
+  * every N tics. Zero turns it off, which is stock behaviour: the only
+  * correction is then the full-state resend.
+  */
+static void Command_RollbackCorrect_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		const int32_t want = atoi(COM_Argv(1));
+
+		g_correctrate = (want > 0) ? want : 0;
+
+		// Whether corrections *replace* the full-state resend or merely run
+		// beside it. Two separate questions, and this branch has repeatedly
+		// answered one of them with a run that changed both.
+		//
+		//   rollback_correct N 0 -- send them, keep resending too. The control:
+		//                           the resync count stays comparable with every
+		//                           measurement taken before the channel existed.
+		//   rollback_correct N   -- send them instead of resending. The change.
+		g_correctsuppress = (COM_Argc() > 2) ? (atoi(COM_Argv(2)) != 0) : true;
+	}
+
+	if (g_correctrate > 0)
+	{
+		CONS_Printf("rollback_correct: sending a light correction every %d tics "
+			"(%d a second), and %s\n", g_correctrate, TICRATE / g_correctrate,
+			(g_correctsuppress
+				? "NOT resending the full state on a mismatch"
+				: "still resending the full state on a mismatch"));
+	}
+	else
+	{
+		CONS_Printf("rollback_correct: off -- the only correction is the stock "
+			"full-state resend\n");
+	}
+}
+
+/** Console command: rollback_drift [0/1]
+  *
+  * Client side. Reports how far this client's confirmed world was from the
+  * server's, as measured by every correction that arrived. The argument decides
+  * whether the corrections are also applied; off by default, because measuring
+  * and correcting in the same run gives a number about neither.
+  */
+static void Command_RollbackDrift_f(void)
+{
+	char a[64], b[64];
+
+	if (COM_Argc() > 1)
+	{
+		g_correctapply = (atoi(COM_Argv(1)) != 0);
+
+		g_corrections = g_correctlate = g_driftsamples = 0;
+		g_driftsum = g_driftmax = 0;
+		g_driftworst = -1;
+		g_driftmoved = g_driftrefused = 0;
+	}
+
+	CONS_Printf("rollback_drift: %s\n",
+		(g_correctapply
+			? "applying -- karts are moved to where the server says"
+			: "measuring only -- nothing is moved"));
+
+	CONS_Printf("rollback_drift: %u corrections received, %u of them for a tic "
+		"already behind us, %u kart samples\n",
+		g_corrections, g_correctlate, g_driftsamples);
+
+	if (g_driftsamples == 0)
+	{
+		CONS_Printf("rollback_drift: nothing measured -- is rollback_correct on "
+			"at the server?\n");
+		return;
+	}
+
+	CONS_Printf("rollback_drift: mean %s, worst %s on p%d\n",
+		K_DescribeFrac(g_driftsum / g_driftsamples, a, sizeof a),
+		K_DescribeFrac(g_driftmax, b, sizeof b),
+		g_driftworst);
+
+	if (g_correctapply)
+	{
+		CONS_Printf("rollback_drift: %u karts put back, %u refused because the "
+			"destination was blocked\n", g_driftmoved, g_driftrefused);
+	}
+}
+
 /** Console command: rollback_twoclock [tics]
   *
   * The pivot, behind its own switch and off by default. Mutually exclusive with
@@ -4374,4 +4619,6 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
 	COM_AddDebugCommand("rollback_blame", Command_RollbackBlame_f);
+	COM_AddDebugCommand("rollback_correct", Command_RollbackCorrect_f);
+	COM_AddDebugCommand("rollback_drift", Command_RollbackDrift_f);
 }

@@ -61,6 +61,43 @@ void K_RollbackNotePass(int32_t predicted);
 /** True when the loop may run only one predicted tic per pass of TryRunTics. */
 dboolean K_RollbackPacing(void);
 
+/** One kart's kinematics as the server had them, in the shape the simulation
+  * side takes. The wire format is statekart_pak in d_clisrv.h; this exists so
+  * that k_rollback.h does not have to know what a packet is. Plain integers
+  * rather than fixed_t and angle_t for the same reason. */
+struct rollbackkart_t
+{
+	uint8_t slot;
+	int32_t x, y, z;
+	int32_t momx, momy, momz;
+	uint32_t angle;
+	int32_t hitlag;
+	int16_t rings;
+	int8_t itemtype;
+	uint8_t itemamount;
+};
+
+/** How many tics apart the server should send light state corrections. Zero --
+  * the default -- means never, and the only correction available is the stock
+  * full-state resend. Server side only; a client applies whatever arrives. */
+int32_t K_RollbackCorrectRate(void);
+
+/** True when a light correction should stand in for the stock full-state resend
+  * rather than run beside it. False keeps stock behaviour, which is the control
+  * a drift measurement needs. */
+dboolean K_RollbackCorrectSuppress(void);
+
+/** Files a correction that arrived from the server. Only stores it: the world
+  * it has to be applied to is the confirmed one, which does not exist yet at
+  * the moment a packet is read. */
+void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
+	uint8_t n);
+
+/** Measures the stored correction against this client's confirmed world, and
+  * applies it when asked to. Called from the tic loop once the confirmed world
+  * is back and before it is advanced. Does nothing when none is pending. */
+void K_RollbackApplyServerState(void);
+
 /** How many tics the speculation runs ahead of the confirmed world. Zero when
   * the two-clock mode is off, which is the default. */
 int32_t K_RollbackTwoClock(void);
