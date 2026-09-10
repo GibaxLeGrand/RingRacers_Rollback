@@ -417,8 +417,90 @@ default:
 Scenarios: `playtest.sh drift` (control) and `playtest.sh correct` (change),
 both six bots on `RR_SkyscraperLeaps` so they can run driven or unattended.
 
-**Unmeasured, and what to look for.** Whether the drift curve is flat or
-diverging decides everything after it: flat means corrections alone make this
-shippable and the remaining bug is cosmetic; diverging means a correction every
-four tics is fighting a leak and the leak still has to be found. Either way the
-number replaces nine years of resync counts with a distance in units.
+### 8.5 First numbers off the channel
+
+**The control** -- `playtest.sh drift`, six bots, nobody driving, full-state
+resends still enabled:
+
+```
+295 corrections, 295 measured on the tic they name, 0 stepped over, 2655 samples
+    mean 0.157 units, worst 13.368 on p8
+420 corrections, 420 measured, 0 stepped over, 3780 samples
+    mean 0.110 units, worst 13.368 on p8
+544 corrections, 544 measured, 0 stepped over, 4896 samples
+    mean 0.085 units, worst 13.368 on p8
+```
+
+Three things, in order of what they are worth.
+
+**The sample rate is perfect: 544 of 544 measured on the tic they name, none
+stepped over.** That was the risk in holding a correction until the confirmed
+clock reaches its tic -- a loop that runs two tics in one pass could step over
+it. It never does. So this is **4896 kart samples** rather than a count of
+resyncs.
+
+**The drift is tiny: 0.085 units mean, on a kart forty units wide.** And the
+blame lines from the driven race put the first divergence at 0.007 to 0.034
+units. **Two instruments agree on the order of magnitude** -- the first time in
+this project that two measurements have corroborated each other rather than
+contradicting.
+
+⚠ **And it is not yet evidence of anything.** The control keeps the resends by
+design, four of them fired, and every one resets the divergence to zero. So this
+measures *drift between resyncs*, and a falling mean may be the resyncs doing
+their job. The run that answers it is the one with them suppressed.
+
+**What to look for there.** Flat means corrections alone make this shippable and
+the residual bug is cosmetic. Diverging means a correction every four tics is
+fighting a leak, and the leak still has to be found. Either way the number
+replaces a resync count with a distance in units.
+
+### 8.6 The change, measured: the stutter becomes a quarter of a unit
+
+`playtest.sh correct` -- same six bots, nobody driving, resends **suppressed**
+and corrections **applied**:
+
+```
+resyncs: 0          full-state resends suppressed by the server: 9
+125 corrections, 125 measured on their tic, 1125 samples
+    mean 0.082 units, worst 4.290 on p1,  1125 karts put back, 0 refused
+250 corrections, 2250 samples
+    mean 0.242 units, worst 36.257 on p6, 2250 karts put back, 0 refused
+375 corrections, 3375 samples
+    mean 0.252 units, worst 36.257 on p6, 3375 karts put back, 0 refused
+```
+
+**Zero `Game state reloaded` for a whole race**, against four in the control and
+nine in the driven race. The server still disagreed with the client nine times
+-- the checksum compares exact positions, and a quarter of a unit fails it every
+time -- and nine times it sent 600 bytes instead of 318 KiB.
+
+**The drift does not run away.** 0.082, then 0.242, then 0.252: it rises once the
+resyncs stop resetting it, then flattens. The worst single sample spiked to 36
+units and never went past it. A kart is forty units wide, so the steady state is
+a quarter of a unit invisible and the worst case is under one kart length, once.
+**Every correction landed: 3375 karts put back, none refused for a blocked
+destination.**
+
+**What this is, stated precisely.** The desync is *not* fixed -- client and
+server still diverge, continuously, by about 0.25 units per four tics. What has
+changed is the consequence: **a 318 KiB file transfer and a visible hitch became
+a sub-unit position error.** That is a palliative, and a very effective one.
+
+⚠ **What it does not do is satisfy Phase A.** Phase A asks for zero resyncs over
+five unattended races and two driven, and it means *no divergence*, not
+*divergence absorbed*. This gives zero on one unattended race by suppressing the
+resend. So Phase A changes purpose rather than closing: it stops being what
+blocks the alpha -- the channel unblocks that -- and becomes the thing that
+lowers the correction rate and the residual. **The leak is still unfound.**
+
+⚠ **And n = 1, unattended.** The race that produced nine resyncs and 330-unit
+gaps was *driven*. This one was not. The driven repeat is the first thing to do.
+
+⚠ **One crash worth keeping written down**, because the shape recurs: the first
+run that *applied* a correction died on `P_MapStart: g_tm.thing set!` within
+seconds. `P_MoveOrigin` goes through `P_CheckPosition`, which parks the thing it
+is testing in `g_tm.thing` and leaves it for the caller to clear; the ticker
+brackets its own work with `P_MapStart`/`P_MapEnd`, and anything that moves a
+mobj from outside the ticker has to bracket itself. **Any future code that
+corrects the world outside `P_Ticker` needs the same bracket.**

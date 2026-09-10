@@ -33,6 +33,28 @@ state the archive does not carry, and that state reaches a bot's simulation.*
 > next step, give Phase B a second reason, add an item-prediction policy to
 > Phase C, and add a client-local delay knob. Read that file first.
 
+> **Revised again 2026-09-10, evening.** The light correction channel is built
+> and measured (`WORLDWIDE.md` sections 8.4 to 8.6): a race ran with **zero
+> full-state resends** and a residual position error of **0.25 units**. That
+> changes the order below. **Phase A no longer blocks the alpha** -- the channel
+> absorbs the divergence -- so it stops being the gate and becomes an
+> optimisation: every unit of residual drift it removes lets the correction rate
+> come down. What blocks the alpha now is Phase B, the cost at a full grid, which
+> the channel does not help with at all.
+>
+> **The next four things, in order:**
+>
+> 1. **Repeat `playtest.sh correct` driven.** One command, one race. The run that
+>    produced nine resyncs and 330-unit gaps had a person in it; the clean one did
+>    not. Until that is repeated driven, nothing above is proven.
+> 2. **Four more unattended repeats.** Every number in this project has been
+>    n=1 once, and one of those was read as a fix when it was an artefact.
+> 3. **Find the correction rate that is actually needed.** `rollback_correct 8`,
+>    `16`, `35`. At 0.25 units of residual per four tics, one every four tics is
+>    probably far more than necessary, and each halving is free bandwidth.
+> 4. **Then Phase B**, which is now the gate: 9.5 ms a pass at nine karts is
+>    already 33% of a tic, and a grid is sixteen.
+
 ## Phase A -- Close the desync
 
 **Blocks everything.** A full state resend every fifteen seconds makes every other
