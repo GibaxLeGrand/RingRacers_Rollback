@@ -12375,8 +12375,21 @@ void P_RemoveSavegameMobj(mobj_t *mobj)
 		P_DeleteMobjStringArgs(mobj);
 	}
 
-	// stop any playing sound
-	S_StopSound(mobj);
+	// stop any playing sound -- unless this is a rollback putting back a world
+	// this machine already had.
+	//
+	// Gibax reported the sound cutting out constantly, and the mechanism is
+	// arithmetic rather than subtle: the two-clock loop restores the confirmed
+	// world once per pass of TryRunTics, the restore purges every mobj through
+	// this function, and this line then stops every sound attached to every
+	// object -- about thirty-five times a second. Engine notes, item loops,
+	// everything. The object is recreated identically two hundred lines below,
+	// so the sound should simply carry on.
+	//
+	// A restore from the server is different and keeps the old behaviour: there
+	// the world really did change underneath the sound.
+	if (P_LocalRestoreInProgress() == false)
+		S_StopSound(mobj);
 
 	R_RemoveMobjInterpolator(mobj);
 

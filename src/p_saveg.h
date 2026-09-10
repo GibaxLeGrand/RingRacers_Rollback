@@ -43,6 +43,12 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local);
 // took itself, so decoration local to the machine can be left in place.
 dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local);
 
+// True while a rollback is putting back a state this machine took itself, as
+// opposed to a gamestate arriving from the server. Anything that is a property
+// of this machine rather than of the world -- a sound in flight, precipitation,
+// an interpolation origin -- should be left alone when this is true.
+dboolean P_LocalRestoreInProgress(void);
+
 // Names the archive block that a byte offset of a P_SaveNetGame buffer falls
 // in. Diagnostic aid for comparing two snapshots of the same state.
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset);

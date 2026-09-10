@@ -4673,7 +4673,8 @@ static void P_RestoreChainOrder(void)
   * Only meaningful straight after a P_SaveNetGame, whose numbering pass the
   * record depends on.
   *
-  * eturn bytes written, or 0 if the buffer could not hold the record.
+  * 
+eturn bytes written, or 0 if the buffer could not hold the record.
   */
 size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj)
 {
@@ -8232,6 +8233,11 @@ badloadgame:
 	return false;
 }
 
+dboolean P_LocalRestoreInProgress(void)
+{
+	return localrestore;
+}
+
 dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 {
 	TracyCZone(__zone, true);
@@ -8442,7 +8448,8 @@ size_t P_SaveBufferRemaining(const savebuffer_t *save)
   * Only meaningful for the archive that was written last, since it is that
   * one's layout being described.
   *
-  * eturn false if the offset is not inside any player's record.
+  * 
+eturn false if the offset is not inside any player's record.
   */
 dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into)
 {
@@ -8485,7 +8492,8 @@ dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into)
   * back out of the record rather than assumed -- Eggrobo takes eight bytes and
   * Tails takes six, and every field after them moves with it.
   *
-  * eturn the field's name, or NULL if the offset is past the named part.
+  * 
+eturn the field's name, or NULL if the offset is past the named part.
   */
 const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t player, size_t into)
 {
