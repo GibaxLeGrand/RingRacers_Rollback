@@ -824,7 +824,16 @@ static const char *packettypename[NUMPACKETTYPE] =
 
 	"CHALLENGEALL",
 	"RESPONSEALL",
-	"RESULTSALL"
+	"RESULTSALL",
+
+	// The three below were missing, so every DEBFILE that printed the name of a
+	// PT_SAY, a PT_REQMAPQUEUE or a PT_VOICE was dereferencing a null pointer in
+	// the tail of this array. Found while adding the fourth.
+	"SAY",
+	"REQMAPQUEUE",
+	"VOICE",
+
+	"STATECORRECTION"
 };
 
 static void DebugPrintpacket(const char *header)

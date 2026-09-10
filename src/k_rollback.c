@@ -2805,7 +2805,8 @@ static uint8_t g_correctn;
 static struct rollbackkart_t g_correctkart[MAXPLAYERS];
 
 static uint32_t g_corrections;      // corrections received
-static uint32_t g_correctlate;      // ... that named a tic already behind us
+static uint32_t g_correctused;      // ... measured against the tic they name
+static uint32_t g_correctmissed;    // ... dropped because the loop stepped over it
 static uint32_t g_driftsamples;     // kart-corrections measured
 static uint64_t g_driftsum;         // total position error, in 1/65536 units
 static uint64_t g_driftmax;
@@ -3907,17 +3908,38 @@ void K_RollbackApplyServerState(void)
 	if (g_correctpending == false)
 		return;
 
+	if (gamestate != GS_LEVEL)
+	{
+		g_correctpending = false;
+		return;
+	}
+
+	// A correction names the tic the *server* was on when it sent it, and that is
+	// ahead of the tic this client has confirmed by the trip time -- six tics at
+	// 171 ms. Comparing the two worlds directly would measure six tics of
+	// perfectly legitimate kart motion, which at racing speed is over a thousand
+	// units and buries the fraction of a unit this exists to find. It would also
+	// mean applying it teleported every kart into its own future.
+	//
+	// So a correction waits here until the confirmed clock reaches its tic. The
+	// world it is compared against is then the same tic on both machines, which
+	// is the only comparison that means anything.
+	if (g_correcttic > (uint32_t)gametic)
+		return;    // still pending; the next pass will come back to it
+
 	g_correctpending = false;
 
-	if (gamestate != GS_LEVEL)
+	if (g_correcttic < (uint32_t)gametic)
+	{
+		// The loop ran several tics in one pass and stepped over the tic this
+		// correction describes. Dropped rather than measured against the wrong
+		// world, and counted, because a sample rate that quietly collapses looks
+		// exactly like a drift that quietly went away.
+		g_correctmissed++;
 		return;
+	}
 
-	// A correction for a tic this client has already run past is still a
-	// measurement -- the karts have moved on since, so the number is an upper
-	// bound rather than the error at that tic. Counted so a run can say how
-	// often that happened instead of quietly mixing the two.
-	if (g_correcttic != (uint32_t)gametic)
-		g_correctlate++;
+	g_correctused++;
 
 	for (k = 0; k < g_correctn; k++)
 	{
@@ -4040,7 +4062,7 @@ static void Command_RollbackDrift_f(void)
 	{
 		g_correctapply = (atoi(COM_Argv(1)) != 0);
 
-		g_corrections = g_correctlate = g_driftsamples = 0;
+		g_corrections = g_correctused = g_correctmissed = g_driftsamples = 0;
 		g_driftsum = g_driftmax = 0;
 		g_driftworst = -1;
 		g_driftmoved = g_driftrefused = 0;
@@ -4051,9 +4073,9 @@ static void Command_RollbackDrift_f(void)
 			? "applying -- karts are moved to where the server says"
 			: "measuring only -- nothing is moved"));
 
-	CONS_Printf("rollback_drift: %u corrections received, %u of them for a tic "
-		"already behind us, %u kart samples\n",
-		g_corrections, g_correctlate, g_driftsamples);
+	CONS_Printf("rollback_drift: %u corrections received, %u measured on the tic "
+		"they name, %u stepped over, %u kart samples\n",
+		g_corrections, g_correctused, g_correctmissed, g_driftsamples);
 
 	if (g_driftsamples == 0)
 	{

@@ -6876,6 +6876,14 @@ static void SV_SendStateCorrection(void)
 		if (resendingsavegame[i] || sendingsavegame[i])
 			continue;
 
+		// And nothing at all until the node is a player in the game. A joining
+		// client is being sent the initial state as a file transfer, and
+		// PT_STATECORRECTION sits below PT_CANFAIL -- privileged, where file
+		// fragments are droppable -- so a correction every four tics during a
+		// handshake would be competing with the join and winning.
+		if (nodetoplayer[i] < 0 || playeringame[nodetoplayer[i]] == false)
+			continue;
+
 		HSendPacket(i, false, 0, size);
 	}
 }

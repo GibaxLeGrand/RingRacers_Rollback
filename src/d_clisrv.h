@@ -106,10 +106,6 @@ typedef enum
 	PT_CLIENT4MIS,
 	PT_BASICKEEPALIVE,// Keep the network alive during wipes, as tics aren't advanced and NetUpdate isn't called
 
-	PT_STATECORRECTION, // Server, to a client: where the karts actually are.
-	                    // Breaks compatibility with stock servers by existing,
-	                    // which is deliberate -- see statecorrection_pak.
-
 	PT_CANFAIL,       // This is kind of a priority. Anything bigger than CANFAIL
 	                  // allows HSendPacket(*, true, *, *) to return false.
 	                  // In addition, this packet can't occupy all the available slots.
@@ -144,6 +140,17 @@ typedef enum
 	PT_REQMAPQUEUE,		// Client requesting a roundqueue operation
 
 	PT_VOICE,           // Voice packet for either side
+
+	PT_STATECORRECTION, // Server, to a client: where the karts actually are.
+	                    // Breaks compatibility with stock servers by existing,
+	                    // which is deliberate -- see statecorrection_pak.
+	                    //
+	                    // Deliberately at the end, and so above PT_CANFAIL:
+	                    // droppable, and unable to occupy every send slot. A
+	                    // correction that crowds out the file fragments of a
+	                    // joining client is worse than a correction that is
+	                    // missed, because the next one is four tics behind it
+	                    // and says something more recent.
 
 	NUMPACKETTYPE
 } packettype_t;
