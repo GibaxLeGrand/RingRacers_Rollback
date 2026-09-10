@@ -2814,6 +2814,23 @@ static int32_t g_driftworst = -1;
 static uint32_t g_driftmoved;       // karts actually put back
 static uint32_t g_driftrefused;     // ... and karts the move refused to place
 
+// Spikes.
+//
+// Five unattended races put the mean residual at 0.05 to 0.33 units and the
+// *worst* single sample at 4, 36, 38, 47 and 50 -- on five different karts. A
+// steady numeric creep does not vary six-fold between identical races and does
+// not land on roughly one kart width. That pattern says discrete events, not
+// floating point: something resolved differently on the two machines, once.
+//
+// So each sample past a tenth of a kart says so, with the momentum on both
+// sides beside it. That comparison is the discriminator the whole hunt needs:
+// **momentum agreeing while position differs is accumulated drift, momentum
+// differing is an event resolved differently** -- a collision, a bump, a
+// hazard. Two different bugs, and one line of text separates them.
+#define ROLLBACK_SPIKE (4 * FRACUNIT)
+#define ROLLBACK_SPIKEMAX 40
+static uint32_t g_driftspikes;
+
 
 /** True while a correction is re-running tics that have already been played.
   *
@@ -3901,6 +3918,8 @@ static uint64_t K_FracError(int32_t a, int32_t b)
 	return (uint64_t)((d < 0) ? -d : d);
 }
 
+static const char *K_DescribeFrac(uint64_t frac, char *buf, size_t len);
+
 void K_RollbackApplyServerState(void)
 {
 	uint8_t k;
@@ -3978,6 +3997,23 @@ void K_RollbackApplyServerState(void)
 		{
 			g_driftmax = err;
 			g_driftworst = (int32_t)c->slot;
+		}
+
+		if (err >= ROLLBACK_SPIKE && g_driftspikes < ROLLBACK_SPIKEMAX)
+		{
+			char e[64];
+
+			g_driftspikes++;
+
+			CONS_Printf("rollback_drift: SPIKE tic %u p%d off by %s -- "
+				"mom here (%d,%d,%d) server (%d,%d,%d), hitlag %d/%d, "
+				"item %d/%d" "\n",
+				g_correcttic, (int32_t)c->slot,
+				K_DescribeFrac(err, e, sizeof e),
+				p->mo->momx, p->mo->momy, p->mo->momz,
+				c->momx, c->momy, c->momz,
+				p->mo->hitlag, c->hitlag,
+				(int32_t)p->itemtype, (int32_t)c->itemtype);
 		}
 
 		if (g_correctapply == false)
@@ -4078,6 +4114,7 @@ static void Command_RollbackDrift_f(void)
 		g_correctapply = (atoi(COM_Argv(1)) != 0);
 
 		g_corrections = g_correctused = g_correctmissed = g_driftsamples = 0;
+		g_driftspikes = 0;
 		g_driftsum = g_driftmax = 0;
 		g_driftworst = -1;
 		g_driftmoved = g_driftrefused = 0;
@@ -4087,6 +4124,13 @@ static void Command_RollbackDrift_f(void)
 		(g_correctapply
 			? "applying -- karts are moved to where the server says"
 			: "measuring only -- nothing is moved"));
+
+	if (g_driftspikes > 0)
+	{
+		CONS_Printf("rollback_drift: %u samples past a tenth of a kart%s" "\n",
+			g_driftspikes,
+			(g_driftspikes >= ROLLBACK_SPIKEMAX ? " (printing stopped there)" : ""));
+	}
 
 	CONS_Printf("rollback_drift: %u corrections received, %u measured on the tic "
 		"they name, %u stepped over, %u kart samples\n",
