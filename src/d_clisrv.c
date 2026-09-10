@@ -6086,9 +6086,20 @@ static void HandlePacketFromPlayer(int8_t node)
 					karts[k].rings = in->kart[k].rings;
 					karts[k].itemtype = in->kart[k].itemtype;
 					karts[k].itemamount = in->kart[k].itemamount;
+
+					karts[k].spinouttimer = in->kart[k].spinouttimer;
+					karts[k].nocontrol = in->kart[k].nocontrol;
+					karts[k].flashing = in->kart[k].flashing;
+					karts[k].spinouttype = in->kart[k].spinouttype;
+					karts[k].tumbleBounces = in->kart[k].tumbleBounces;
+					karts[k].wipeoutslow = in->kart[k].wipeoutslow;
+					karts[k].justbumped = in->kart[k].justbumped;
+					karts[k].offroad = in->kart[k].offroad;
+					karts[k].speed = in->kart[k].speed;
 				}
 
-				K_RollbackNoteServerState(in->tic, karts, n);
+				K_RollbackNoteServerState(in->tic, karts, n,
+					in->collides, in->collidehash);
 			}
 			break;
 
@@ -6831,6 +6842,17 @@ static void SV_SendStateCorrection(void)
 	netbuffer->u.statecorrection.tic = (uint32_t)gametic;
 	netbuffer->u.statecorrection.reserved = 0;
 
+	{
+		uint32_t collides = 0, collidehash = 0;
+
+		// Through locals: statecorrection_pak is packed, so taking the address
+		// of a member of it is an unaligned pointer.
+		K_RollbackLiveCollides(&collides, &collidehash);
+
+		netbuffer->u.statecorrection.collides = collides;
+		netbuffer->u.statecorrection.collidehash = collidehash;
+	}
+
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
 		statekart_pak *k;
@@ -6857,6 +6879,16 @@ static void SV_SendStateCorrection(void)
 		k->rings = players[i].rings;
 		k->itemtype = players[i].itemtype;
 		k->itemamount = players[i].itemamount;
+
+		k->spinouttimer = players[i].spinouttimer;
+		k->nocontrol = players[i].nocontrol;
+		k->flashing = players[i].flashing;
+		k->spinouttype = players[i].spinouttype;
+		k->tumbleBounces = players[i].tumbleBounces;
+		k->wipeoutslow = players[i].wipeoutslow;
+		k->justbumped = players[i].justbumped;
+		k->offroad = players[i].offroad;
+		k->speed = players[i].speed;
 	}
 
 	netbuffer->u.statecorrection.numkarts = n;

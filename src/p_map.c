@@ -539,6 +539,11 @@ static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
 	// are not simulating the same world, whatever their state says they hold.
 	K_RollbackTraceCollide(g_tm.thing->mobjnum, thing->mobjnum);
 
+	// And the cross-machine form of the same question. The line above hashes
+	// mobjnums, which is fine for comparing two passes on one machine and
+	// useless for comparing two machines: mobjnum is reissued at every save.
+	K_RollbackNoteLiveCollide(g_tm.thing, thing);
+
 	// don't clip against self
 	if (thing == g_tm.thing)
 		return BMIT_CONTINUE;

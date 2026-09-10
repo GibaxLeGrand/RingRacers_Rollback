@@ -75,6 +75,16 @@ struct rollbackkart_t
 	int16_t rings;
 	int8_t itemtype;
 	uint8_t itemamount;
+
+	uint16_t spinouttimer;
+	uint16_t nocontrol;
+	uint16_t flashing;
+	uint8_t spinouttype;
+	uint8_t tumbleBounces;
+	uint8_t wipeoutslow;
+	uint8_t justbumped;
+	int32_t offroad;
+	int32_t speed;
 };
 
 /** How many tics apart the server should send light state corrections. Zero --
@@ -91,7 +101,19 @@ dboolean K_RollbackCorrectSuppress(void);
   * it has to be applied to is the confirmed one, which does not exist yet at
   * the moment a packet is read. */
 void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
-	uint8_t n);
+	uint8_t n, uint32_t collides, uint32_t collidehash);
+
+struct mobj_t;
+
+/** Records one collision resolved on a confirmed tic, keyed by something both
+  * machines agree on. Called from P_CheckPosition's thing-versus-thing test.
+  * Ignored while a speculation is running: a speculated collision is not a
+  * fact, and it would walk this machine's tally away from the server's for a
+  * reason that is not a bug. */
+void K_RollbackNoteLiveCollide(struct mobj_t *a, struct mobj_t *b);
+
+/** This machine's running collision tally and hash, for the packet to carry. */
+void K_RollbackLiveCollides(uint32_t *count, uint32_t *hash);
 
 /** Measures the stored correction against this client's confirmed world, and
   * applies it when asked to. Called from the tic loop once the confirmed world

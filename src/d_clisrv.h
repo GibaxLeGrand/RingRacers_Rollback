@@ -471,6 +471,25 @@ struct statekart_pak
 	int16_t rings;
 	int8_t itemtype;
 	uint8_t itemamount;
+
+	// The state, not the kinematics.
+	//
+	// A spike line showed a kart's momentum being re-derived wrong within four
+	// tics of being handed the server's value, twenty tics running -- so the
+	// divergence is a *state* this machine holds and the server does not, and
+	// correcting the momentum eight times a second only treats the symptom.
+	// These say which state. They are measured and printed, and deliberately not
+	// applied: which field to carry is the question, and guessing at it is how
+	// every reverted fix on this branch started.
+	uint16_t spinouttimer;
+	uint16_t nocontrol;
+	uint16_t flashing;
+	uint8_t spinouttype;
+	uint8_t tumbleBounces;
+	uint8_t wipeoutslow;
+	uint8_t justbumped;
+	int32_t offroad;
+	int32_t speed;
 } ATTRPACK;
 
 // The light correction channel.
@@ -496,6 +515,25 @@ struct statekart_pak
 struct statecorrection_pak
 {
 	uint32_t tic;       // the confirmed tic these describe
+
+	// Collisions this machine has resolved since the map started, and a hash of
+	// which objects were in them. Keyed by player slot and mobj type rather than
+	// by mobjnum, because mobjnum is handed out afresh at every save and a client
+	// that takes a snapshot every tic renumbers constantly -- so a hash over
+	// mobjnums would differ between two machines that agreed about everything.
+	//
+	// Running rather than per-tic, so it is sticky: once the two disagree they
+	// stay disagreed, which dates the first divergence instead of only counting
+	// them. Confirmed tics only -- a speculated collision is not a fact.
+	//
+	// This is the upstream question, and it points at opposite work: hashes equal
+	// on a failing tic means both machines saw the same collisions and the
+	// divergence is downstream, in one of the fields above. Hashes differing
+	// means the collision itself resolved differently, and no amount of state
+	// carried over the wire will fix that.
+	uint32_t collides;
+	uint32_t collidehash;
+
 	uint8_t numkarts;
 	uint8_t reserved;
 	statekart_pak kart[MAXPLAYERS];
@@ -542,7 +580,7 @@ struct doomdata_t
 		say_pak say;							// I don't care anymore.
 		reqmapqueue_pak reqmapqueue;			// Formerly XD_REQMAPQUEUE
 		voice_pak voice;                        // Unreliable voice data, variable length
-		statecorrection_pak statecorrection;    //         614 bytes
+		statecorrection_pak statecorrection;    //         910 bytes
 	} u; // This is needed to pack diff packet types data together
 } ATTRPACK;
 

@@ -2831,6 +2831,20 @@ static uint32_t g_driftrefused;     // ... and karts the move refused to place
 #define ROLLBACK_SPIKEMAX 40
 static uint32_t g_driftspikes;
 
+// Collisions resolved on confirmed tics, and a hash of who was in them.
+//
+// Running, never reset, and that is deliberate: the server resolved collisions
+// on RR_TESTRUN before this client ever joined, so the two tallies start with a
+// constant offset. The offset is not the signal -- a CHANGE in it is. If the
+// difference between the two counts is the same before and after a spike, both
+// machines saw the same collisions and the divergence is downstream, in one of
+// the state fields. If it moves, the collision itself resolved differently, and
+// no amount of state carried over the wire will fix that.
+static uint32_t g_livecollides;
+static uint32_t g_livecollidehash;
+static uint32_t g_srvcollides;
+static uint32_t g_srvcollidehash;
+
 
 /** True while a correction is re-running tics that have already been played.
   *
@@ -3885,8 +3899,83 @@ dboolean K_RollbackCorrectSuppress(void)
 	return (g_correctrate > 0 && g_correctsuppress);
 }
 
+/** A key for one side of a collision that means the same thing on every machine.
+  *
+  * Not mobjnum: that is handed out afresh by every P_SaveNetGame, and a client
+  * taking a snapshot every tic renumbers constantly, so a hash over mobjnums
+  * would differ between two machines that agreed about everything.
+  */
+static uint32_t K_CollideKey(struct mobj_t *mo)
+{
+	const mobj_t *m = mo;
+
+	if (m == NULL)
+		return 0;
+
+	if (m->player != NULL)
+		return (uint32_t)(1 + (m->player - players));
+
+	return 0x10000u + (uint32_t)m->type;
+}
+
+void K_RollbackNoteLiveCollide(struct mobj_t *a, struct mobj_t *b)
+{
+	uint32_t ka, kb;
+
+	// A speculated collision is not a fact. Counting one would walk this
+	// machine's tally away from the server's for a reason that is not a bug --
+	// the exact failure mode of every instrument here that read non-zero
+	// innocently.
+	if (gamestate != GS_LEVEL || K_RollbackReplaying())
+		return;
+
+	ka = K_CollideKey(a);
+	kb = K_CollideKey(b);
+
+	// Order-independent: which of the two is the thing being moved depends on
+	// the order the blockmap hands them over, and that is not a fact about the
+	// world. This branch has already spent a fix on blockmap chain order.
+	if (ka > kb)
+	{
+		const uint32_t swap = ka;
+
+		ka = kb;
+		kb = swap;
+	}
+
+	g_livecollides++;
+	g_livecollidehash = ((g_livecollidehash ^ ka) * 16777619u) ^ kb;
+}
+
+void K_RollbackLiveCollides(uint32_t *count, uint32_t *hash)
+{
+	if (count != NULL)
+		*count = g_livecollides;
+
+	if (hash != NULL)
+		*hash = g_livecollidehash;
+}
+
+/** Appends " name mine/theirs" to buf, but only when the two differ.
+  *
+  * Only the fields that differ get printed. The previous instrument on this
+  * branch reported fifteen hundred differing fields per check and taught nobody
+  * anything, because a wall of text in which everything is listed is a wall of
+  * text in which the one that matters is invisible.
+  */
+static void K_NoteDiff(char *buf, size_t len, const char *name,
+	int32_t mine, int32_t theirs)
+{
+	const size_t at = strlen(buf);
+
+	if (mine == theirs || at + 48 >= len)
+		return;
+
+	snprintf(buf + at, len - at, " %s %d/%d", name, mine, theirs);
+}
+
 void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
-	uint8_t n)
+	uint8_t n, uint32_t collides, uint32_t collidehash)
 {
 	if (n > MAXPLAYERS)
 		n = MAXPLAYERS;
@@ -3900,6 +3989,9 @@ void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
 	g_correcttic = tic;
 	g_correctn = n;
 	memcpy(g_correctkart, karts, n * sizeof (struct rollbackkart_t));
+	g_srvcollides = collides;
+	g_srvcollidehash = collidehash;
+
 	g_correctpending = true;
 	g_corrections++;
 }
@@ -4002,18 +4094,37 @@ void K_RollbackApplyServerState(void)
 		if (err >= ROLLBACK_SPIKE && g_driftspikes < ROLLBACK_SPIKEMAX)
 		{
 			char e[64];
+			char st[256];
 
 			g_driftspikes++;
 
+			// Which STATE differs, not which kinematics. A kart's momentum was
+			// seen being re-derived wrong within four tics of being handed the
+			// server's value, twenty tics running, so the cause is a state this
+			// machine holds and the server does not. These name it.
+			st[0] = 0;
+
+			K_NoteDiff(st, sizeof st, "spinout", p->spinouttimer, c->spinouttimer);
+			K_NoteDiff(st, sizeof st, "spintype", p->spinouttype, c->spinouttype);
+			K_NoteDiff(st, sizeof st, "noctl", p->nocontrol, c->nocontrol);
+			K_NoteDiff(st, sizeof st, "flash", p->flashing, c->flashing);
+			K_NoteDiff(st, sizeof st, "tumble", p->tumbleBounces, c->tumbleBounces);
+			K_NoteDiff(st, sizeof st, "wipeout", p->wipeoutslow, c->wipeoutslow);
+			K_NoteDiff(st, sizeof st, "bumped", p->justbumped, c->justbumped);
+			K_NoteDiff(st, sizeof st, "offroad", p->offroad, c->offroad);
+			K_NoteDiff(st, sizeof st, "speed", p->speed, c->speed);
+			K_NoteDiff(st, sizeof st, "hitlag", p->mo->hitlag, c->hitlag);
+			K_NoteDiff(st, sizeof st, "item", p->itemtype, c->itemtype);
+
 			CONS_Printf("rollback_drift: SPIKE tic %u p%d off by %s -- "
-				"mom here (%d,%d,%d) server (%d,%d,%d), hitlag %d/%d, "
-				"item %d/%d" "\n",
+				"mom here (%d,%d,%d) server (%d,%d,%d) -- collides %u/%u -- "
+				"differs:%s" "\n",
 				g_correcttic, (int32_t)c->slot,
 				K_DescribeFrac(err, e, sizeof e),
 				p->mo->momx, p->mo->momy, p->mo->momz,
 				c->momx, c->momy, c->momz,
-				p->mo->hitlag, c->hitlag,
-				(int32_t)p->itemtype, (int32_t)c->itemtype);
+				g_livecollides, g_srvcollides,
+				(st[0] != 0 ? st : " nothing -- kinematics only"));
 		}
 
 		if (g_correctapply == false)
@@ -4124,6 +4235,11 @@ static void Command_RollbackDrift_f(void)
 		(g_correctapply
 			? "applying -- karts are moved to where the server says"
 			: "measuring only -- nothing is moved"));
+
+	CONS_Printf("rollback_drift: collisions on confirmed tics -- here %u (hash "
+		"%08x), server %u (hash %08x). The offset is not the signal; a CHANGE in "
+		"it is." "\n",
+		g_livecollides, g_livecollidehash, g_srvcollides, g_srvcollidehash);
 
 	if (g_driftspikes > 0)
 	{
