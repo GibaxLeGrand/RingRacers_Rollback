@@ -27,6 +27,12 @@ state the archive does not carry, and that state reaches a bot's simulation.*
 
 ---
 
+> **Revised 2026-09-10 by `WORLDWIDE.md`.** The project is now Ring Racers
+> Worldwide -- client-side prediction with server reconciliation, named for what
+> it is. The phases below stand; `WORLDWIDE.md` sections 6 and 7 change Phase A's
+> next step, give Phase B a second reason, add an item-prediction policy to
+> Phase C, and add a client-local delay knob. Read that file first.
+
 ## Phase A -- Close the desync
 
 **Blocks everything.** A full state resend every fifteen seconds makes every other
