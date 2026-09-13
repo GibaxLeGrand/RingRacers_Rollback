@@ -667,3 +667,96 @@ If the drift survives with nothing speculated, the archive is lossy. If it
 survives with nothing saved either, it is upstream of everything this branch
 added. If it only appears in the third row, the speculation leaks. **The
 instruments are in place for all three.**
+
+### 8.9 What four races and a soak closed, and the one test nobody had written
+
+The night's measurements, in the order they eliminated things. The grid was the
+same every time: `p0` the host, `p1`-`p7` bots, **`p8` the local player, with a
+person driving it** -- which is why p8 carries 22 to 30 of every 40 spikes.
+
+| Test | Result | What it excludes |
+|---|---|---|
+| `correct` (speculation on) | mean 0.33-0.53 u, 37-40 spikes, 0 resyncs | -- |
+| `nospec` (save + restore, nothing speculated) | **0.000 u over 3357 kart samples, 0 spikes** | the archive, the save/restore cycle |
+| offline soak, 4-tic resim, same map | **0 failures in 330 checks** | the determinism of the tics, and the restore against a simulation |
+| `rollback_loop` | 6280 predicted tics = 1570 passes x 4, exactly | the confirmed clock ever running on a guess |
+| `rollback_detect` | **0 inputs arrived for tics already run, 0 contradicted** | the inputs, entirely |
+
+**And the channel finally caught a disagreement outright.** The server resolved
+*no* damage at all in that race; the client resolved one:
+
+```
+client:   rollback_damage: tic 3299 #2 p5 hit by t423 type 17 -- hash 06b6dfac
+server:   (nothing, tally still 1)
+```
+
+The spike on the following tic shows the phantom hit in full -- `flash 64/0
+tumble 2/0 hitlag 13/0`, a fresh 64-tic flash and two tumble bounces the server
+knows nothing about.
+
+⚠ **But the drift came first, by three hundred tics.** p5 was already 22.851
+units out at tic 3000, and 4 to 10 units out repeatedly from 3244. So the
+phantom hit is a *consequence*: the two worlds had p5 and the object in
+different places and one of them connected. This is not a collision bug, and
+the earlier reading that put the damage path in the dock is now closed twice
+over -- the counts and hashes agree everywhere the two machines both resolve a
+hit, and `nospec` lands them on the same tic.
+
+**Also worth keeping: p5 is a bot.** The divergence is not confined to the kart
+with a person on it.
+
+**And a measurement bug of my own, found by reading a print I did not expect.**
+
+```c
+2807:  static uint32_t g_corrections;   // corrections received         <- the channel
+3369:  static uint32_t g_corrections;   // rollbacks the loop performed <- the old loop
+```
+
+Two file-scope `static uint32_t g_corrections;` in one translation unit are a
+tentative definition of **one object**: legal C, no warning. The channel had
+been incrementing the old loop's counter since it was written, and each
+command's reset cleared the other's count. Nothing was measured wrong, because
+the old loop performs no rollbacks while `g_loopahead` is 0 and two-clock mode
+forces that -- but `rollback_loop` printed the channel's 391 as its own.
+Renamed to `g_statecorrections`.
+
+### 8.10 The blind spot, and `rollback_leak`
+
+Same inputs, same starting state, deterministic tics -- all three now proven
+separately -- and the confirmed world still drifts half a unit every four tics
+with the speculation on. One of the three has to be false, so look at what the
+soak *cannot* see.
+
+**`K_ResimCheck` runs both of its passes on the same inputs.** It freezes
+`players[i].cmd` and replays it, which is what makes its two passes comparable.
+The netcode does something else: it speculates on **predicted** inputs, restores,
+and then runs the confirmed tic on the **real** ones. Anything that lives
+outside the archive, the players and the mobjs -- a static, a cache, a global
+the tic writes and later reads -- would be left holding a value computed from
+inputs that never happened. And two passes with identical inputs recompute such
+a value identically and agree. **330 clean checks beside half a unit of drift is
+exactly that shape.**
+
+So `rollback_leak [tics]`, three runs of one tic on the real inputs, all from
+one saved world:
+
+```
+B    a pristine reference, taken before anything else has run
+A1   after a pass of N tics on the REAL inputs, restored
+A2   after a pass of N tics on PERTURBED inputs, restored
+```
+
+- `A1 != B` -- any extra pass pollutes, whatever it simulated.
+- `A1 == B` and `A2 != B` -- it takes a *wrong* pass. **The netplay case
+  exactly**, reproduced on one machine, in one tic, with no network.
+
+The perturbation is a **neutral** input, not an invented extreme, because a
+neutral input is what a client really predicts for somebody who was doing
+nothing. And when every real input is already neutral -- a parked grid -- the
+check refuses rather than passing: the wrong pass would be the right one, and a
+check that cannot fail is worse than no check.
+
+`rollback_soak <interval> <tics> 1` runs it as a soak, because the phantom hit
+took 1800 tics to appear and one check at an arbitrary moment proves little.
+`soak_leak.cfg` is that soak on the netplay map, ~250 checks, one instance, no
+network. **An iteration goes from five minutes to two seconds.**

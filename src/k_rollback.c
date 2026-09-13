@@ -2502,6 +2502,275 @@ done:
 	return identical;
 }
 
+/** Does a mispredicted speculation leave anything behind a restore cannot take?
+  *
+  * The resimulation check runs both of its passes on the SAME inputs, and that
+  * makes it blind to the one thing the netcode actually does: it speculates on
+  * *predicted* inputs, restores, and runs the confirmed tic on the real ones.
+  * Anything living outside the archive, the players and the mobjs -- a static, a
+  * cache, a global the tic writes and later reads -- would be left holding a
+  * value computed from inputs that never happened, while two passes with
+  * identical inputs recompute it identically and agree. 330 clean soak checks
+  * next to 0.5 units of netplay drift is exactly that shape.
+  *
+  * Three runs of one tic on the real inputs, all from the same saved world:
+  *
+  *   B   a pristine reference, taken before anything else has run
+  *   A1  after a pass of `tics` tics on the REAL inputs, restored
+  *   A2  after a pass of `tics` tics on PERTURBED inputs, restored
+  *
+  * A1 != B says any extra pass pollutes, whatever it simulated. A1 == B with
+  * A2 != B says it takes a *wrong* pass, which is the netplay case exactly.
+  * Both are bugs, and they are different bugs.
+  *
+  * The perturbation is a neutral input, because that is what a client really
+  * predicts for somebody who was doing nothing -- not an invented extreme.
+  *
+  * \param verbose prints the grid and the timings even when nothing is wrong.
+  * \return true when neither pass left anything behind.
+  */
+static dboolean K_LeakCheck(int32_t tics, dboolean verbose)
+{
+	rollbackslot_t *first, *second, *third;
+	diagset_t recsfirst = {0}, recssecond = {0}, recsthird = {0};
+	ticcmd_t real[MAXPLAYERS], wrong[MAXPLAYERS];
+	tic_t startedat;
+	int32_t perturbed = 0;
+	int32_t i;
+	dboolean records;
+	dboolean honest = false;
+	dboolean predicted = false;
+
+	if (gamestate != GS_LEVEL)
+	{
+		CONS_Printf("You must be in a level to use this.\n");
+		return false;
+	}
+
+	if (tics < 1)
+		tics = 1;
+
+	if (tics > ROLLBACK_TICS)
+		tics = ROLLBACK_TICS;
+
+	if (K_NeedScratch() == false)
+	{
+		CONS_Printf("rollback_leak: not enough memory for the comparison slots\n");
+		return false;
+	}
+
+	K_NeedDiagSets();
+
+	first = g_first;
+	second = g_second;
+	third = g_third;
+	recsfirst = g_recsfirst;
+	recssecond = g_recssecond;
+	recsthird = g_recsthird;
+
+	records = (recsfirst.bytes && recsfirst.recs && recssecond.bytes && recssecond.recs
+		&& recsthird.bytes && recsthird.recs);
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		real[i] = players[i].cmd;
+		wrong[i] = real[i];
+
+		wrong[i].forwardmove = 0;
+		wrong[i].turning = 0;
+		wrong[i].throwdir = 0;
+		wrong[i].aiming = 0;
+		wrong[i].buttons = 0;
+
+		if (playeringame[i] && memcmp(&wrong[i], &real[i], sizeof (ticcmd_t)) != 0)
+			perturbed++;
+	}
+
+	// A check that cannot fail is worse than no check: on a parked grid every
+	// input is already neutral, the two passes are the same pass, and a clean
+	// result would mean nothing at all. Say so instead of reporting a pass.
+	if (perturbed == 0)
+	{
+		if (verbose)
+		{
+			CONS_Printf("rollback_leak: nothing to perturb -- every input was "
+				"already neutral, so the wrong pass would be the right one\n");
+		}
+
+		return true;
+	}
+
+	if (verbose)
+		K_PrintGrid("rollback_leak");
+
+	if (!K_SaveGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: K_SaveGameState failed\n");
+		return false;
+	}
+
+	startedat = leveltime;
+
+	g_holdfindings = true;
+	g_heldcount = 0;
+	g_helddropped = 0;
+
+	// ---- B: the reference, from a world nothing has run on yet -------------
+	srand((unsigned int)gametic);
+	K_RunFrozenTics(1, real);
+
+	if (leveltime == startedat)
+	{
+		CONS_Printf("rollback_leak: the world did not advance -- the game is "
+			"paused, or the window is unfocused and pauseifunfocused is on\n");
+		goto done;
+	}
+
+	if (!K_WriteSnapshot(first, gametic))
+	{
+		CONS_Printf("rollback_leak: could not snapshot the reference\n");
+		goto done;
+	}
+
+	K_CopyPlayers(0);
+	K_CopyMobjs();
+
+	if (records)
+		K_CaptureRecords(&recsfirst);
+
+	// ---- A1: the same tic, after an honest pass of the same length ---------
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: could not get back to the starting state\n");
+		goto done;
+	}
+
+	srand((unsigned int)gametic);
+	K_RunFrozenTics(tics, real);
+
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: could not get back after the honest pass\n");
+		goto done;
+	}
+
+	srand((unsigned int)gametic);
+	K_RunFrozenTics(1, real);
+
+	if (!K_WriteSnapshot(second, gametic))
+	{
+		CONS_Printf("rollback_leak: could not snapshot after the honest pass\n");
+		goto done;
+	}
+
+	K_CopyPlayers(1);
+
+	if (records)
+		K_CaptureRecords(&recssecond);
+
+	// ---- A2: the same tic again, after a pass on inputs that never were ----
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: could not get back before the wrong pass\n");
+		goto done;
+	}
+
+	srand((unsigned int)gametic);
+	K_RunFrozenTics(tics, wrong);
+
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: could not get back after the wrong pass\n");
+		goto done;
+	}
+
+	srand((unsigned int)gametic);
+	K_RunFrozenTics(1, real);
+
+	if (!K_WriteSnapshot(third, gametic))
+	{
+		CONS_Printf("rollback_leak: could not snapshot after the wrong pass\n");
+		goto done;
+	}
+
+	K_CopyPlayers(2);
+
+	if (records)
+		K_CaptureRecords(&recsthird);
+
+	honest = (first->used == second->used
+		&& memcmp(first->buffer, second->buffer, first->used) == 0);
+	predicted = (first->used == third->used
+		&& memcmp(first->buffer, third->buffer, first->used) == 0);
+
+	if (verbose)
+	{
+		CONS_Printf("rollback_leak: %d tics, %d inputs perturbed -- honest pass "
+			"%s, mispredicted pass %s\n",
+			tics, perturbed,
+			(honest ? "left nothing" : "LEFT SOMETHING"),
+			(predicted ? "left nothing" : "LEFT SOMETHING"));
+	}
+
+	if (honest == false || predicted == false)
+	{
+		K_PrintGrid("rollback_leak");
+
+		if (honest == false)
+		{
+			CONS_Printf("rollback_leak: a pass on the REAL inputs already changed "
+				"the tic that followed it -- so it is not about mispredicting, it "
+				"is about running extra tics at all\n");
+
+			K_ReportComparison("rollback_leak", "extra pass",
+				first, "reference", second, "after an honest pass",
+				&recsfirst, &recssecond, records);
+			K_ReportAttachments("rollback_leak", g_playercopy[0], g_playercopy[1]);
+			K_ComparePlayers("rollback_leak", g_playercopy[0], g_playercopy[1], -1);
+		}
+		else
+		{
+			CONS_Printf("rollback_leak: the honest pass left nothing and the "
+				"mispredicted one did -- the speculation carries something "
+				"forward that the restore does not take back, and it depends on "
+				"the inputs it ran\n");
+
+			K_ReportComparison("rollback_leak", "misprediction",
+				first, "reference", third, "after a wrong pass",
+				&recsfirst, &recsthird, records);
+			K_ReportAttachments("rollback_leak", g_playercopy[0], g_playercopy[2]);
+			K_ComparePlayers("rollback_leak", g_playercopy[0], g_playercopy[2], -1);
+			K_CompareMobjs("rollback_leak");
+		}
+
+		K_ReleaseFindings();
+	}
+
+done:
+	// Back where this found it, whatever happened: a check must not leave the
+	// level ahead of the tic the netcode believes it is on.
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: WARNING - could not restore the starting "
+			"state, so the level is now ahead of where it was\n");
+	}
+
+	g_holdfindings = false;
+
+	return (honest && predicted);
+}
+
+/** Console command: rollback_leak [tics] */
+static void Command_RollbackLeak_f(void)
+{
+	int32_t tics = 4;
+
+	if (COM_Argc() > 1)
+		tics = atoi(COM_Argv(1));
+
+	K_LeakCheck(tics, true);
+}
+
 /** Console command: rollback_resim [tics] */
 static void Command_RollbackResim_f(void)
 {
@@ -2526,6 +2795,7 @@ static void Command_RollbackResim_f(void)
 static int32_t g_soakinterval;  // tics between checks, 0 when off
 static int32_t g_soaktics;      // tics resimulated per check
 static dboolean g_soakbusy;     // a check is running; do not start another
+static dboolean g_soakleak;     // leak checks rather than resimulation ones
 static uint32_t g_soakchecks;
 static uint32_t g_soakfailures;
 
@@ -2545,9 +2815,10 @@ static void Command_RollbackSoak_f(void)
 		}
 		else
 		{
-			CONS_Printf("rollback_soak: every %d tics, resimulating %d. "
+			CONS_Printf("rollback_soak: every %d tics, %s %d. "
 				"%u checks so far, %u failures.\n",
-				g_soakinterval, g_soaktics, g_soakchecks, g_soakfailures);
+				g_soakinterval, (g_soakleak ? "leak-checking" : "resimulating"),
+				g_soaktics, g_soakchecks, g_soakfailures);
 		}
 		return;
 	}
@@ -2563,6 +2834,13 @@ static void Command_RollbackSoak_f(void)
 	if (g_soaktics < 1)
 		g_soaktics = 4;
 
+	// A third argument picks the question. The resimulation check asks whether
+	// a restored world behaves like the live one on the same inputs; the leak
+	// check asks whether a pass on inputs that never happened leaves anything
+	// behind. 330 clean checks of the first, beside half a unit of netplay
+	// drift, is what made the second worth writing.
+	g_soakleak = (COM_Argc() > 3 && atoi(COM_Argv(3)) != 0);
+
 	if (g_soakinterval == 0)
 	{
 		CONS_Printf("rollback_soak: stopped after %u checks, %u failures.\n",
@@ -2573,8 +2851,9 @@ static void Command_RollbackSoak_f(void)
 	g_soakchecks = 0;
 	g_soakfailures = 0;
 
-	CONS_Printf("rollback_soak: checking every %d tics, resimulating %d tics each time. "
-		"Silence means agreement.\n", g_soakinterval, g_soaktics);
+	CONS_Printf("rollback_soak: checking every %d tics, %s %d tics each time. "
+		"Silence means agreement.\n", g_soakinterval,
+		(g_soakleak ? "leak-checking" : "resimulating"), g_soaktics);
 
 	// What it is about to soak, said once at the start rather than only on the
 	// first failure. A run that never fails otherwise records five hundred
@@ -3279,7 +3558,8 @@ void K_RollbackSoakTicker(void)
 
 	g_soakchecks++;
 
-	if (K_ResimCheck(g_soaktics, false) == false)
+	if ((g_soakleak ? K_LeakCheck(g_soaktics, false)
+			: K_ResimCheck(g_soaktics, false)) == false)
 	{
 		g_soakfailures++;
 		CONS_Printf("rollback_soak: FAILURE at leveltime %u -- %u of %u checks have failed\n",
@@ -4918,6 +5198,7 @@ void K_RegisterRollbackStuff(void)
 	// be reached without typing into the console.
 	COM_AddDebugCommand("rollback_test", Command_RollbackTest_f);
 	COM_AddDebugCommand("rollback_resim", Command_RollbackResim_f);
+	COM_AddDebugCommand("rollback_leak", Command_RollbackLeak_f);
 	COM_AddDebugCommand("rollback_soak", Command_RollbackSoak_f);
 	COM_AddDebugCommand("rollback_maxdepth", Command_RollbackMaxDepth_f);
 	COM_AddDebugCommand("rollback_delay", Command_RollbackDelay_f);
