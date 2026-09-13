@@ -4313,6 +4313,39 @@ static void Command_RollbackDrift_f(void)
 		g_driftmoved = g_driftrefused = 0;
 	}
 
+	// Who was on the grid, and how each kart's input is obtained.
+	//
+	// The report has named p8 as the worst kart in two races running without
+	// ever saying what p8 is, and the answer changes the diagnosis completely:
+	// a client predicts a *person* by repeating their last input and a
+	// *bot-driven* kart by computing one from its own world, and only the
+	// second can disagree with the server about what the kart decided to do.
+	// K_PlayerUsesBotMovement is true for `bot` and also for `exiting`, so a
+	// kart that has finished the race switches mechanism mid-measurement.
+	{
+		char grid[256];
+		int32_t g;
+
+		grid[0] = 0;
+
+		for (g = 0; g < MAXPLAYERS; g++)
+		{
+			char one[24];
+
+			if (playeringame[g] == false)
+				continue;
+
+			snprintf(one, sizeof one, " p%d%s%s%s", g,
+				(players[g].bot ? "-bot" : ""),
+				(players[g].exiting ? "-exiting" : ""),
+				(g == g_localplayers[0] ? "-LOCAL" : ""));
+
+			strlcat(grid, one, sizeof grid);
+		}
+
+		CONS_Printf("rollback_drift: grid --%s\n", grid);
+	}
+
 	CONS_Printf("rollback_drift: %s\n",
 		(g_correctapply
 			? "applying -- karts are moved to where the server says"
