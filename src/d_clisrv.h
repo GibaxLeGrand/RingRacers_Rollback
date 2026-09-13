@@ -516,23 +516,34 @@ struct statecorrection_pak
 {
 	uint32_t tic;       // the confirmed tic these describe
 
-	// Collisions this machine has resolved since the map started, and a hash of
-	// which objects were in them. Keyed by player slot and mobj type rather than
-	// by mobjnum, because mobjnum is handed out afresh at every save and a client
-	// that takes a snapshot every tic renumbers constantly -- so a hash over
-	// mobjnums would differ between two machines that agreed about everything.
+	// Damage outcomes this machine has resolved since the map started, and a
+	// hash of which ones. Keyed by player slot and mobj type, never by mobjnum:
+	// that is handed out afresh at every save, and a client taking a snapshot
+	// every tic renumbers constantly, so a hash over mobjnums would differ
+	// between two machines that agreed about everything.
 	//
-	// Running rather than per-tic, so it is sticky: once the two disagree they
-	// stay disagreed, which dates the first divergence instead of only counting
-	// them. Confirmed tics only -- a speculated collision is not a fact.
+	// This field held a collision tally first, and that tally was wrong: it sat
+	// in PIT_CheckThing, which tests every pair of objects that come *near* each
+	// other, so it read twenty-seven million per race and its value depended on
+	// who was near whom -- that is, on the divergence it was meant to date.
+	// Circular, and therefore mute.
 	//
-	// This is the upstream question, and it points at opposite work: hashes equal
-	// on a failing tic means both machines saw the same collisions and the
-	// divergence is downstream, in one of the fields above. Hashes differing
-	// means the collision itself resolved differently, and no amount of state
-	// carried over the wire will fix that.
-	uint32_t collides;
-	uint32_t collidehash;
+	// Damage is the opposite kind of event: a few dozen per race, each one a
+	// decision both machines must reach identically. The race that retired the
+	// collision tally said as much -- of forty spikes, twenty-nine differed in
+	// flashing, tumbleBounces or hitlag, and all three are written by the damage
+	// path; one kart counted down a sixty-four tic flash on the server that the
+	// client never started.
+	//
+	// Both sides sample at the same point: the server stamps the tic it is about
+	// to run, and the receiver holds the packet until its own clock reaches that
+	// tic. The client missed the events from before it joined, so it adopts
+	// these two values once, on the first correction that lands on its own tic;
+	// after that the two machines fold the same events in the same order, and
+	// the pair is an equality test. rollback_damagelog on both machines dates
+	// any parting to a tic and an object.
+	uint32_t damages;
+	uint32_t damagehash;
 
 	uint8_t numkarts;
 	uint8_t reserved;

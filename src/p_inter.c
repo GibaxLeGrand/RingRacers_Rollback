@@ -3696,7 +3696,7 @@ static dboolean P_DamageMobjCompat(mobj_t *target, mobj_t *inflictor, mobj_t *so
   * \todo Clean up this mess, split into multiple functions.
   * \sa P_KillMobj
   */
-dboolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t damage, uint8_t damagetype)
+static dboolean P_DamageMobjInner(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t damage, uint8_t damagetype)
 {
 	if (G_CompatLevel(0x0010))
 		return P_DamageMobjCompat(target, inflictor, source, damage, damagetype);
@@ -4539,6 +4539,25 @@ dboolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t
 	}
 
 	return true;
+}
+
+/** P_DamageMobj proper: the work above, plus a note for the netcode.
+  *
+  * A wrapper rather than a call at each of the twenty-three return sites, and
+  * deliberately outside the function: what the two machines have to agree on is
+  * the OUTCOME. They refuse different attempts all day long -- an invincible
+  * kart here, a punt there -- without disagreeing about the world, so counting
+  * attempts would read non-zero for an innocent reason, which is how the
+  * collision tally that preceded this one wasted a race.
+  */
+dboolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t damage, uint8_t damagetype)
+{
+	const dboolean took = P_DamageMobjInner(target, inflictor, source, damage, damagetype);
+
+	if (took == true)
+		K_RollbackNoteDamage(target, inflictor, damagetype);
+
+	return took;
 }
 
 #define RING_LAYER_SIDE_SIZE (3)

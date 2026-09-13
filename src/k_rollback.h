@@ -101,19 +101,24 @@ dboolean K_RollbackCorrectSuppress(void);
   * it has to be applied to is the confirmed one, which does not exist yet at
   * the moment a packet is read. */
 void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
-	uint8_t n, uint32_t collides, uint32_t collidehash);
+	uint8_t n, uint32_t damages, uint32_t damagehash);
 
 struct mobj_t;
 
-/** Records one collision resolved on a confirmed tic, keyed by something both
-  * machines agree on. Called from P_CheckPosition's thing-versus-thing test.
-  * Ignored while a speculation is running: a speculated collision is not a
-  * fact, and it would walk this machine's tally away from the server's for a
-  * reason that is not a bug. */
-void K_RollbackNoteLiveCollide(struct mobj_t *a, struct mobj_t *b);
+/** Records one damage outcome resolved on a confirmed tic, keyed by something
+  * both machines agree on. Called from P_DamageMobj, and only when it returns
+  * true: an attempt that was refused is not an event, and the two machines
+  * refuse different attempts constantly without disagreeing about the world.
+  *
+  * Ignored while a speculation is running. A speculated hit is not a fact, and
+  * counting one would walk this machine's tally away from the server's for a
+  * reason that is not a bug -- the failure mode of every instrument here that
+  * has read non-zero innocently. */
+void K_RollbackNoteDamage(struct mobj_t *victim, struct mobj_t *inflictor,
+	uint8_t damagetype);
 
-/** This machine's running collision tally and hash, for the packet to carry. */
-void K_RollbackLiveCollides(uint32_t *count, uint32_t *hash);
+/** This machine's running damage tally and hash, for the packet to carry. */
+void K_RollbackLiveDamages(uint32_t *count, uint32_t *hash);
 
 /** Measures the stored correction against this client's confirmed world, and
   * applies it when asked to. Called from the tic loop once the confirmed world

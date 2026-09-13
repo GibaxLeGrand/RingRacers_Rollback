@@ -504,3 +504,70 @@ is testing in `g_tm.thing` and leaves it for the caller to clear; the ticker
 brackets its own work with `P_MapStart`/`P_MapEnd`, and anything that moves a
 mobj from outside the ticker has to bracket itself. **Any future code that
 corrects the world outside `P_Ticker` needs the same bracket.**
+
+### 8.7 The state probe answered, and the collision probe did not
+
+One race at 171 ms, nine karts, exe verified, logs cleared beforehand. The
+packet carried nine extra state fields per kart and a running collision tally,
+and applied none of them: the question was *which* state differs.
+
+**The field tally across forty spikes:**
+
+```
+37 speed      13 flash      9 hitlag      7 tumble      2 item      1 nothing
+```
+
+`speed` is derived from `momx`/`momy` and recomputed every tic, so its 37 hits
+restate the momentum difference already known. What remains is one group with
+one author: **`flashing`, `tumbleBounces` and `hitlag` are all written by the
+damage path.** And the values say which way round it is:
+
+```
+tic 2952 p6   flash 0/64   tumble 0/2   hitlag 0/20
+tic 2988 p6   flash 0/64   tumble 0/3
+tic 3016 p6   flash 0/60
+tic 3032 p6   flash 0/44   hitlag 6/0   item 0/7
+tic 3040 p6   flash 0/37   hitlag 0/6
+```
+
+The server counts a 64-tic flash down for ninety tics. **The client never
+started it.** So the two machines disagree about *damage events* -- who got hit
+and when -- and it goes both ways: p8 read `hitlag 7/0` at tic 2728 and `0/6`
+eight tics later.
+
+⚠ **This retires option (a).** Carrying `flashing` and `tumbleBounces` over the
+wire would make the kart blink and tumble on the client *without the damage
+having happened* -- no rings lost, no item lost, no speed penalty. It would
+desynchronise the meaning of the race in order to tidy the position, and bury
+the cause. Measuring before applying was worth the race.
+
+⚠ **And the collision half of that instrument was built wrong.** It sat in
+`PIT_CheckThing`, which fires on every pair of objects that come *near* each
+other: it read 27 million per race, and its value depends on who is near whom --
+that is, on the divergence it was meant to date. The offset moved +837k, +820k,
+then −757k, −747k, and that was the instrument, not the game. **Circular, and
+therefore mute.** It also cost a call per pair in a loop whose budget is already
+9.5 ms of a 28.6 ms tic. Retired, not kept alongside.
+
+**What replaces it: a damage-event tally.** `P_DamageMobj` became a wrapper
+around the original body, and it notes the **outcome** -- only when the function
+returns true. Attempts are refused differently on the two machines all day long
+(an invincible kart here, a punt there) without either being wrong, so counting
+attempts would have read non-zero innocently, exactly like the tally it
+replaces. A few dozen events per race instead of 27 million.
+
+Two things make it readable:
+
+- **The counts are an equality test, not an offset.** The packet names the tic
+  the server was about to run, and the client holds it until its own clock
+  reaches that tic, so both sample at the same boundary. The client adopts the
+  server's count and hash once, on the first correction that lands on its own
+  tic -- it missed the events from before it joined -- and from there the two
+  fold the same events in the same order. Equal means agreement.
+- **`rollback_damagelog 1`, run on both machines,** prints one line per event:
+  tic, victim, inflictor, damage type, running hash. Confirmed tics are lockstep
+  so the tic numbers match, and the two logs diff directly. The first line where
+  the hashes part is the first hit the two machines judged differently.
+
+That is the upstream question the position error has been a symptom of since the
+start, asked at the one place where a disagreement cannot be innocent.

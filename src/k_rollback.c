@@ -2831,19 +2831,38 @@ static uint32_t g_driftrefused;     // ... and karts the move refused to place
 #define ROLLBACK_SPIKEMAX 40
 static uint32_t g_driftspikes;
 
-// Collisions resolved on confirmed tics, and a hash of who was in them.
+// Damage outcomes resolved on confirmed tics, and a hash of which ones.
 //
-// Running, never reset, and that is deliberate: the server resolved collisions
-// on RR_TESTRUN before this client ever joined, so the two tallies start with a
-// constant offset. The offset is not the signal -- a CHANGE in it is. If the
-// difference between the two counts is the same before and after a spike, both
-// machines saw the same collisions and the divergence is downstream, in one of
-// the state fields. If it moves, the collision itself resolved differently, and
-// no amount of state carried over the wire will fix that.
-static uint32_t g_livecollides;
-static uint32_t g_livecollidehash;
-static uint32_t g_srvcollides;
-static uint32_t g_srvcollidehash;
+// The collision tally this replaces counted twenty-seven million proximity
+// tests per race and could not answer anything: PIT_CheckThing fires on every
+// pair of objects that come near each other, so the count depends on who is
+// near whom, which depends on the divergence it was meant to date. Its offset
+// between the two machines moved by 837k and then by -757k, and that was the
+// instrument, not the game.
+//
+// Damage events are a few dozen per race, and each one is a decision both
+// machines must reach the same way. Forty spikes named flashing (13),
+// tumbleBounces (7) and hitlag (9) -- every one of them written by the damage
+// path, every one of them showing the *server* holding a hit the client never
+// took.
+//
+// Running, and rebased once: the client joined after the map started, so it
+// missed events the server counted. The first correction that lands on its own
+// tic hands over the server's count and hash, and from that boundary the two
+// machines fold the same events in the same order -- so the pair is an equality
+// test, not an offset to interpret. rollback_damagelog, run on both machines,
+// then dates any parting to a tic and an object.
+static uint32_t g_livedamages;
+static uint32_t g_livedamagehash;
+static uint32_t g_srvdamages;
+static uint32_t g_srvdamagehash;
+
+// One line per damage event, capped: a race that spends its whole log on this
+// has no room left for the spikes.
+#define ROLLBACK_DAMAGELOGMAX 400
+static dboolean g_damagelog;
+static uint32_t g_damagelogged;
+static dboolean g_damagebase;
 
 
 /** True while a correction is re-running tics that have already been played.
@@ -3899,13 +3918,13 @@ dboolean K_RollbackCorrectSuppress(void)
 	return (g_correctrate > 0 && g_correctsuppress);
 }
 
-/** A key for one side of a collision that means the same thing on every machine.
+/** A key for one side of an event that means the same thing on every machine.
   *
   * Not mobjnum: that is handed out afresh by every P_SaveNetGame, and a client
   * taking a snapshot every tic renumbers constantly, so a hash over mobjnums
   * would differ between two machines that agreed about everything.
   */
-static uint32_t K_CollideKey(struct mobj_t *mo)
+static uint32_t K_EventKey(struct mobj_t *mo)
 {
 	const mobj_t *m = mo;
 
@@ -3918,42 +3937,61 @@ static uint32_t K_CollideKey(struct mobj_t *mo)
 	return 0x10000u + (uint32_t)m->type;
 }
 
-void K_RollbackNoteLiveCollide(struct mobj_t *a, struct mobj_t *b)
+/** Names a mobj the way both machines would name it, for a log to be diffed. */
+static const char *K_DescribeMobj(struct mobj_t *mo, char *buf, size_t len)
 {
-	uint32_t ka, kb;
+	const mobj_t *m = mo;
 
-	// A speculated collision is not a fact. Counting one would walk this
-	// machine's tally away from the server's for a reason that is not a bug --
-	// the exact failure mode of every instrument here that read non-zero
-	// innocently.
+	if (m == NULL)
+		snprintf(buf, len, "-");
+	else if (m->player != NULL)
+		snprintf(buf, len, "p%d", (int32_t)(m->player - players));
+	else
+		snprintf(buf, len, "t%d", (int32_t)m->type);
+
+	return buf;
+}
+
+void K_RollbackNoteDamage(struct mobj_t *victim, struct mobj_t *inflictor,
+	uint8_t damagetype)
+{
+	uint32_t key;
+
 	if (gamestate != GS_LEVEL || K_RollbackReplaying())
 		return;
 
-	ka = K_CollideKey(a);
-	kb = K_CollideKey(b);
+	key = (K_EventKey(victim) * 251u) + (uint32_t)damagetype;
 
-	// Order-independent: which of the two is the thing being moved depends on
-	// the order the blockmap hands them over, and that is not a fact about the
-	// world. This branch has already spent a fix on blockmap chain order.
-	if (ka > kb)
+	g_livedamages++;
+	g_livedamagehash = ((g_livedamagehash ^ key) * 16777619u)
+		^ K_EventKey(inflictor);
+
+	if (g_damagelog == true && g_damagelogged < ROLLBACK_DAMAGELOGMAX)
 	{
-		const uint32_t swap = ka;
+		char v[32], f[32];
 
-		ka = kb;
-		kb = swap;
+		g_damagelogged++;
+
+		// The tic is the same number on both machines -- confirmed tics are
+		// lockstep, whatever the wall clock says -- so these lines diff
+		// directly, and the running hash marks where the two stories part even
+		// when one side is missing an event rather than judging it differently.
+		CONS_Printf("rollback_damage: tic %u #%u %s hit by %s type %u -- "
+			"hash %08x" "\n",
+			(uint32_t)gametic, g_livedamages,
+			K_DescribeMobj(victim, v, sizeof v),
+			K_DescribeMobj(inflictor, f, sizeof f),
+			(uint32_t)damagetype, g_livedamagehash);
 	}
-
-	g_livecollides++;
-	g_livecollidehash = ((g_livecollidehash ^ ka) * 16777619u) ^ kb;
 }
 
-void K_RollbackLiveCollides(uint32_t *count, uint32_t *hash)
+void K_RollbackLiveDamages(uint32_t *count, uint32_t *hash)
 {
 	if (count != NULL)
-		*count = g_livecollides;
+		*count = g_livedamages;
 
 	if (hash != NULL)
-		*hash = g_livecollidehash;
+		*hash = g_livedamagehash;
 }
 
 /** Appends " name mine/theirs" to buf, but only when the two differ.
@@ -3975,7 +4013,7 @@ static void K_NoteDiff(char *buf, size_t len, const char *name,
 }
 
 void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
-	uint8_t n, uint32_t collides, uint32_t collidehash)
+	uint8_t n, uint32_t damages, uint32_t damagehash)
 {
 	if (n > MAXPLAYERS)
 		n = MAXPLAYERS;
@@ -3989,8 +4027,8 @@ void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
 	g_correcttic = tic;
 	g_correctn = n;
 	memcpy(g_correctkart, karts, n * sizeof (struct rollbackkart_t));
-	g_srvcollides = collides;
-	g_srvcollidehash = collidehash;
+	g_srvdamages = damages;
+	g_srvdamagehash = damagehash;
 
 	g_correctpending = true;
 	g_corrections++;
@@ -4051,6 +4089,27 @@ void K_RollbackApplyServerState(void)
 	}
 
 	g_correctused++;
+
+	// The first correction that lands on its own tic sets the baseline.
+	//
+	// Both machines measure at the same instant -- the packet names the tic the
+	// server was about to run, and it is held here until this clock reaches that
+	// same tic -- so at this boundary the two tallies differ only by the events
+	// that happened before this client joined. Adopting the server's numbers
+	// once turns a pair of counts with an unknown offset into an equality test:
+	// from here the two fold the same events in the same order, so equal means
+	// they agree, and the first tic where they part is the divergence.
+	if (g_damagebase == false)
+	{
+		g_damagebase = true;
+		g_livedamages = g_srvdamages;
+		g_livedamagehash = g_srvdamagehash;
+
+		CONS_Printf("rollback_damage: baseline at tic %u -- adopting the "
+			"server's %u events (hash %08x); equal from here means agreement"
+			"\n",
+			g_correcttic, g_srvdamages, g_srvdamagehash);
+	}
 
 	// P_MoveOrigin goes through P_CheckPosition, which parks the thing it is
 	// testing in g_tm.thing and leaves it there for the caller. The ticker
@@ -4117,13 +4176,13 @@ void K_RollbackApplyServerState(void)
 			K_NoteDiff(st, sizeof st, "item", p->itemtype, c->itemtype);
 
 			CONS_Printf("rollback_drift: SPIKE tic %u p%d off by %s -- "
-				"mom here (%d,%d,%d) server (%d,%d,%d) -- collides %u/%u -- "
+				"mom here (%d,%d,%d) server (%d,%d,%d) -- damage %u/%u -- "
 				"differs:%s" "\n",
 				g_correcttic, (int32_t)c->slot,
 				K_DescribeFrac(err, e, sizeof e),
 				p->mo->momx, p->mo->momy, p->mo->momz,
 				c->momx, c->momy, c->momz,
-				g_livecollides, g_srvcollides,
+				g_livedamages, g_srvdamages,
 				(st[0] != 0 ? st : " nothing -- kinematics only"));
 		}
 
@@ -4216,6 +4275,25 @@ static void Command_RollbackCorrect_f(void)
   * whether the corrections are also applied; off by default, because measuring
   * and correcting in the same run gives a number about neither.
   */
+/** Console command: rollback_damagelog [0/1]
+  *
+  * Run on BOTH machines. Prints one line per damage outcome resolved on a
+  * confirmed tic, with a running hash. The two logs diff tic for tic, and the
+  * first line where the hashes part is the first hit the two machines judged
+  * differently -- the event, rather than the position error it shows up as.
+  */
+static void Command_RollbackDamageLog_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_damagelog = (atoi(COM_Argv(1)) != 0);
+		g_damagelogged = 0;
+	}
+
+	CONS_Printf("rollback_damagelog: %s -- %u events so far, hash %08x" "\n",
+		(g_damagelog ? "on" : "off"), g_livedamages, g_livedamagehash);
+}
+
 static void Command_RollbackDrift_f(void)
 {
 	char a[64], b[64];
@@ -4236,10 +4314,10 @@ static void Command_RollbackDrift_f(void)
 			? "applying -- karts are moved to where the server says"
 			: "measuring only -- nothing is moved"));
 
-	CONS_Printf("rollback_drift: collisions on confirmed tics -- here %u (hash "
-		"%08x), server %u (hash %08x). The offset is not the signal; a CHANGE in "
-		"it is." "\n",
-		g_livecollides, g_livecollidehash, g_srvcollides, g_srvcollidehash);
+	CONS_Printf("rollback_drift: damage events on confirmed tics -- here %u "
+		"(hash %08x), server %u (hash %08x). The offset from the join is not the "
+		"signal; a CHANGE in it is, and rollback_damagelog dates it." "\n",
+		g_livedamages, g_livedamagehash, g_srvdamages, g_srvdamagehash);
 
 	if (g_driftspikes > 0)
 	{
@@ -4818,4 +4896,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_blame", Command_RollbackBlame_f);
 	COM_AddDebugCommand("rollback_correct", Command_RollbackCorrect_f);
 	COM_AddDebugCommand("rollback_drift", Command_RollbackDrift_f);
+	COM_AddDebugCommand("rollback_damagelog", Command_RollbackDamageLog_f);
 }

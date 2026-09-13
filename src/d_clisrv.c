@@ -6099,7 +6099,7 @@ static void HandlePacketFromPlayer(int8_t node)
 				}
 
 				K_RollbackNoteServerState(in->tic, karts, n,
-					in->collides, in->collidehash);
+					in->damages, in->damagehash);
 			}
 			break;
 
@@ -6843,14 +6843,14 @@ static void SV_SendStateCorrection(void)
 	netbuffer->u.statecorrection.reserved = 0;
 
 	{
-		uint32_t collides = 0, collidehash = 0;
+		uint32_t damages = 0, damagehash = 0;
 
 		// Through locals: statecorrection_pak is packed, so taking the address
 		// of a member of it is an unaligned pointer.
-		K_RollbackLiveCollides(&collides, &collidehash);
+		K_RollbackLiveDamages(&damages, &damagehash);
 
-		netbuffer->u.statecorrection.collides = collides;
-		netbuffer->u.statecorrection.collidehash = collidehash;
+		netbuffer->u.statecorrection.damages = damages;
+		netbuffer->u.statecorrection.damagehash = damagehash;
 	}
 
 	for (i = 0; i < MAXPLAYERS; i++)

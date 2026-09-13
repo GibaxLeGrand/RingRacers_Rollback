@@ -539,10 +539,11 @@ static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
 	// are not simulating the same world, whatever their state says they hold.
 	K_RollbackTraceCollide(g_tm.thing->mobjnum, thing->mobjnum);
 
-	// And the cross-machine form of the same question. The line above hashes
-	// mobjnums, which is fine for comparing two passes on one machine and
-	// useless for comparing two machines: mobjnum is reissued at every save.
-	K_RollbackNoteLiveCollide(g_tm.thing, thing);
+	// A cross-machine tally used to sit here, and it was retired: this function
+	// runs on every pair of objects that come near each other, so it counted
+	// twenty-seven million proximity tests per race, its value depended on the
+	// positions it was meant to audit, and it cost a call per pair. The events
+	// worth comparing between two machines are in P_DamageMobj.
 
 	// don't clip against self
 	if (thing == g_tm.thing)
