@@ -2804,7 +2804,11 @@ static uint32_t g_correcttic;
 static uint8_t g_correctn;
 static struct rollbackkart_t g_correctkart[MAXPLAYERS];
 
-static uint32_t g_corrections;      // corrections received
+static uint32_t g_statecorrections; // corrections received off the wire
+                                    // (not g_corrections: that name is already a
+                                    // file-scope counter for the old loop's own
+                                    // rollbacks, and a second tentative definition
+                                    // of it would have been the same object)
 static uint32_t g_correctused;      // ... measured against the tic they name
 static uint32_t g_correctmissed;    // ... dropped because the loop stepped over it
 static uint32_t g_driftsamples;     // kart-corrections measured
@@ -4031,7 +4035,7 @@ void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
 	g_srvdamagehash = damagehash;
 
 	g_correctpending = true;
-	g_corrections++;
+	g_statecorrections++;
 }
 
 /** The distance between two fixed-point coordinates, in 1/65536 of a unit.
@@ -4302,7 +4306,7 @@ static void Command_RollbackDrift_f(void)
 	{
 		g_correctapply = (atoi(COM_Argv(1)) != 0);
 
-		g_corrections = g_correctused = g_correctmissed = g_driftsamples = 0;
+		g_statecorrections = g_correctused = g_correctmissed = g_driftsamples = 0;
 		g_driftspikes = 0;
 		g_driftsum = g_driftmax = 0;
 		g_driftworst = -1;
@@ -4328,7 +4332,7 @@ static void Command_RollbackDrift_f(void)
 
 	CONS_Printf("rollback_drift: %u corrections received, %u measured on the tic "
 		"they name, %u stepped over, %u kart samples\n",
-		g_corrections, g_correctused, g_correctmissed, g_driftsamples);
+		g_statecorrections, g_correctused, g_correctmissed, g_driftsamples);
 
 	if (g_driftsamples == 0)
 	{
