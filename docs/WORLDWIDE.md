@@ -571,3 +571,99 @@ Two things make it readable:
 
 That is the upstream question the position error has been a symptom of since the
 start, asked at the one place where a disagreement cannot be innocent.
+
+### 8.8 The damage path is innocent: the divergence is in *when*, not *whether*
+
+One race, 171 ms, nine karts, exe `1d2ca682fed9` on both instances, one session
+header and one end-of-logstream in each log.
+
+**0 resyncs, 8 resends suppressed. 3366 karts put back, 0 refused. Mean 0.338
+units, worst 56.025 on p7, 40 spikes.**
+
+**The damage tally answered, and it cleared the damage path.** Two events in the
+whole race, and the counters were *equal at every check* -- `here 1 (hash
+7e02595a), server 1 (hash 7e02595a)`, then `2 / 2 (debbc4bd)` on both. Where the
+two machines judged a hit, they judged it identically: same victim, same
+inflictor, same damage type, same hash.
+
+⚠ **Then the two logs were diffed, and this came out:**
+
+```
+client:  rollback_damage: tic 2861 #2 p7 hit by t430 type 3 -- hash debbc4bd
+server:  rollback_damage: tic 2867 #2 p7 hit by t430 type 3 -- hash debbc4bd
+```
+
+**The same hit, six tics apart.** Confirmed tics are lockstep, so those two tic
+numbers describe the same instant of the same race. `rollback_lag` is 6.
+
+The spikes around it tell the same story from the state side:
+
+```
+tic 2864 p7 off by 40.355 -- damage 2/1 -- flash 82/0  tumble 1/0  hitlag 12/0
+tic 2868 p7 off by 56.025 -- damage 2/2 -- tumble 2/1             hitlag 0/14
+```
+
+At 2864 the client is already three tics into the flash and the server has not
+started it; at 2868 the server starts while the client is a bounce further on.
+**Nobody is wrong about the hit. They are out of step.** So the earlier reading
+of this branch -- "the server holds a damage state the client never took" -- was
+half right and pointed the wrong way: it is the same state, offset in time, and
+whichever machine is ahead depends on which side of the offset the sample lands.
+
+**And the shape of the error says the same thing.** p8 -- `*Guest has joined the
+game (player 8)`, the client's own kart -- owns 30 of the 40 spikes, with
+momentum differing by 10 to 20% while the position differs by four to ten units:
+
+```
+tic 2444 p8 off by 4.700 -- mom here (437710,-455959,0) server (533567,-483705,0)
+```
+
+A large velocity difference with a small position difference is not a spatial
+error. **It is a phase difference: the same trajectory, sampled at different
+times.** Sub-unit drift cannot move a collision by six tics -- at eight units a
+tic that is fifty units of travel -- but a phase offset of the lag does it
+exactly.
+
+**The mechanism, read out of the code rather than guessed:**
+
+`d_clisrv.c:7290` decides a tic is *predicted* when `gametic >= neededtic` --
+the client has caught up with what the server has told it -- and then **runs
+that tic anyway, advancing `gametic`, the confirmed clock**, on inputs filled in
+by `K_RollbackPredictInputs`. For the local player that fill is not a guess: it
+writes what you are holding *now* and stamps it `TICCMD_RECEIVED`. The server
+receives that same input a trip time later and spends it on a **later tic**. So
+the client's confirmed world applies your input six tics before the server's
+does.
+
+That is sound as long as the contradiction is repaired, and the repair exists:
+`K_RollbackPending` re-runs a confirmed tic the network has contradicted. But it
+opens with
+
+```c
+if (g_havecorrection == false || g_loopahead <= 0)
+    return false;
+```
+
+and `Command_RollbackTwoClock_f` sets **`g_loopahead = 0`** whenever the
+two-clock mode is turned on. **In the mode every measurement on this branch has
+been taken in, a confirmed tic that ran on a guess is never re-run.** A
+permanent divergence, continuously fed, on exactly the kart whose input is
+guessed -- which is exactly what 30 of 40 spikes on p8 look like.
+
+⚠ **Not yet proven, and the missing proof is one line.** `g_predicted` and
+`g_furthestahead` count this path, and they are printed by `rollback_loop`,
+which was not in the scenario. Added now. The next race says whether the
+confirmed clock ever ran a guessed tic, and how far ahead it got.
+
+**Three conditions localise the cause, and none of them needs a build:**
+
+| Scenario | Saves | Restores | Speculates | Predicts confirmed tics |
+|---|---|---|---|---|
+| `rollback_twoclock 0` | no | no | no | (old loop, rollback armed) |
+| `rollback_twoclock 4` + `rollback_nullspec 1` | yes | yes | no | yes, unrepaired |
+| `rollback_twoclock 4` | yes | yes | yes | yes, unrepaired |
+
+If the drift survives with nothing speculated, the archive is lossy. If it
+survives with nothing saved either, it is upstream of everything this branch
+added. If it only appears in the third row, the speculation leaks. **The
+instruments are in place for all three.**
