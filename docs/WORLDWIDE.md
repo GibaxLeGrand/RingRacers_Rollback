@@ -905,3 +905,23 @@ divergence is a second real leak or the same family of gap under a different
 name, and whether fixing the roulette archive gap alone drops the leak-check's
 failure rate toward zero -- the next soak, on this build, answers the second
 one directly.
+
+### 8.15 Confirmed: two clean soaks after the fix, 0/522
+
+Two more `soak_leak.cfg` runs on the roulette-archive fix (8.14), back to back:
+**0 failures in 261, then 0 failures in another 261.** Against 1/261 on the
+already-confound-corrected harness just before the fix, and 2-3/261 before
+that on the unfixed harness. `baseDist`/`firstDist`/`secondDist`/
+`secondToFirst` were the leak `rollback_leak` was built to find.
+
+**`itemRoulette.itemList.cap` (offset 672) did not reappear either**, across
+522 more checks -- consistent with 8.14's reading that it was allocator
+bookkeeping riding along with the real bug rather than a second leak of its
+own, though 522 checks is not a proof of never.
+
+Phase A -- zero divergence over unattended runs -- has not been re-measured
+over the network since this fix (that needs the two-instance harness and a
+person driving, per the roadmap). What this closes is narrower and still
+real: **the specific mechanism `rollback_leak` was written to isolate --
+honest state a restore fails to carry -- is no longer reproducing on this
+soak**, on the map and kart count the netplay races have been run on.
