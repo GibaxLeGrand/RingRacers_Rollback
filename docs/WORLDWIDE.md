@@ -760,3 +760,43 @@ check that cannot fail is worse than no check.
 took 1800 tics to appear and one check at an arbitrary moment proves little.
 `soak_leak.cfg` is that soak on the netplay map, ~250 checks, one instance, no
 network. **An iteration goes from five minutes to two seconds.**
+
+### 8.11 rollback_leak's first catch: an honest pass already leaks, and it is not one field
+
+`soak_leak.cfg` on `RR_SkyscraperLeaps`, 8 racers, `rollback_soak 20 4 1`: **261
+checks, 1 failure**, at leveltime 1500. One machine, no network, two seconds a
+check.
+
+⚠ **The failure is the HONEST-pass case, not the mispredicted one.** A pass of
+4 tics on the *real* inputs, restored, followed by the same real tic that a
+pristine snapshot would have run directly -- already disagrees with running
+that tic straight from the snapshot. This is a more fundamental leak than the
+"wrong inputs" hypothesis `rollback_leak` was built to test, and it is exactly
+what `K_ResimCheck`'s own design cannot see: that check compares two N-tic
+passes to each other, never a fresh 1-tic run against a "ran ahead, restored,
+ran again" one.
+
+**And it is not narrow.** `K_CompareMobjs` came back clean -- 1359 objects,
+0 differed, every mobjnum matched on both sides. So whatever leaked is not in
+any archived per-object field (which rules out `old_z`, a known gap this
+project has flagged before: it is real -- 0 hits in `p_saveg.cpp` -- but the
+mobj comparison proves it is not what fired here). The leak is in `player_t`,
+and it is **not one field**: five different players (1 through 5) carried
+differing bytes at offsets 110, 284, 292, 296, 332, 672, 680 and 1016 -- all
+inside the gap between `tilt` (84) and `timeshitprev` (1129), which the report
+had no names for. Five players changing at once from a single mispredicted
+pass is the shape of something *shared* -- an RNG draw count, a tic-global
+timer -- more than of five independent per-player bugs.
+
+**Extended the offsets line** (`K_ComparePlayers`) to name the candidates living
+in that gap by `offsetof`: `speed`, `lastspeed`, `exiting`, `cmomx`, `cmomy`,
+`rmomx`, `rmomy`, `totalring`, `realtime`, `laptime`, `laps`, `latestlap`,
+`timeshit`, `deadtimer`. `exiting` is on that list on purpose: it is the second
+half of `K_PlayerUsesBotMovement` (`bot` OR `exiting`), so a player finishing
+mid-check would switch prediction mechanism precisely where this leak lives.
+Nothing else changed -- next failure names the field instead of needing a hex
+dump triangulated by hand.
+
+Rare (1/261, about 0.4%) but decisive: **the netplay drift is not a networking
+artifact.** The same class of leak reproduces on one machine, from a single
+honest extra pass, with no round trip involved.

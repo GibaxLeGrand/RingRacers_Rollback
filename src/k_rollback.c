@@ -1765,6 +1765,31 @@ static void K_ComparePlayers(const char *cmd, const uint8_t *was, const uint8_t 
 			(unsigned)offsetof(player_t, tilt), (unsigned)offsetof(player_t, karthud),
 			(unsigned)offsetof(player_t, timeshitprev), (unsigned)offsetof(player_t, roundconditions));
 		K_Finding(text);
+
+		// The gap between tilt and timeshitprev, unnamed until the first
+		// rollback_leak soak failure put eight differing runs inside it --
+		// offsets 110, 284, 292, 296, 332, 672, 680, 1016 -- across five
+		// players, none of them nameable. Two lines so neither runs past the
+		// buffer text[] is sized for.
+		snprintf(text, sizeof (text),
+			"%s: offsets -- speed %u, lastspeed %u, exiting %u, cmomx %u, "
+			"cmomy %u, rmomx %u, rmomy %u",
+			cmd,
+			(unsigned)offsetof(player_t, speed), (unsigned)offsetof(player_t, lastspeed),
+			(unsigned)offsetof(player_t, exiting), (unsigned)offsetof(player_t, cmomx),
+			(unsigned)offsetof(player_t, cmomy), (unsigned)offsetof(player_t, rmomx),
+			(unsigned)offsetof(player_t, rmomy));
+		K_Finding(text);
+
+		snprintf(text, sizeof (text),
+			"%s: offsets -- totalring %u, realtime %u, laptime %u, laps %u, "
+			"latestlap %u, timeshit %u, deadtimer %u",
+			cmd,
+			(unsigned)offsetof(player_t, totalring), (unsigned)offsetof(player_t, realtime),
+			(unsigned)offsetof(player_t, laptime), (unsigned)offsetof(player_t, laps),
+			(unsigned)offsetof(player_t, latestlap), (unsigned)offsetof(player_t, timeshit),
+			(unsigned)offsetof(player_t, deadtimer));
+		K_Finding(text);
 	}
 
 	// What was looked at, not only what was found. A run of field lines says
