@@ -853,3 +853,55 @@ leaves anything behind. The three failures logged in 8.11-8.12 were taken
 *before* this fix and cannot yet be trusted as the netcode's fault rather than
 the harness's -- they are consistent with either. Re-running the soak on the
 corrected build is the next thing this session does.
+
+### 8.14 With the confound fixed: one failure survives, and it names two real bugs
+
+Re-ran `soak_leak.cfg` on the corrected harness (8.13). **261 checks, 1
+failure** -- down from 2-3, but not zero. This one is real: both sides of the
+comparison now get exactly one restore before their comparable tic, so nothing
+about "live vs rebuilt" explains it.
+
+**The primary byte (offset 1010, player 2) sits inside `turbineheight`** --
+already named, already traced (8.11-8.12): computed each tic from archived
+player and target-mobj positions alone, no hidden C-side global in
+`wpzturbine.c`. Still open.
+
+**And offset 672 -- the one that has now recurred on four separate soak runs,
+on four different players, surviving the confound fix -- finally has a name.**
+The offset table in 8.11-8.12 named everything from `seasaw` (972) onward but
+never read the ~230 bytes between `karthud` and `seasaw`, because a
+`itemroulette_t itemRoulette;` member sits in there and nothing in that range
+had been extracted by name. A standalone probe (same stub, real `offsetof`,
+verified against the three offsets the game itself had already printed --
+`cmd`=8, `karthud`=228, `tilt`=84, all exact) placed it precisely:
+`itemRoulette.itemList` at 656-679, `itemRoulette.playing` at 680. **672 is
+`itemRoulette.itemList.cap`** -- the allocated capacity of the roulette's item
+buffer, a heap-allocation bookkeeping value. Plausibly benign (an allocator
+choosing a different capacity for the same content is not a gameplay
+difference) rather than the leak itself.
+
+**But reading `p_saveg.cpp` to name it turned up something worse, right next
+to fields that already are archived.** `itemroulette_t` declares six
+tic-order-relevant fields: `preexpdist`, `dist`, `baseDist`, `firstDist`,
+`secondDist`, `secondToFirst`. Only the first two were ever written or read.
+The other four -- confirmed live in `k_roulette.c`, not dead code -- are what
+the roulette itself uses to decide **how fast it spins** (`baseDist`, against
+`ENDDIST`/`ROULETTE_SPEED_DIST`) and **whether to force an SPB into the
+result** (`secondToFirst >= SPBFORCEDIST`). Exactly the kind of value the
+project's very first audit already named as the reason a roulette result must
+never be predicted -- and it turns out the roulette's own internal accounting
+was never protected by a restore at all. Any `K_LoadGameState` mid-roulette,
+not only this check's synthetic one, left these four holding whatever the
+live world last computed instead of what the snapshot actually had.
+
+**Fixed**: `baseDist`, `firstDist`, `secondDist`, `secondToFirst` now write and
+read in `P_NetArchivePlayers`/`P_NetUnArchivePlayers`, in the same order,
+immediately after `dist`. Additive and symmetric -- vanilla wire compatibility
+was already abandoned for this branch, and both ends of every test run the
+same CI build, so there is no version-skew risk to weigh.
+
+Two separate things remain open after this: whether `turbineheight`'s
+divergence is a second real leak or the same family of gap under a different
+name, and whether fixing the roulette archive gap alone drops the leak-check's
+failure rate toward zero -- the next soak, on this build, answers the second
+one directly.

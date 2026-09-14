@@ -917,6 +917,18 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 		WRITEUINT32(save->p, players[i].itemRoulette.preexpdist);
 		WRITEUINT32(save->p, players[i].itemRoulette.dist);
+
+		// baseDist drives the roulette's own spin-speed calculation
+		// (K_RouletteTick, progress/frontRun) and secondToFirst decides
+		// whether an SPB is forced into the result (SPBFORCEDIST) -- both
+		// read every tic the roulette runs, neither archived until now, so a
+		// restore mid-roulette left them holding whatever the world last
+		// computed rather than what this snapshot actually had.
+		WRITEUINT32(save->p, players[i].itemRoulette.baseDist);
+		WRITEUINT32(save->p, players[i].itemRoulette.firstDist);
+		WRITEUINT32(save->p, players[i].itemRoulette.secondDist);
+		WRITEUINT32(save->p, players[i].itemRoulette.secondToFirst);
+
 		WRITEUINT32(save->p, players[i].itemRoulette.index);
 		WRITEUINT8(save->p, players[i].itemRoulette.sound);
 		WRITEUINT32(save->p, players[i].itemRoulette.speed);
@@ -1705,6 +1717,12 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 
 		players[i].itemRoulette.preexpdist = READUINT32(save->p);
 		players[i].itemRoulette.dist = READUINT32(save->p);
+
+		players[i].itemRoulette.baseDist = READUINT32(save->p);
+		players[i].itemRoulette.firstDist = READUINT32(save->p);
+		players[i].itemRoulette.secondDist = READUINT32(save->p);
+		players[i].itemRoulette.secondToFirst = READUINT32(save->p);
+
 		players[i].itemRoulette.index = (size_t)READUINT32(save->p);
 		players[i].itemRoulette.sound = READUINT8(save->p);
 		players[i].itemRoulette.speed = (tic_t)READUINT32(save->p);
