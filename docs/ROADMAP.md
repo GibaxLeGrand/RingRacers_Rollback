@@ -163,6 +163,72 @@ checked by reading the packet, not just by reading the setting.
 
 ---
 
+## Small, not yet scheduled -- server capability advertising, and a pre-join delay menu
+
+The long-term shape (Alex, 2026-09-14): WORLDWIDE stays wire-compatible with
+vanilla Ring Racers servers -- delay-based netcode, unchanged, when talking to
+one. Client-side prediction only turns on against a server that has opted in
+(`rollback_twoclock`/`rollback_correct` on), and a client that finds one
+*before joining* gets offered the client-local delay knob above, pre-filled
+with a value recommended from the server's own settings and the measured
+ping.
+
+**Already there, checked rather than assumed, 2026-09-14 -- this is the
+delivery mechanism for the item above, not new plumbing:**
+
+- **Vanilla compatibility is a hard constraint this branch already
+  satisfies, not something left to build.** The server-browser check
+  (`d_clisrv.c:1681-1691`) drops a server from the list outright on any
+  mismatch of `packetversion`, `version`, `subversion` or `application`
+  (`"RingRacers"`, hardcoded). Nothing here touches those four today. As
+  long as that stays true, a WORLDWIDE client and a vanilla server keep
+  seeing and joining each other exactly as they do now -- this is a
+  guardrail to respect, not a feature to add.
+- **The detection hook already exists, at exactly the right moment.**
+  `serverinfo_pak` (`d_clisrv.h:326`) is exchanged via `PT_ASKINFO`/
+  `PT_SERVERINFO` -- the server-browser query, strictly before any join. Its
+  `kartvars` byte is already a flag bag (`SV_SPEEDMASK`, `SV_DEDICATED`,
+  `SV_VOICEENABLED`, `SV_LOTSOFADDONS`; one comment already reads
+  *"previously isdedicated, now appropriated for our own nefarious
+  purposes"*), with three bits still free (`0x04`, `0x08`, `0x10`). A vanilla
+  server reports them unset for free -- no version bump, no new packet type,
+  nothing to special-case on that side.
+- **The ping the recommendation would use is already measured pre-join.**
+  `askinfo_pak.time` (`d_clisrv.h:364`) already round-trips for the server
+  browser's ping column.
+
+**The work, roughly, in order:**
+
+1. A new `SV_PREDICTION` bit on `kartvars`, set server-side under some
+   condition still to decide (probably mirrors, server-side, what
+   `K_RollbackPays()` already asks client-side -- `K_RollbackTwoClock() > 0`
+   read from the server's own console rather than a connected client's).
+2. Optionally, a few bytes appended to `serverinfo_pak` carrying the
+   server's configured depth/correction rate, so the client computes a real
+   recommendation instead of a guess -- append-only, and read defensively:
+   checked against how many bytes the packet actually carried, so an older
+   peer missing the field reads as "not advertised", never as garbage from
+   unread memory.
+3. A join-time menu, gated on the bit from (1), offering the delay knob
+   pre-filled from ping + (2).
+
+**What it must not do:** touch `packetversion`/`version`/`subversion`/
+`application`, or trust a new field's presence without checking the packet
+was actually long enough to carry it. Reading past what arrived is exactly
+the shape of bug this branch has already chased once (the `rollback_twoclock`
+mindelay fix, 2026-09-14, `docs/COMMANDS.md`) -- same lesson, now at the wire
+level instead of a local flag.
+
+**Depends on:** the client-local delay knob above -- this is what offers it
+to a player, not a substitute for building it.
+
+**Done when:** a WORLDWIDE client browsing a mixed list of vanilla and
+prediction-enabled servers joins both without incident, and joining the
+second kind offers the delay menu with a recommendation that is not a
+hardcoded default.
+
+---
+
 ## Phase D -- Feel
 
 **Needs C**, and it is the phase no log can finish.
