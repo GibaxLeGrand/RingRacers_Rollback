@@ -925,3 +925,63 @@ person driving, per the roadmap). What this closes is narrower and still
 real: **the specific mechanism `rollback_leak` was written to isolate --
 honest state a restore fails to carry -- is no longer reproducing on this
 soak**, on the map and kart count the netplay races have been run on.
+
+### 8.16 First netplay race after the roulette fix: drift survives, and the native consistency system independently confirms it
+
+`playtest.sh correct`, driven, exe `758de7969535` (carries the roulette-archive
+fix from 8.14). One session header/end on the client; the server log ends
+cleanly at `*Guest left the game` with no `end of logstream` line, which is
+consistent across every server log this branch has produced -- that string has
+never once appeared server-side in this project's logs, client-only, benign.
+
+**The fix did not close the network drift, and it was never expected to.**
+`rollback_leak` targets one specific mechanism -- honest state a restore fails
+to carry -- and that stopped reproducing offline (0/522). Netplay has at least
+one more mechanism: the six-tic phase offset documented in 8.9 (the client's
+own input lands on the confirmed clock before the server has applied it,
+because prediction runs it ahead of the round trip). This race is consistent
+with that still being live:
+
+```
+mean 0.862 units, worst 59.167 on p1, 40+ spikes (print cap hit)
+```
+
+Higher than the pre-fix races (0.33-0.53 mean) rather than lower -- read as
+race-to-race variance (crowding, item luck) rather than a regression; nothing
+in the fix touches kinematics.
+
+**Independent corroboration, from a system this branch did not write.** Ring
+Racers' own `Consistancy()` check fired eight times against the human player
+(displayed as "player 9", its 1-indexed convention for slot 8) at tics 2381,
+2556, 2731, 2906, 3081, 3256, 3431, 3606 -- roughly every 175 tics, the
+periodic check interval, each one landing because the last one was never
+repaired (`rollback_correct` keeps `K_RollbackCorrectSuppress()` on, so no
+resend ever fires). **The stock desync detector agrees with every instrument
+this branch has built**: the human-driven kart accumulates a divergence that
+nothing currently corrects.
+
+**And the damage channel caught its first genuine mismatch, not just a timing
+offset.** Baseline adopted 3 events on both sides (hash `c95eb0a8`, agreed).
+After that:
+
+```
+client:  tic 3316  p2 hit by t417 type 16
+         tic 3324  p1 hit by t418 type 16
+server:  tic 3206  p4 hit by t417 type 16
+```
+
+Client total 5, server total 4 -- not merely the same hit landing on a
+different tic (8.9's six-tic case): **different victims entirely** (p2/p1 on
+the client, p4 on the server), for an inflictor type that does match (417) at
+a tic 110 apart. The two worlds resolved genuinely different collisions, not
+the same collision read at different times. This is a stronger signal than
+8.9's finding and the clearest evidence yet that position drift eventually
+changes *what happens*, not only *where things are drawn*.
+
+**Where this leaves the hunt:** the archive-completeness mechanism
+(`rollback_leak`'s target) is closed for now. What remains is consistent with
+the phase-offset mechanism already named in 8.9, still unconfirmed by a direct
+instrument -- `rollback_loop`/`rollback_twoclock`'s counters answer "does the
+confirmed clock run on a guess" (no), not "how far out of phase are the two
+machines' clocks for the SAME wall-clock instant". That instrument does not
+exist yet.
