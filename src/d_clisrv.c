@@ -7576,13 +7576,18 @@ static void UpdatePingTable(void)
 		}
 
 		// Rollback exists to pay for latency after the fact instead of up front, so
-		// when the loop is on it takes the delay's job rather than sitting on top
+		// when prediction is on it takes the delay's job rather than sitting on top
 		// of it. Measured the other way round first, and the measurement was the
 		// point: with the gentleman's delay still in charge it absorbed 171 ms by
 		// itself, the client was starved twenty-five times in three minutes, the
 		// loop corrected eleven -- and the player felt the input lag the delay was
 		// adding, which is exactly the cost rollback is supposed to remove.
-		const dboolean rollbackpays = (K_RollbackPredictAhead() > 0);
+		//
+		// K_RollbackPays() covers rollback_loop AND rollback_twoclock -- asking
+		// K_RollbackPredictAhead() alone (the old loop only) used to mean this
+		// stayed false, and the delay stayed charged, the whole time the pivot
+		// has been measured. See K_RollbackPays()'s own comment.
+		const dboolean rollbackpays = K_RollbackPays();
 
 		if (server_lagless || rollbackpays)
 			target_lag = 0;
@@ -7602,7 +7607,7 @@ static void UpdatePingTable(void)
 		// predicted perfectly.
 		//
 		// Jitter absorption is worth having and this is not the way to get it
-		// while the loop is on. It comes back the moment the loop is off.
+		// while prediction is on. It comes back the moment neither is.
 		if (rollbackpays == false && target_lag < (tic_t)cv_mindelay.value)
 			target_lag = (tic_t)cv_mindelay.value;
 
@@ -7640,7 +7645,12 @@ static void UpdatePingTable(void)
 		// tics 1606 -> 406, and the offset went from +1.89 spread over four
 		// values to a single spike at exactly +1 -- 26 of 26, then 22 of 22,
 		// then 36 of 36.
-		if (K_RollbackPredictAhead() > 0)
+		//
+		// That measurement predates the two-clock pivot and was taken under the
+		// old loop, which is the only mode K_RollbackPredictAhead() (now
+		// K_RollbackPays()) recognised at the time -- so it is a fair measurement
+		// of the exemption, just not of the mode this branch has run in since.
+		if (K_RollbackPays())
 			target_lag = 0;
 		else
 			target_lag = cv_mindelay.value;

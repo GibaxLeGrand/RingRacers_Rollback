@@ -129,6 +129,14 @@ void K_RollbackApplyServerState(void);
   * the two-clock mode is off, which is the default. */
 int32_t K_RollbackTwoClock(void);
 
+/** True when this machine's own view is being covered by prediction -- either
+  * the old rollback_loop or the current rollback_twoclock pivot, whichever of
+  * the two (mutually exclusive) is actually running. The gentleman's delay
+  * (server) and mindelay (client) should get out of the way while this is
+  * true: rollback is already paying for the round trip, so a fixed delay on
+  * top of it is a cost paid twice. */
+dboolean K_RollbackPays(void);
+
 /** True while speculative tics are being run. Sound, the snapshot keeper and
   * anything else that must not happen twice sit these out: a speculation is
   * thrown away and rebuilt every pass, so its side effects would repeat. */

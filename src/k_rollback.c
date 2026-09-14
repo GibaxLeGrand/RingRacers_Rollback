@@ -4092,6 +4092,24 @@ int32_t K_RollbackTwoClock(void)
 	return g_twoclock;
 }
 
+/** The mindelay/gentleman's-delay exemption used to ask K_RollbackPredictAhead()
+  * alone, which only ever answers for the old loop: rollback_twoclock zeroes
+  * g_loopahead on the way in (see Command_RollbackTwoClock_f -- the two are
+  * mutually exclusive by construction), so once the pivot took over that check
+  * always came back false and the fixed delay kept charging for a round trip
+  * the speculation was already covering. This asks both.
+  *
+  * Symmetric with where it is read: UpdatePingTable's server branch only ever
+  * sets delay for node 0 (the local player of a listen server), so on that
+  * side this is really asking about the host's own view, same as it is on a
+  * plain client -- K_RollbackTwoClock() already returns 0 off a dedicated
+  * server (client == false there), so this is safe to call from either side.
+  */
+dboolean K_RollbackPays(void)
+{
+	return (K_RollbackPredictAhead() > 0) || (K_RollbackTwoClock() > 0);
+}
+
 dboolean K_RollbackSpeculating(void)
 {
 	return g_speculating;

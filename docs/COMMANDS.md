@@ -139,6 +139,8 @@ client peut courir en avance sur le serveur (plafonné par
   avance min/max/moyenne, corrections reçues, rejeux, tics rendus à la boucle
   réelle parce qu'un message est arrivé dessus, etc.) — utile pour voir *si*
   la prédiction a jamais eu l'occasion de se déclencher.
+- Retire le délai d'entrée fixe (voir encadré sous `rollback_twoclock`) tant
+  qu'il est actif — via `K_RollbackPays()`, commit `2026-09-14`.
 
 ### `rollback_pace [0|1]`
 Limite la boucle (`rollback_loop`) à **un seul tic prédit par passe**, au lieu
@@ -161,6 +163,44 @@ autoritaire elle-même.
   budget d'un tic entier, messages réseau refusés parce que levés dans une
   spéculation — un netxcmd envoyé pendant une spéculation ne peut pas être
   repris).
+- Retire le délai d'entrée fixe tant qu'il est actif (voir encadré ci-dessous).
+
+> #### ⚠️ Correctif du 2026-09-14 : `rollback_twoclock` retire enfin le délai fixe
+>
+> Le "gentleman's delay" côté serveur (`UpdatePingTable`, `d_clisrv.c`) et le
+> `mindelay` du profil joueur côté client ne se désactivaient **que** si
+> `K_RollbackPredictAhead() > 0` — c'est-à-dire seulement pour l'ancienne
+> boucle `rollback_loop`. Or `rollback_twoclock` met `g_loopahead` à 0 en
+> s'activant (les deux sont mutuellement exclusifs "by construction") : donc
+> tant que ce correctif n'existait pas, **activer le pivot ne retirait pas le
+> délai d'entrée** — seule l'ancienne boucle dépréciée le faisait. Toutes les
+> mesures du journal (`ROLLBACK.md`) prises sous two-clock l'ont donc été avec
+> ce délai fixe toujours facturé en plus de la spéculation.
+>
+> Corrigé par une nouvelle fonction `K_RollbackPays()` (`k_rollback.c`/`.h`)
+> qui répond vrai si **`rollback_loop` OU `rollback_twoclock`** est actif, et
+> qui remplace `K_RollbackPredictAhead() > 0` aux deux endroits de
+> `d_clisrv.c` où le délai était calculé (branche serveur *et* branche
+> client de `UpdatePingTable`).
+>
+> **Conséquence concrète** : le réglage "Minimum Input Delay" du profil
+> joueur (`cv_mindelay`, menu accessibilité — jusqu'ici décrit comme
+> "Practice for online play!", donc pensé pour être calibré hors-ligne
+> puisqu'en ligne le délai réseau s'imposait de toute façon par-dessus)
+> **s'efface réellement en ligne dès que `rollback_twoclock` tourne** :
+> `target_lag` retombe à `0` des deux côtés au lieu de rester bloqué au
+> plancher `cv_mindelay.value`. Ce n'est **pas** un nouveau réglage qui
+> apparaîtrait en ligne — c'est la suppression d'un double-comptage : avant
+> ce correctif, le délai fixe restait facturé par-dessus la spéculation,
+> annulant une partie du bénéfice que le pivot est censé apporter.
+>
+> Reste **hors scope de ce correctif**, noté par `WORLDWIDE.md` section 7
+> comme un item de la Phase C : un vrai bouton de délai *local* façon GGPO
+> (le joueur choisit de garder un peu de tampon même avec la prédiction
+> active, sans que ça ne redevienne un `wantdelay` envoyé au serveur — c'est
+> précisément le bug que ce correctif referme). Si l'idée est de recycler le
+> slider `cv_mindelay` existant pour ça, c'est un nouveau développement, pas
+> une conséquence automatique de ce qui est corrigé ici.
 
 ### `rollback_nullspec [0|1]`
 Sauvegarde et restaure la frontière à **chaque passe** sans rien spéculer.
