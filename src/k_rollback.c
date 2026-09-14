@@ -1790,6 +1790,51 @@ static void K_ComparePlayers(const char *cmd, const uint8_t *was, const uint8_t 
 			(unsigned)offsetof(player_t, latestlap), (unsigned)offsetof(player_t, timeshit),
 			(unsigned)offsetof(player_t, deadtimer));
 		K_Finding(text);
+
+		// The group of timer fields between karthud and the lives/xtralife pair,
+		// never printed before: two of the last three failures put a differing
+		// byte at 672 and 680 on the SAME player across two independent soak
+		// runs, and this is the group those offsets sit inside.
+		snprintf(text, sizeof (text),
+			"%s: offsets -- seasaw %u, seasawcooldown %u, seasawdist %u, "
+			"seasawangle %u, seasawangleadd %u, seasawmoreangle %u, seasawdir %u",
+			cmd,
+			(unsigned)offsetof(player_t, seasaw), (unsigned)offsetof(player_t, seasawcooldown),
+			(unsigned)offsetof(player_t, seasawdist), (unsigned)offsetof(player_t, seasawangle),
+			(unsigned)offsetof(player_t, seasawangleadd), (unsigned)offsetof(player_t, seasawmoreangle),
+			(unsigned)offsetof(player_t, seasawdir));
+		K_Finding(text);
+
+		snprintf(text, sizeof (text),
+			"%s: offsets -- turbine %u, turbineangle %u, turbineheight %u, "
+			"turbinespd %u, cloud %u, cloudlaunch %u, cloudbuf %u",
+			cmd,
+			(unsigned)offsetof(player_t, turbine), (unsigned)offsetof(player_t, turbineangle),
+			(unsigned)offsetof(player_t, turbineheight), (unsigned)offsetof(player_t, turbinespd),
+			(unsigned)offsetof(player_t, cloud), (unsigned)offsetof(player_t, cloudlaunch),
+			(unsigned)offsetof(player_t, cloudbuf));
+		K_Finding(text);
+
+		snprintf(text, sizeof (text),
+			"%s: offsets -- tulip %u, tuliplaunch %u, tulipbuf %u, lives %u, "
+			"xtralife %u",
+			cmd,
+			(unsigned)offsetof(player_t, tulip), (unsigned)offsetof(player_t, tuliplaunch),
+			(unsigned)offsetof(player_t, tulipbuf), (unsigned)offsetof(player_t, lives),
+			(unsigned)offsetof(player_t, xtralife));
+		K_Finding(text);
+
+		// Past roundconditions -- the second run's other new offsets, 1828 and
+		// 1832, were never named at all: nothing after roundconditions had a
+		// line. This is everything declared after it, to the end of the struct.
+		snprintf(text, sizeof (text),
+			"%s: offsets -- roundconditions %u, powerup %u, icecube %u, tally %u, "
+			"darkness_start %u, darkness_end %u",
+			cmd,
+			(unsigned)offsetof(player_t, roundconditions), (unsigned)offsetof(player_t, powerup),
+			(unsigned)offsetof(player_t, icecube), (unsigned)offsetof(player_t, tally),
+			(unsigned)offsetof(player_t, darkness_start), (unsigned)offsetof(player_t, darkness_end));
+		K_Finding(text);
 	}
 
 	// What was looked at, not only what was found. A run of field lines says

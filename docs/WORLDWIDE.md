@@ -800,3 +800,30 @@ dump triangulated by hand.
 Rare (1/261, about 0.4%) but decisive: **the netplay drift is not a networking
 artifact.** The same class of leak reproduces on one machine, from a single
 honest extra pass, with no round trip involved.
+
+### 8.12 Second soak: 2/261, and one offset recurs across independent runs
+
+Re-ran `soak_leak.cfg` after 8.11's naming pass. **261 checks, 2 failures**
+(leveltime 1480 and 1520) -- roughly the same rate as the first run (1/261),
+consistent with something that needs a particular moment to fire rather than a
+fixed schedule.
+
+**Both failures are the honest-pass case again**, and both still landed past
+the names just added: offset 1013 (player 7, before `speed` at 1044), offsets
+672 and 680 (player 4), and -- new -- 1828/1832 on players 1, 3 and 4, past
+`roundconditions` entirely.
+
+⚠ **Offset 672/680 on player 4 is not new.** The very first failure (8.11) put
+differing bytes at those exact same two offsets, on the same player index,
+in a different race and a different tic. Two independent honest-pass failures
+landing on the identical byte pair is either a field with unusually bad luck or
+a field the leak genuinely targets -- and it is now named: the
+seasaw/turbine/cloud/tulip timer group between `karthud` and `speed`.
+
+Closed every remaining gap in the same pass rather than chase it one field at a
+time again: `seasaw`, `seasawcooldown`, `seasawdist`, `seasawangle` and its two
+companions, `seasawdir`, the turbine and cloud/tulip timer groups, `lives`,
+`xtralife`, and everything declared after `roundconditions` to the end of the
+struct (`powerup`, `icecube`, `tally`, `darkness_start`, `darkness_end`). The
+whole struct is named now; the next failure should land inside a printed range
+without exception.
