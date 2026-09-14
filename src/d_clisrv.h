@@ -545,6 +545,19 @@ struct statecorrection_pak
 	uint32_t damages;
 	uint32_t damagehash;
 
+	// Every instrument on this branch has ruled out one cause after another --
+	// the archive, the restore, tic determinism, the confirmed clock running
+	// on a guess -- while positions still measurably drift and the game's own
+	// Consistancy() agrees. What none of them checked: whether every machine
+	// actually ran the SAME ticcmd for the SAME player on the SAME confirmed
+	// tic on the FIRST delivery. K_RollbackNoteArrival already answers a
+	// narrower question -- does a late RESEND of an already-run tic disagree --
+	// and it has read zero every race, because a resend of an already-consumed
+	// tic is rare on a clean local link. This is the general case: folded once
+	// per player, every confirmed tic, from the exact ticcmd about to be run.
+	uint32_t inputs;
+	uint32_t inputhash;
+
 	uint8_t numkarts;
 	uint8_t reserved;
 	statekart_pak kart[MAXPLAYERS];

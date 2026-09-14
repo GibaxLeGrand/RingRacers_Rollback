@@ -3231,6 +3231,22 @@ static dboolean g_damagelog;
 static uint32_t g_damagelogged;
 static dboolean g_damagebase;
 
+// Every ticcmd every player actually ran a confirmed tic on, folded once
+// per player per tic -- the general case K_RollbackNoteArrival does not
+// cover, since that one only compares a LATE RESEND of an already-run tic
+// against what ran, and a resend of a tic already consumed is rare on a
+// clean local link (it has read zero every race on this branch so far).
+// This folds the FIRST delivery, the one that actually mattered.
+static uint32_t g_liveinputs;
+static uint32_t g_liveinputhash;
+static uint32_t g_srvinputs;
+static uint32_t g_srvinputhash;
+
+#define ROLLBACK_INPUTLOGMAX 400
+static dboolean g_inputlog;
+static uint32_t g_inputlogged;
+static dboolean g_inputbase;
+
 
 /** True while a correction is re-running tics that have already been played.
   *
@@ -4380,6 +4396,71 @@ void K_RollbackLiveDamages(uint32_t *count, uint32_t *hash)
 		*hash = g_livedamagehash;
 }
 
+/** Names a ticcmd's gameplay-relevant bytes, leaving out `latency`
+  * (a local annotation about how old the sample was, not part of the
+  * input) and the TICCMD_RECEIVED/TICCMD_BOT bits of `flags` (set
+  * differently by construction on the two machines, not a disagreement
+  * about what was pressed).
+  */
+static uint32_t K_InputKey(const ticcmd_t *cmd)
+{
+	uint32_t h = 2166136261u;
+
+	h = (h ^ (uint8_t)cmd->forwardmove) * 16777619u;
+	h = (h ^ (uint16_t)cmd->turning) * 16777619u;
+	h = (h ^ (uint16_t)cmd->angle) * 16777619u;
+	h = (h ^ (uint16_t)cmd->throwdir) * 16777619u;
+	h = (h ^ (uint16_t)cmd->aiming) * 16777619u;
+	h = (h ^ cmd->buttons) * 16777619u;
+	h = (h ^ (uint8_t)cmd->bot.turnconfirm) * 16777619u;
+	h = (h ^ (uint8_t)cmd->bot.spindashconfirm) * 16777619u;
+	h = (h ^ (uint8_t)cmd->bot.itemconfirm) * 16777619u;
+
+	return h;
+}
+
+/** Folds one player's ticcmd into the running input tally.
+  *
+  * Called once per in-game player, from the one place both client and
+  * server run every confirmed tic: the shared TryRunTics loop, right
+  * where it hands netcmds[] to P_Ticker for real. Not gated on
+  * K_RollbackReplaying the way the damage tally is -- this loop never
+  * runs during a speculation or a resimulation check, so the guard would
+  * never fire, and a guard that can never fire is a claim about the code
+  * that nothing tests.
+  */
+void K_RollbackNoteInput(uint32_t tic, uint8_t slot, const ticcmd_t *cmd)
+{
+	uint32_t key;
+
+	if (gamestate != GS_LEVEL)
+		return;
+
+	key = ((uint32_t)slot * 2654435761u) ^ K_InputKey(cmd);
+
+	g_liveinputs++;
+	g_liveinputhash = ((g_liveinputhash ^ key) * 16777619u) ^ tic;
+
+	if (g_inputlog == true && g_inputlogged < ROLLBACK_INPUTLOGMAX)
+	{
+		g_inputlogged++;
+
+		CONS_Printf("rollback_input: tic %u p%d fwd %d turn %d angle %d "
+			"btn %04x -- hash %08x" "\n",
+			tic, (int32_t)slot, (int32_t)cmd->forwardmove, (int32_t)cmd->turning,
+			(int32_t)cmd->angle, (unsigned)cmd->buttons, g_liveinputhash);
+	}
+}
+
+void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash)
+{
+	if (count != NULL)
+		*count = g_liveinputs;
+
+	if (hash != NULL)
+		*hash = g_liveinputhash;
+}
+
 /** Appends " name mine/theirs" to buf, but only when the two differ.
   *
   * Only the fields that differ get printed. The previous instrument on this
@@ -4399,7 +4480,8 @@ static void K_NoteDiff(char *buf, size_t len, const char *name,
 }
 
 void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
-	uint8_t n, uint32_t damages, uint32_t damagehash)
+	uint8_t n, uint32_t damages, uint32_t damagehash,
+	uint32_t inputs, uint32_t inputhash)
 {
 	if (n > MAXPLAYERS)
 		n = MAXPLAYERS;
@@ -4415,6 +4497,8 @@ void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
 	memcpy(g_correctkart, karts, n * sizeof (struct rollbackkart_t));
 	g_srvdamages = damages;
 	g_srvdamagehash = damagehash;
+	g_srvinputs = inputs;
+	g_srvinputhash = inputhash;
 
 	g_correctpending = true;
 	g_statecorrections++;
@@ -4495,6 +4579,23 @@ void K_RollbackApplyServerState(void)
 			"server's %u events (hash %08x); equal from here means agreement"
 			"\n",
 			g_correcttic, g_srvdamages, g_srvdamagehash);
+	}
+
+	// Same reasoning as the damage baseline, same boundary tic: both
+	// machines have folded a different number of confirmed tics' worth of
+	// input by the time this client joined, so the counts start with an
+	// unknown offset that adopting the server's numbers once turns into an
+	// equality test.
+	if (g_inputbase == false)
+	{
+		g_inputbase = true;
+		g_liveinputs = g_srvinputs;
+		g_liveinputhash = g_srvinputhash;
+
+		CONS_Printf("rollback_input: baseline at tic %u -- adopting the "
+			"server's %u ticcmds (hash %08x); equal from here means agreement"
+			"\n",
+			g_correcttic, g_srvinputs, g_srvinputhash);
 	}
 
 	// P_MoveOrigin goes through P_CheckPosition, which parks the thing it is
@@ -4661,6 +4762,25 @@ static void Command_RollbackCorrect_f(void)
   * whether the corrections are also applied; off by default, because measuring
   * and correcting in the same run gives a number about neither.
   */
+/** Console command: rollback_inputlog [0/1]
+  *
+  * Run on BOTH machines. Prints one line per confirmed tic's ticcmd for
+  * every player, with a running hash -- the input-side counterpart of
+  * rollback_damagelog. The two logs diff tic for tic; the first hash that
+  * parts names the tic and the player.
+  */
+static void Command_RollbackInputLog_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_inputlog = (atoi(COM_Argv(1)) != 0);
+		g_inputlogged = 0;
+	}
+
+	CONS_Printf("rollback_inputlog: %s -- %u ticcmds so far, hash %08x" "\n",
+		(g_inputlog ? "on" : "off"), g_liveinputs, g_liveinputhash);
+}
+
 /** Console command: rollback_damagelog [0/1]
   *
   * Run on BOTH machines. Prints one line per damage outcome resolved on a
@@ -4737,6 +4857,12 @@ static void Command_RollbackDrift_f(void)
 		"(hash %08x), server %u (hash %08x). The offset from the join is not the "
 		"signal; a CHANGE in it is, and rollback_damagelog dates it." "\n",
 		g_livedamages, g_livedamagehash, g_srvdamages, g_srvdamagehash);
+
+	CONS_Printf("rollback_drift: ticcmds on confirmed tics -- here %u (hash "
+		"%08x), server %u (hash %08x). Equal means every player ran the same "
+		"input on the same tic; rollback_inputlog names the first tic that "
+		"does not." "\n",
+		g_liveinputs, g_liveinputhash, g_srvinputs, g_srvinputhash);
 
 	if (g_driftspikes > 0)
 	{
@@ -5317,4 +5443,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_correct", Command_RollbackCorrect_f);
 	COM_AddDebugCommand("rollback_drift", Command_RollbackDrift_f);
 	COM_AddDebugCommand("rollback_damagelog", Command_RollbackDamageLog_f);
+	COM_AddDebugCommand("rollback_inputlog", Command_RollbackInputLog_f);
 }

@@ -6099,7 +6099,8 @@ static void HandlePacketFromPlayer(int8_t node)
 				}
 
 				K_RollbackNoteServerState(in->tic, karts, n,
-					in->damages, in->damagehash);
+					in->damages, in->damagehash,
+					in->inputs, in->inputhash);
 			}
 			break;
 
@@ -6853,6 +6854,15 @@ static void SV_SendStateCorrection(void)
 		netbuffer->u.statecorrection.damagehash = damagehash;
 	}
 
+	{
+		uint32_t inputs = 0, inputhash = 0;
+
+		K_RollbackLiveInputs(&inputs, &inputhash);
+
+		netbuffer->u.statecorrection.inputs = inputs;
+		netbuffer->u.statecorrection.inputhash = inputhash;
+	}
+
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
 		statekart_pak *k;
@@ -7359,6 +7369,22 @@ dboolean TryRunTics(tic_t realtics)
 				if (run)
 				{
 					R_UpdateViewInterpolation();
+				}
+
+				// The one place both client and server run a confirmed tic for
+				// real -- folded before G_Ticker consumes netcmds[], the first
+				// delivery rather than only a later resend.
+				{
+					int32_t rin;
+
+					for (rin = 0; rin < MAXPLAYERS; rin++)
+					{
+						if (playeringame[rin] == false)
+							continue;
+
+						K_RollbackNoteInput((uint32_t)gametic, (uint8_t)rin,
+							&netcmds[gametic % BACKUPTICS][rin]);
+					}
 				}
 
 				G_Ticker(run);

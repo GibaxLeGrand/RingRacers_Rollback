@@ -985,3 +985,65 @@ instrument -- `rollback_loop`/`rollback_twoclock`'s counters answer "does the
 confirmed clock run on a guess" (no), not "how far out of phase are the two
 machines' clocks for the SAME wall-clock instant". That instrument does not
 exist yet.
+
+### 8.17 The phase-offset hypothesis does not survive a closer read -- and the real gap was never having checked input agreement at all
+
+Before building anything: re-read `K_RollbackNoteArrival`, the instrument
+8.9's "six tics apart" finding was about to be explained by. It answers a
+narrower question than it looks like it does -- **does a LATE RESEND of an
+already-run tic disagree with what ran** -- and it is gated on `tic < gametic`
+at the moment a `PT_SERVERTICS` packet is processed. By construction, the
+confirmed clock can only ever reach tic N after the FIRST delivery of tic N's
+data has already been processed (that delivery is what lets `gametic` advance
+past N in the first place), so this branch is reachable only on a *second*,
+later delivery of a tic already consumed -- a resend. On a clean local link,
+resends of already-applied tics essentially do not happen, which is exactly
+why `g_arrivals` has read 0 in every race this session: not "measured and
+found nothing," but "the event this counts has not occurred."
+
+**And the "confirmed clock runs ahead on a guess" mechanism 8.9 leaned on is
+provably false**, independently confirmed three times now (`rollback_loop`:
+0 predicted confirmed tics, `K_RollbackPredictInputs` never firing there;
+the `netticbuffer` reserve comment at `d_clisrv.c:7383` explaining exactly why
+not). In two-clock mode the confirmed clock is unmodified vanilla lockstep --
+no local prediction, no early advancement, nothing this branch adds touches
+it. So a phase-offset-of-a-predicted-tic cannot explain the six-tic gap.
+
+**Which leaves a real, previously-unnoticed gap**: nothing in this codebase
+checks input agreement on the *first* delivery, for *any* player, ever. Only
+the rare-resend edge case was ever checked, and it never fires. If two
+confirmed clocks run the same inputs from the same state with deterministic
+tics (three separate mechanisms now proven for this branch: 0/522 leak
+checks, 0/330 resim checks, 0 arrivals contradicted) and still diverge, the
+one thing left unverified was whether the inputs were *actually* identical on
+the tic they were first used -- not assumed identical because nothing
+contradicted them later.
+
+**Built the general case**, mirroring the damage tally's proven shape:
+
+- `K_RollbackNoteInput(tic, slot, cmd)` folds one player's ticcmd into a
+  running FNV-1a hash, called once per in-game player from the *one* place
+  both client and server run a confirmed tic for real -- immediately before
+  `G_Ticker` consumes `netcmds[]`, in the shared `TryRunTics` loop at
+  `d_clisrv.c:7363`. Not gated on `K_RollbackReplaying()`: this loop never
+  runs during a speculation or a resim/leak check, so that guard would never
+  fire there, and an untested guard is a claim the code does not back.
+- The hash folds `forwardmove`, `turning`, `angle`, `throwdir`, `aiming`,
+  `buttons`, and the three `bot.*` confirm fields -- the gameplay-relevant
+  bytes. Left out on purpose: `latency` (a local annotation about sample age,
+  not an input) and the `TICCMD_RECEIVED`/`TICCMD_BOT` bits of `flags`,
+  which are set differently on the two machines by construction and are not
+  a disagreement about what was pressed.
+- `inputs`/`inputhash` ride the same `statecorrection_pak` the damage tally
+  already uses, adopted once at the same baseline boundary, for the same
+  reason: both machines sample at the tic the server names, so after one
+  adoption the pair is an equality test, not an offset.
+- `rollback_inputlog`, mirroring `rollback_damagelog`: one line per
+  confirmed tic per player, both machines, diffable directly.
+- The drift summary now prints both tallies side by side, so a single
+  `rollback_drift` shows whether inputs, damage, or both are where a race's
+  divergence is.
+
+Not yet run: this needs the two-instance harness, and per the standing rule,
+that only launches when asked. `d_clisrv.c` and `k_rollback.c` both pass the
+local per-file syntax check.

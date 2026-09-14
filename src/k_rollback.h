@@ -101,7 +101,8 @@ dboolean K_RollbackCorrectSuppress(void);
   * it has to be applied to is the confirmed one, which does not exist yet at
   * the moment a packet is read. */
 void K_RollbackNoteServerState(uint32_t tic, const struct rollbackkart_t *karts,
-	uint8_t n, uint32_t damages, uint32_t damagehash);
+	uint8_t n, uint32_t damages, uint32_t damagehash,
+	uint32_t inputs, uint32_t inputhash);
 
 struct mobj_t;
 
@@ -119,6 +120,18 @@ void K_RollbackNoteDamage(struct mobj_t *victim, struct mobj_t *inflictor,
 
 /** This machine's running damage tally and hash, for the packet to carry. */
 void K_RollbackLiveDamages(uint32_t *count, uint32_t *hash);
+
+struct ticcmd_t;
+
+/** Folds one player's ticcmd into the running input tally, for a confirmed
+  * tic about to be run for real. Called once per in-game player from the
+  * shared tic loop in d_clisrv.c, on both client and server, using the exact
+  * ticcmd netcmds[] is about to hand to P_Ticker -- the first delivery, not
+  * only a later resend. */
+void K_RollbackNoteInput(uint32_t tic, uint8_t slot, const struct ticcmd_t *cmd);
+
+/** This machine's running input tally and hash, for the packet to carry. */
+void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash);
 
 /** Measures the stored correction against this client's confirmed world, and
   * applies it when asked to. Called from the tic loop once the confirmed world
