@@ -3242,7 +3242,13 @@ static uint32_t g_liveinputhash;
 static uint32_t g_srvinputs;
 static uint32_t g_srvinputhash;
 
-#define ROLLBACK_INPUTLOGMAX 400
+// Far higher than the damage log's cap: this folds every in-game player every
+// confirmed tic, not a handful of hits a race, and the first race that turned
+// it on found the hash already parted within the first ~700 tics past the
+// baseline while the damage log was still comfortably inside ITS cap. 20000
+// lines covers roughly 2500 tics of an eight-player race -- past where the
+// first split has shown up so far, with room to spare.
+#define ROLLBACK_INPUTLOGMAX 20000
 static dboolean g_inputlog;
 static uint32_t g_inputlogged;
 static dboolean g_inputbase;

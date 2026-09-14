@@ -1047,3 +1047,54 @@ contradicted them later.
 Not yet run: this needs the two-instance harness, and per the standing rule,
 that only launches when asked. `d_clisrv.c` and `k_rollback.c` both pass the
 local per-file syntax check.
+
+### 8.18 First netplay reading from the input tally: hashes part while counts still agree
+
+`playtest.sh correct dedicated` -- **`dedicated` drops only the SERVER's host
+player**; the CLIENT is always the one a person plays, and this race was
+driven (corrected after an initial misreading that called it idle -- it was
+not). The native `Consistancy()` fired four times against player 9 (1-indexed
+"player 10"), same shape as every earlier driven race -- expected, not new,
+now that the race is correctly understood as driven.
+
+**What the new tally actually said, unaffected by that mix-up:**
+
+```
+baseline at tic 940 -- adopting the server's 7557 ticcmds (hash 1cf3f95e)
+check 1: here 13253 (hash 0e574b18), server 13253 (hash 9c5fab90)
+check 2: here 17213 (hash b3c612bf), server 17189 (hash 6be8e536)
+check 3: here 21205 (hash 534cf62c), server 21189 (hash d41a955b)
+check 4: here 25205 (hash c4ee18cd), server 25189 (hash 26a5b57f)
+```
+
+**Check 1 is the clean reading: identical counts (13253 = 13253), different
+hash.** Not a missing or extra input -- the same number of ticcmds folded on
+both sides, and the content differs somewhere among them, within roughly 700
+tics of the baseline. Checks 2-4 show a stable +16/+24 count gap on top of
+that, consistent with ordinary packet-arrival latency in what this print
+shows (the server's number is whatever last arrived, always a little behind
+the client's live count) rather than a second, separate effect -- the offset
+reasoning already established for the damage tally applies here too.
+
+**A candidate mechanism, found by reading the guard that stops the client
+from predicting.** `d_clisrv.c`'s `netticbuffer` reserve -- the thing that
+holds `gametic` below `neededtic` so the client's confirmed clock never
+predicts -- is gated on `client &&`. **Nothing stops the server from doing
+the same thing to a remote client's not-yet-arrived input.** If the server's
+own confirmed clock ever reaches a tic before that client's packet for it has
+landed, `K_RollbackPredictInputs` fires on the server too, and for a
+non-bot player that means repeat-last: reusing the previous tic's ticcmd as
+a guess for this one. Against a genuinely varying, actively-driven input,
+repeat-last disagrees with whatever was actually pressed far more often than
+it agrees -- unlike a static, unchanging input, where the guess is right by
+construction. This is not yet proven; it is the first mechanism found that
+would produce exactly the observed shape (hash parts, counts stay close) on
+a driven race specifically.
+
+**`rollback_inputlog`'s cap was too small to catch it.** 400 lines, sized
+for the damage tally's few-dozen-events-a-race, covers only the first ~50
+tics once every in-game player is folded every confirmed tic -- nowhere near
+the ~700 tics where the first split showed up. Raised to 20000 (roughly
+2500 tics of an eight-player race), and added to both `playclient_correct.cfg`
+and `playserver_correct.cfg`. Not yet re-run -- needs a rebuild and, per the
+standing rule, launches only when asked.
