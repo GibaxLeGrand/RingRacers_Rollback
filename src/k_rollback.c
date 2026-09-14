@@ -2685,7 +2685,21 @@ static dboolean K_LeakCheck(int32_t tics, dboolean verbose)
 	g_heldcount = 0;
 	g_helddropped = 0;
 
-	// ---- B: the reference, from a world nothing has run on yet -------------
+	// ---- B: the reference, run on a freshly restored world -----------------
+	//
+	// Not the live world directly: A1 and A2's comparable tic always runs
+	// after a K_LoadGameState (restoring after the detour), so a tic run
+	// straight off the untouched live world would compare "never rebuilt"
+	// against "rebuilt", which is a different question than the one this
+	// check exists to ask. One restore here, matching the one every other
+	// branch's comparable tic gets, isolates the actual variable: whether an
+	// extra pass IN BETWEEN two otherwise-identical restores leaves anything.
+	if (!K_LoadGameState(gametic))
+	{
+		CONS_Printf("rollback_leak: could not restore before the reference\n");
+		goto done;
+	}
+
 	srand((unsigned int)gametic);
 	K_RunFrozenTics(1, real);
 

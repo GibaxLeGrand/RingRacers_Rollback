@@ -827,3 +827,29 @@ companions, `seasawdir`, the turbine and cloud/tulip timer groups, `lives`,
 struct (`powerup`, `icecube`, `tally`, `darkness_start`, `darkness_end`). The
 whole struct is named now; the next failure should land inside a printed range
 without exception.
+
+### 8.13 A confound in the harness itself, found before trusting its three catches
+
+Before chasing `cloud`/`turbineheight` further: `rollback_leak`'s B (the
+reference) ran its one tic **directly on the live world**, with no
+`K_LoadGameState` call at all. A1 and A2's comparable tic always runs **after**
+a restore (undoing the detour). So the comparison was quietly "never rebuilt"
+against "rebuilt", on top of the "no detour" against "a detour" question the
+check exists to ask -- two variables where there should be one.
+
+`K_ResimCheck`'s own first-vs-second pass carries a similar shape (first is
+live, second is restored) and reads 0/330 clean, so "restored once" alone is
+not obviously the whole story. But A1/A2's comparable tic here runs after being
+rebuilt from the archive a second time (once for the detour, once again to
+return from it), which `K_ResimCheck` never does and B never matched. Whatever
+that second-order difference is worth, it had no business being present on one
+side of the comparison and absent from the other.
+
+**Fixed: B now goes through one `K_LoadGameState` too**, immediately after the
+save and before its own tic -- matching the one restore every other branch's
+comparable tic already gets. What the check isolates is now exactly one
+variable: whether an extra pass **in between** two otherwise-identical restores
+leaves anything behind. The three failures logged in 8.11-8.12 were taken
+*before* this fix and cannot yet be trusted as the netcode's fault rather than
+the harness's -- they are consistent with either. Re-running the soak on the
+corrected build is the next thing this session does.
