@@ -128,6 +128,41 @@ the front-line instrument.
 
 ---
 
+## Small, not yet scheduled -- a client-local input delay knob
+
+Named in `WORLDWIDE.md` section 7, deliberately not folded into a lettered
+phase: it is cheap, and orthogonal to the cost and correctness work above.
+
+**What it is.** A dial the *player* sets, kept entirely local: how many tics
+of buffer to hold between their real input and what gets simulated, even
+while `rollback_twoclock` is covering the round trip. GGPO calls this a local
+delay frame. The player on a bad line who would rather have a stable picture
+than shave off the last 60 ms gets to say so, instead of the choice being made
+for them.
+
+**What it must not become, because it already did once.** `cv_mindelay` --
+the profile's existing "Minimum Input Delay" slider -- used to be sent to the
+server as `wantdelay`, which asked the server to hold the client's *own*
+input, and could not be predicted because the server spent it on a tic the
+client never used it for. That bug (and its accidental second life once
+`rollback_twoclock` replaced `rollback_loop` without inheriting the fix) is
+closed by `K_RollbackPays()` in `k_rollback.c` -- see the 2026-09-14 entry
+under `rollback_twoclock` in `docs/COMMANDS.md`. A new local knob has to stay
+off the wire entirely, or it is the same bug again under a different name.
+Reusing the `cv_mindelay` slider itself for this is one option, not a
+foregone conclusion -- it would need to mean something different online than
+it does today.
+
+**Depends on:** nothing above except the two-clock pivot existing, which it
+already does. Does **not** need Phase A closed or Phase B's cost fixed first,
+which is why it is listed here rather than queued behind them.
+
+**Done when:** a player can set "hold N tics of my own buffer" and it holds
+under `rollback_twoclock` without ever appearing on the wire as `wantdelay` --
+checked by reading the packet, not just by reading the setting.
+
+---
+
 ## Phase D -- Feel
 
 **Needs C**, and it is the phase no log can finish.
