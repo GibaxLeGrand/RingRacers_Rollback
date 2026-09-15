@@ -3775,6 +3775,23 @@ static uint32_t g_offsetseen[(2 * ROLLBACK_OFFSPAN) + 1];
 static uint32_t g_offsetfar;   // matched, but further out than the histogram reaches
 static uint32_t g_offsetlost;  // the server used an input we never ran a tic on
 
+// PT_CLIENTCMD's own relabelling: an arriving ticcmd is filed under `faketic`
+// (the server's send schedule plus the requested gentleman's delay), not
+// under the tic number the client itself tagged it with. Vanilla machinery,
+// present before this branch and orthogonal to it -- but if that relabelling
+// is not perfectly steady from packet to packet, the same real input can end
+// up dated differently on the two machines' confirmed clocks, which is a
+// question the input tally's own hash cannot answer by itself (it folds the
+// tic number in, so a relabelled sample simply reads as content that
+// differs -- this says whether relabelling is the reason).
+#define ROLLBACK_RELABELSPAN 24
+static uint32_t g_relabelseen[(2 * ROLLBACK_RELABELSPAN) + 1];
+static uint32_t g_relabelfar;
+static uint32_t g_relabelcount;
+static int64_t g_relabelsum;
+static int32_t g_relabelmin;
+static int32_t g_relabelmax;
+
 /** How far apart two tics are, either way round.
   *
   * tic_t is unsigned, so the ordinary subtraction is a trap.
@@ -4465,6 +4482,67 @@ void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash)
 
 	if (hash != NULL)
 		*hash = g_liveinputhash;
+}
+
+void K_RollbackNoteRelabel(int32_t delta)
+{
+	if (g_relabelcount == 0 || delta < g_relabelmin)
+		g_relabelmin = delta;
+
+	if (g_relabelcount == 0 || delta > g_relabelmax)
+		g_relabelmax = delta;
+
+	g_relabelcount++;
+	g_relabelsum += delta;
+
+	if (delta >= -ROLLBACK_RELABELSPAN && delta <= ROLLBACK_RELABELSPAN)
+		g_relabelseen[delta + ROLLBACK_RELABELSPAN]++;
+	else
+		g_relabelfar++;
+}
+
+/** Console command: rollback_relabel
+  *
+  * Server side. How far PT_CLIENTCMD's own faketic bookkeeping moved an
+  * arriving ticcmd from the tic the client tagged it with. A single repeated
+  * value is a constant label offset -- harmless, the two clocks simply count
+  * from different zeroes. A spread says the offset itself moves from packet
+  * to packet, which is the discriminator this exists to measure.
+  */
+static void Command_RollbackRelabel_f(void)
+{
+	int32_t off;
+
+	if (g_relabelcount == 0)
+	{
+		CONS_Printf("rollback_relabel: no PT_CLIENTCMD packets relabelled yet "
+			"-- server side only, and needs a real remote client" "\n");
+		return;
+	}
+
+	CONS_Printf("rollback_relabel: %u packets, faketic - realstart ranged %d "
+		"to %d, mean %d.%02d" "\n",
+		g_relabelcount, g_relabelmin, g_relabelmax,
+		(int32_t)(g_relabelsum / (int64_t)g_relabelcount),
+		(int32_t)(((g_relabelsum < 0 ? -g_relabelsum : g_relabelsum) * 100
+			/ (int64_t)g_relabelcount) % 100));
+
+	if (g_relabelfar > 0)
+	{
+		CONS_Printf("rollback_relabel: %u further out than %d tics either way, "
+			"not shown below" "\n",
+			g_relabelfar, ROLLBACK_RELABELSPAN);
+	}
+
+	for (off = -ROLLBACK_RELABELSPAN; off <= ROLLBACK_RELABELSPAN; off++)
+	{
+		const uint32_t seen = g_relabelseen[off + ROLLBACK_RELABELSPAN];
+
+		if (seen == 0)
+			continue;
+
+		CONS_Printf("rollback_relabel:   %+d tics, %u times" "\n", off, seen);
+	}
 }
 
 /** Appends " name mine/theirs" to buf, but only when the two differ.
@@ -5450,4 +5528,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_drift", Command_RollbackDrift_f);
 	COM_AddDebugCommand("rollback_damagelog", Command_RollbackDamageLog_f);
 	COM_AddDebugCommand("rollback_inputlog", Command_RollbackInputLog_f);
+	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
 }

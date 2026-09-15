@@ -1182,3 +1182,62 @@ restore, or tic determinism -- all three are proven clean. It is in whether
 the server's confirmed clock is allowed to run ahead of a remote client's
 input at all. The `client &&` guard on the netticbuffer reserve is the
 concrete line to look at next.
+
+### 8.20 The `client &&` lead disproven properly, and where the search went instead
+
+Before instrumenting anything: `runto = neededtic;` at `d_clisrv.c:7211`, with
+the comment right above it spelling out the design -- *"A server has nothing
+to predict"*. The branch that would extend `runto` (and therefore let
+`predicted` ever become true) is `else if (client && gamestate == GS_LEVEL)`,
+reached only when `K_RollbackTwoClock() > 0` is FALSE. Every race this branch
+has run sets `rollback_twoclock 4`, so that branch is skipped entirely --
+**on both machines** -- and `runto` stays at `neededtic` on both. `ticking =
+runto > gametic` then means the loop cannot advance `gametic` to or past
+`neededtic` at all, so `predicted = (gametic >= neededtic)` can never be
+observed true inside it, on the server any more than the client. Three
+separate readings now (`rollback_loop`'s own counters, the `client &&`
+netticbuffer-reserve comment, and this) all agree: `K_RollbackPredictInputs`
+never guesses a remote player's input in two-clock mode. That lead is closed,
+not just re-asserted.
+
+**What was actually found instead, reading `PT_CLIENTCMD`'s receive handler
+on the server:**
+
+```c
+tic_t faketic = maketic;
+tic_t timegap = maketic - realstart;
+
+if (timegap < netbuffer->u.clientpak.wantdelay)
+    faketic += (netbuffer->u.clientpak.wantdelay - timegap);
+
+netcmds[faketic % BACKUPTICS][netconsole] = ...
+```
+
+The server does not file an arriving ticcmd under the tic number the client
+itself tagged it with (`realstart`). It re-labels it as `faketic`, computed
+from the server's own send schedule (`maketic`) and the gentleman's-delay
+`wantdelay` the client requested -- vanilla machinery, present before this
+branch and orthogonal to it. If that relabelling is not perfectly steady
+packet to packet -- plausible from ordinary jitter, even on a local link --
+the identical real bytes can land under different tic numbers on the client's
+own confirmed clock (which uses its own numbering directly) and the server's
+confirmed clock (relabelled on arrival). The input tally's hash folds the raw
+tic number into every fold, so a relabelled sample reads as differing
+content -- which is exactly the shape 8.19 found, in bursts, on the one
+player who is a genuine network node.
+
+**And it explains something 8.19 left unstated: only the human player showed
+long bursts; every bot showed only the sub-unit angle noise.** Bots are never
+sent over the wire at all -- both machines compute `K_BuildBotTiccmd` locally
+-- so `PT_CLIENTCMD` and its relabelling never touch them. If relabelling is
+the mechanism, it should apply to genuine remote nodes only, which is exactly
+what 8.19 already showed without this being known at the time.
+
+**Built `K_RollbackNoteRelabel`**, hooked right where `faketic` is finalised:
+records `faketic - realstart` into a histogram (mirroring
+`rollback_detect`'s existing offset histogram, same span, same style), plus
+count/min/max/mean. `rollback_relabel`, server side only, prints it. A single
+repeated value would mean the two clocks simply count from different zeroes
+-- harmless. A spread means the label itself moves from packet to packet,
+which is the discriminator this was built to measure. Added to
+`playserver_correct.cfg`'s end-of-race report. Not yet run.

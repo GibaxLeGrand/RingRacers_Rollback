@@ -133,6 +133,13 @@ void K_RollbackNoteInput(uint32_t tic, uint8_t slot, const struct ticcmd_t *cmd)
 /** This machine's running input tally and hash, for the packet to carry. */
 void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash);
 
+/** Records how far PT_CLIENTCMD's own relabelling moved one arriving ticcmd:
+  * faketic minus the tic the client actually tagged it with (realstart).
+  * Called from the server's receive handler only -- a client never relabels
+  * anything, and the histogram says so on its own if this is ever called
+  * from one (every sample would land at zero). */
+void K_RollbackNoteRelabel(int32_t delta);
+
 /** Measures the stored correction against this client's confirmed world, and
   * applies it when asked to. Called from the tic loop once the confirmed world
   * is back and before it is advanced. Does nothing when none is pending. */

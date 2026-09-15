@@ -5668,6 +5668,11 @@ static void HandlePacketFromPlayer(int8_t node)
 				*/
 			}
 
+			// Measured, not assumed: does this land on the tic the client
+			// itself tagged it with, and does that answer ever change from one
+			// packet to the next.
+			K_RollbackNoteRelabel((int32_t)((int64_t)faketic - (int64_t)realstart));
+
 			// And if we already have a ticcmd submitted for that time, it's weird packet pacing
 			// or interp messing with ticcmd send/receive timing. Instead of dropping, submit this
 			// ticcmd for the next tic, giving us 1 tic of "buffer".
