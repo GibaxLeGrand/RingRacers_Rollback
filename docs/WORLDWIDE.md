@@ -1098,3 +1098,87 @@ the ~700 tics where the first split showed up. Raised to 20000 (roughly
 2500 tics of an eight-player race), and added to both `playclient_correct.cfg`
 and `playserver_correct.cfg`. Not yet re-run -- needs a rebuild and, per the
 standing rule, launches only when asked.
+
+### 8.19 The input tally, read tic by tic: two different stories, not one
+
+`rollback_inputlog 1` on both machines, aligned offline by tic and player
+(client log ran tics 2237-3800, server 1500-3722, overlap 1486 tics). A
+global best-shift search per player, tried first, was misleading and is
+recorded here as a mistake rather than quietly dropped: a short, cherry-picked
+run of lines looked exactly like the server lagging the client by a constant
+7 tics, and the full search across the whole overlap did not confirm it --
+`p8`'s best alignment was shift 0, matching 80.3% of tics outright. The
+7-tic read does not hold as a constant. What actually held up, read from every
+mismatch rather than a handful of convenient ones:
+
+**Bots agree on the decision, almost always.** p2 and p4: 100% agreement,
+every tic. p1, p3, p5, p6, p7: 81-98%, and every mismatch found has the exact
+same shape:
+
+```
+tic 2338 p6: client (50, 0, 353, 0001)   server (50, 0, 354, 0001)
+tic 2340 p6: client (50, 0, 111, 0001)   server (50, 0, 110, 0001)
+tic 2360 p1: client (50, -800, 5208, .)  server (50, -800, 5152, .)
+```
+
+`forwardmove`, `turning` and `buttons` -- the actual control decision -- match
+exactly, every time. Only `angle` differs, and by a small amount (1 to 60-odd
+units on a field that reaches into the thousands). `ticcmd_t.angle` is
+documented in `d_ticcmd.h` as "Predicted angle, use me if you can!" -- a
+computed readout of the kart's current facing, not a control the AI presses.
+**This is the already-known sub-unit position/orientation drift riding along
+in the ticcmd**, not a new or separate cause: the bot's decision is identical
+on both machines, and the ticcmd's angle field simply reports whatever
+orientation each machine's kart happens to be at, which the SPIKE instrument
+has been measuring directly since 8.6.
+
+**The human player is a different story, and it is bursty, not constant.**
+p8's 293 mismatched tics (of 1485) do not scatter evenly -- they cluster:
+
+```
+runs: [10, 36, 5, 12, 2, 27, 2, 8, 4, 23, 8, 10, 29, 1, 7, 11, 14, 60, 2, 1, 1, 1, 1, ...]
+```
+
+A handful of episodes 20-60 tics long early in the race, tapering into
+isolated single-tic gaps (the same angle-drift noise bots show) later. Inside
+a long episode, the shape is legible:
+
+```
+tic 2307 p8: client (50, -800,-21768,1)   server (50, -409,-18240,1)
+tic 2308 p8: client (50, -146,-22108,1)   server (50, -800,-18678,1)
+tic 2309 p8: client (50,    0,-22279,1)   server (50, -800,-19197,1)
+tic 2310 p8: client (50,    0,-22279,1)   server (50, -800,-19714,1)
+   ...client holds turn=0/angle=-22279 for six more tics...
+tic 2316 p8: client (50,    0,-22279,1)   server (50,    0,-22278,1)  -- server catches up
+tic 2328 p8: client (50,  495,-22119,15)  server (50,    0,-22279,1) -- client moves on, server still stuck on the old value
+```
+
+The client's own local input, folded into its confirmed clock the instant it
+is made, changes at tic 2308-2309 (`turning` drops from -800 to 0). The
+server's confirmed clock is still running the OLD value (`turning -800`) six
+tics later, ramping `angle` as if the turn were still held, and only catches
+up to the client's held value around tic 2316 -- by which point the client
+has already moved on again (tic 2328). **The server is not disagreeing about
+what was pressed; it is running behind on finding out**, and repeating the
+last known input in the meantime.
+
+**Read together with 8.18's `client &&`-gated netticbuffer finding, this is
+the mechanism, not a guess about it anymore.** The client never predicts its
+own confirmed clock (proven three times over). Nothing stops the SERVER doing
+exactly that to a remote client's not-yet-arrived input: when the server's
+confirmed clock reaches a tic before that client's packet for it has landed,
+it fills the gap the same way `K_RollbackPredictInputs` fills any predicted
+tic -- repeat the last known value -- and runs its own confirmed simulation on
+the guess. The guess is invisible while the player holds still (a repeated
+value is the correct value), which is exactly why an unattended, bot-only
+race never surfaces it and why the very first `K_RollbackNoteArrival` reads
+came back at zero: that instrument only catches a *resent* tic disagreeing,
+and this is not about resends. It only becomes visible when the real,
+changing human input finally lands and the server has to catch up -- which is
+precisely where every long episode above starts.
+
+**What this changes going forward:** the fix is not in the archive, the
+restore, or tic determinism -- all three are proven clean. It is in whether
+the server's confirmed clock is allowed to run ahead of a remote client's
+input at all. The `client &&` guard on the netticbuffer reserve is the
+concrete line to look at next.
