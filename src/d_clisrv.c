@@ -7661,6 +7661,9 @@ static void UpdatePingTable(void)
 	}
 	else // We're a client, handle mindelay on the way out.
 	{
+		static tic_t lastprinted_target_lag = (tic_t)-1;
+		static dboolean lastprinted_valid = false;
+
 		// The same exemption as above, and it belongs here too: this is the half
 		// that was missed. target_lag leaves as wantdelay on every packet and the
 		// server does faketic += (wantdelay - timegap), so a client with a
@@ -7685,6 +7688,17 @@ static void UpdatePingTable(void)
 			target_lag = 0;
 		else
 			target_lag = cv_mindelay.value;
+
+		if (lastprinted_valid == false || target_lag != lastprinted_target_lag)
+		{
+			CONS_Printf("rollback_lagcheck: target_lag -> %u (predictahead %d, "
+				"twoclock %d, gamestate %d)\n",
+				(unsigned)target_lag, K_RollbackPredictAhead(), K_RollbackTwoClock(),
+				(int32_t)gamestate);
+
+			lastprinted_target_lag = target_lag;
+			lastprinted_valid = true;
+		}
 	}
 }
 

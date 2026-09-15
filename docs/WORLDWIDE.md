@@ -1275,3 +1275,45 @@ tracked by git (it lives in the local game install, not the source repo), so
 this fix has no commit of its own -- recorded here instead, per the doc
 cadence rule, since the harness is as much a part of this project's memory as
 the source.
+
+### 8.22 The relabel histogram, read: a bimodal split that names its own cause in the code's own comment
+
+Fixed-schedule server checkpoints (8.21) finally caught `rollback_relabel`'s
+output:
+
+```
+6441 packets, faketic - realstart ranged 0 to 8, mean 4.12
+  +0   36    +1  493    +2 3263    +3    3    +4    1
+  +5    2    +6  286    +7 1037    +8 1320
+```
+
+Not a spread around one mean -- **two separate clusters**: 3263 (50.6%) sit
+at exactly `+2`, and 2643 (41.0%) spread across `+6` to `+8`. The algebra
+behind `faketic = maketic + max(0, wantdelay - timegap)` collapses cleanly:
+whenever a packet arrives inside its delay budget (`timegap < wantdelay`),
+`faketic - realstart` reduces to exactly `wantdelay`, a constant; once a
+packet arrives *after* its budget is used up, it reduces to `timegap`, the
+raw elapsed delay, which is only as steady as the network jitter behind it.
+**The tight spike at +2 is `wantdelay = 2` -- vanilla `cv_mindelay`'s
+default.** The spread at +6-8 is raw transit time under `rollback_lag 6`.
+
+`d_clisrv.c` already names this exact failure mode in its own comments, in
+detail, from an earlier measurement on this branch: `K_RollbackPays()` exists
+specifically to zero `target_lag` (and so `wantdelay`) whenever rollback is
+"paying" for latency instead of the gentleman's delay -- *"a client with a
+mindelay is asking the server to hold that client's own input for that many
+tics -- and then cannot predict it, because the server applies it to a tic
+the client never spent it on."* The client-side branch that sets
+`target_lag = K_RollbackPays() ? 0 : cv_mindelay.value` has no floor-clamp
+and no smoothing -- by the code as read, it should hold at a flat 0 for the
+whole two-clock race. It plainly is not doing that: half our packets carry
+`wantdelay = 2`.
+
+**Instrumented rather than guessed further**: `rollback_lagcheck`, an
+edge-triggered print on the client firing only when `target_lag` *changes*,
+showing `K_RollbackPredictAhead()`, `K_RollbackTwoClock()` and `gamestate` at
+that moment -- the three inputs `K_RollbackPays()` combines. If `target_lag`
+is genuinely locked at 0 for two-clock mode's whole duration, this prints
+once, at connect, and the +2 spike has a different, still-unknown source. If
+it moves, this names exactly when and against which of the two exemptions
+failing. Not yet run.
