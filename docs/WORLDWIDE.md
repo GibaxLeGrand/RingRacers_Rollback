@@ -1241,3 +1241,37 @@ repeated value would mean the two clocks simply count from different zeroes
 -- harmless. A spread means the label itself moves from packet to packet,
 which is the discriminator this was built to measure. Added to
 `playserver_correct.cfg`'s end-of-race report. Not yet run.
+
+### 8.21 A harness bug: the server's closing report was scheduled to never run
+
+`rollback_relabel` printed nothing after the race -- not "no packets", nothing
+at all. `srvlog_correct.txt` ends mid-race, at `*Guest left the game`, with
+no `rollback_damagelog`/`rollback_relabel` line anywhere.
+
+The cause was arithmetic, not code: `playclient_correct.cfg`'s own scripted
+waits total 3170 centiseconds (31.7 s); `playserver_correct.cfg`'s total
+10400 (104.0 s), with the closing report gated behind a single `wait 8900`
+placed right after setup. `playtest.sh` runs the client synchronously and
+`kill $SRV`s the server the instant the client's script reaches its own
+`quit` -- so the server's 89-second closing wait was never going to elapse
+before the client's ~32-second schedule finished and took the server down
+with it. **This is not new to today**: `rollback_damagelog`'s own final print
+sat behind the exact same unreachable wait and has, by this arithmetic, never
+actually printed in any race this session -- every damage-tally number this
+branch has reported came from the periodic checkpoints inside the race
+(`rollback_drift`'s own damage/input lines, which sample the server's latest
+packet), never from the server's own closing tally. Worth knowing, and worth
+being plain about: it does not appear to have produced a wrong reading
+anywhere, since every actual conclusion drawn from the damage tally used
+those periodic in-race lines already.
+
+**Fixed in the harness, not the game**: `playserver_correct.cfg` now prints
+`rollback_relabel` and `rollback_damagelog` at four checkpoints (every 2000
+centiseconds, `wait 2000` repeated with a smaller final step to keep the same
+10400 total ceiling) instead of once behind a wait that never completes. At
+least one checkpoint now lands before the client's schedule ends regardless
+of exactly how long a given race runs. `playserver_correct.cfg` is not
+tracked by git (it lives in the local game install, not the source repo), so
+this fix has no commit of its own -- recorded here instead, per the doc
+cadence rule, since the harness is as much a part of this project's memory as
+the source.
