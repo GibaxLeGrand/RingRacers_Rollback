@@ -7673,10 +7673,13 @@ static void UpdatePingTable(void)
 		// two are symmetric; this measures it instead.
 		if (lastprinted_valid == false || target_lag != lastprinted_target_lag)
 		{
+			// K_RollbackTwoClock() is reported here only to show that it reads 0
+			// on this side by construction; correctrate is the term that can
+			// actually make rollbackpays true on a server.
 			CONS_Printf("rollback_lagcheck: [server] target_lag -> %u (fastest %u, "
-				"rollbackpays %d, twoclock %d, gamestate %d)\n",
+				"rollbackpays %d, twoclock %d, correctrate %d, gamestate %d)\n",
 				(unsigned)target_lag, (unsigned)fastest, (int32_t)rollbackpays,
-				K_RollbackTwoClock(), (int32_t)gamestate);
+				K_RollbackTwoClock(), K_RollbackCorrectRate(), (int32_t)gamestate);
 
 			lastprinted_target_lag = target_lag;
 			lastprinted_valid = true;

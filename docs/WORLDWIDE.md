@@ -1503,3 +1503,56 @@ an unwritten one is worth nothing:**
 
 Either outcome is worth the one race, which is the only reason to run it
 before writing anything else.
+
+### 8.26 The fix was a no-op, and the reason is that "Worldwide is on" is not a thing a machine knows
+
+The race ran on `947f1921e` (artifact taken by run id, `headSha` checked).
+The result is worth more than a working fix would have been:
+
+```
+rollback_lagcheck: [server] target_lag -> 5 (fastest 5, rollbackpays 0, twoclock 0, gamestate 1)
+rollback_lagcheck: [server] target_lag -> 7 (fastest 7, rollbackpays 0, twoclock 0, gamestate 1)
+... 6 <-> 7 for the whole race, exactly as in 8.24 ...
+```
+
+**`rollbackpays` still 0 at every print.** Nothing moved. And the histogram
+did not move either -- `+2` at 3335, against 3312 and 3273 in the two races
+before it.
+
+⚠ **Which means the prediction written in 8.25 did not get tested, and the
+surviving `+2` is not evidence of anything.** The independent variable never
+changed: the host's `wantdelay` was 6-7 before the fix and 6-7 after it, so
+the experiment that was supposed to discriminate the `+2` cluster's owner
+simply did not run. Reading "`+2` survived, therefore the host does not own
+it" would have been the whole trap in one step -- a conclusion drawn from a
+control that was never varied. **8.24's question stays exactly as open as it
+was.**
+
+**Why the fix did nothing.** `K_RollbackTwoClockConfigured()` reads
+`g_twoclock`, and `g_twoclock` is **0 on the host for its entire life**:
+`rollback_twoclock` is set in `playclient_correct.cfg` and appears in no
+server scenario, because two-clock *is* the client-side mechanism -- a server
+is authoritative and never speculates. The predicate was asking the host
+about a switch only a client ever throws.
+
+**The real finding, and it is structural:** there is no single "this machine
+is running Worldwide" state anywhere. Worldwide is **two switches on two
+machines** -- `rollback_twoclock` on the client, `rollback_correct` on the
+server (`g_correctrate`, commented in the source as *"0 = off (server
+side)"*). Nothing ties them together, and nothing on either machine can see
+the other's. That is invisible while every measurement is read from the
+client's seat, which is how it survived this long.
+
+**Second version:** `K_RollbackCorrectingHere()`, `g_correctrate > 0` at
+`GS_LEVEL`, added as a third term. The `predictahead` term is left exactly as
+it was, and the two-clock term is still the same expression a client
+evaluates, so once again nothing on the client side moves by construction.
+
+⚠ **`g_correctrate` is a proxy and gets called one in the code.** The
+question the delay policy actually wants is *are my clients predicting*,
+which a server cannot answer today. That is the capability advertising
+already on the roadmap; when it exists this predicate should ask it and stop
+inferring. The server print now carries `correctrate` alongside
+`rollbackpays` so the next reading says which term did the work, rather than
+leaving `twoclock 0` sitting there looking like the answer when it is 0 on
+that side by construction.

@@ -4228,6 +4228,28 @@ static dboolean K_RollbackTwoClockConfigured(void)
 	return (g_twoclock > 0 && gamestate == GS_LEVEL);
 }
 
+/** The server-side half of the same question.
+  *
+  * ⚠ There is no single "Worldwide is on" state on a machine, and not knowing
+  * that is what made the first version of this fix a no-op: two-clock is a
+  * *client* switch (rollback_twoclock, set in playclient_*.cfg) and the
+  * correction channel is a *server* one (rollback_correct, set in
+  * playserver_*.cfg). A host running Worldwide therefore has g_twoclock == 0
+  * for its entire life, so asking g_twoclock alone exempted nobody and the
+  * race came back indistinguishable from the one before it -- rollbackpays 0
+  * at every print, same 6<->7 oscillation.
+  *
+  * g_correctrate is the nearest thing the server has to "I am running
+  * Worldwide". It is a proxy and it is worth naming as one: the question the
+  * delay policy really wants is *are my clients predicting*, which the server
+  * cannot answer today. That is the capability advertising already scoped on
+  * the roadmap, and when it lands this predicate should ask it instead.
+  */
+static dboolean K_RollbackCorrectingHere(void)
+{
+	return (g_correctrate > 0 && gamestate == GS_LEVEL);
+}
+
 /** The mindelay/gentleman's-delay exemption used to ask K_RollbackPredictAhead()
   * alone, which only ever answers for the old loop: rollback_twoclock zeroes
   * g_loopahead on the way in (see Command_RollbackTwoClock_f -- the two are
@@ -4260,7 +4282,9 @@ static dboolean K_RollbackTwoClockConfigured(void)
   */
 dboolean K_RollbackPays(void)
 {
-	return (K_RollbackPredictAhead() > 0) || K_RollbackTwoClockConfigured();
+	return (K_RollbackPredictAhead() > 0)
+		|| K_RollbackTwoClockConfigured()
+		|| K_RollbackCorrectingHere();
 }
 
 dboolean K_RollbackSpeculating(void)
