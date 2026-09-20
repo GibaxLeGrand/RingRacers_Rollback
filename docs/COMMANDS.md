@@ -120,6 +120,48 @@ exécuté, combien contredisaient ce qui avait été utilisé, combien sont
 arrivées trop tard pour l'anneau — et, s'il y en a, le plus vieux tic encore
 en attente d'un rejeu.
 
+### `rollback_inputlog [0|1]`
+**À lancer sur les deux machines.** Compte les ticcmds réellement consommés
+par un tic confirmé et en tient un hash cumulatif ; la commande seule affiche
+l'état, le compte et le hash. Les deux journaux se comparent tic par tic :
+le premier tic où les comptes concordent mais où les **hashs** divergent est
+un tic où les deux machines ont joué des entrées différentes sans s'en
+apercevoir.
+
+⚠ Le hash replie le **numéro de tic** dans chaque tour, donc une entrée
+identique rangée sous deux numéros différents se lit comme un contenu
+différent. C'est voulu (c'est ce qui rend visible un réétiquetage), mais ça
+veut dire qu'un écart de hash ne prouve pas à lui seul que les octets
+d'entrée diffèrent — voir `rollback_relabel`.
+
+### `rollback_relabel`
+**Serveur uniquement, et il faut un vrai client distant** (une boucle locale
+ne relabellise rien d'intéressant). Rapport seul. Histogramme de
+`faketic - realstart` : de combien de tics le serveur **déplace l'étiquette**
+d'un ticcmd qui arrive, par rapport au numéro dont le client l'avait marqué.
+C'est de la mécanique vanilla (`PT_CLIENTCMD`,
+`faketic = maketic + max(0, wantdelay - timegap)`), pas de cette branche.
+
+Comment le lire — l'algèbre se réduit à deux cas et l'histogramme est souvent
+bimodal parce que **plusieurs émetteurs** y sont mélangés :
+
+- paquet arrivé **dans son budget** (`timegap < wantdelay`) → l'offset vaut
+  exactement `wantdelay`, donc un **pic étroit** ;
+- paquet arrivé **après** → l'offset vaut `timegap`, le transit brut, donc un
+  **étalement** aussi large que la gigue.
+
+⚠ Un serveur-écoute s'envoie ses propres paquets (`CL_SendClientCmd()` est
+appelé sous `if (server)` aussi), donc l'histogramme compte **le host et les
+clients ensemble**. Attribuer un cluster à quelqu'un demande de faire varier
+un seul émetteur et de regarder quelle masse bouge (voir `WORLDWIDE.md` 8.27).
+
+### `rollback_lagcheck` — n'existe pas comme commande
+Cherché comme commande, il n'y est pas : c'est une **impression
+automatique**, à front, dans `UpdatePingTable` (`d_clisrv.c`). Elle sort une
+ligne **quand `target_lag` change**, préfixée `[client]` ou `[server]` selon
+la branche, avec les termes qui décident de l'exemption. Rien à activer : la
+ligne apparaît dans `latest-log.txt` de la machine concernée.
+
 ---
 
 ## Netcode en direct — changent le comportement réseau réel

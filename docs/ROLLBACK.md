@@ -1,11 +1,28 @@
 # Rollback netcode — state, measurements and plan
 
+> ⚠ **This file is a journal, and its early sections are out of date on
+> purpose. For the current state, read `WORLDWIDE.md` first** — it carries
+> everything from the two-clock pivot onward, and its last section is the
+> newest thing in the project. Then `ROADMAP.md` for what is left,
+> `COMMANDS.md` for what each console command does, and `AUDIT_20260909.md`
+> for the comparison with SRB2 NetPlus and Odamex.
+>
+> Kept unedited below the line, because a journal that gets rewritten to match
+> today's understanding stops being evidence of how the understanding was
+> reached — and on this branch, three separate conclusions were reversed by
+> later measurements. The reversals are the useful part.
+
 This file is the project's memory. Its predecessor was never committed and was
 lost with the session that held it, which cost a day of rediscovering things
 that were already known. Everything here is either measured or read from the
 source; guesses are marked as such.
 
 ## Where this stands
+
+⚠ **Superseded — this paragraph describes the project before the loop existed.**
+Today the two-clock speculation, the correction channel and the delay policy
+*are* wired into the tic loop, each behind a switch that is off by default, so
+a stock-configured build still plays like one. See `WORLDWIDE.md`.
 
 The snapshot machinery works and is measured. **Nothing is wired into the tic
 loop**: the game plays exactly as a stock build, and the rollback code only runs

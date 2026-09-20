@@ -55,6 +55,37 @@ state the archive does not carry, and that state reaches a bot's simulation.*
 > 4. **Then Phase B**, which is now the gate: 9.5 ms a pass at nine karts is
 >    already 33% of a tic, and a grid is sixteen.
 
+> **Revised 2026-09-20 -- the host was never exempted, and now is.**
+> `WORLDWIDE.md` 8.23 to 8.27. Measured, not argued: on a listen server
+> `K_RollbackPays()` read false for a whole race, so the **host charged
+> himself 6-7 tics of gentleman's delay -- 170-200 ms** -- while the remote
+> client was charged none. `client` is `(!server)`, so the `client` gate
+> inside `K_RollbackTwoClock()` silences the exemption on the one machine
+> that has a person on node 0. Fixed and measured: `target_lag` now reaches 0
+> at race start and never moves, and the relabel histogram's `+6`/`+7` mass
+> moved to `+0`, which also identified those clusters as the host's.
+>
+> **The structural finding is the one to carry forward: there is no single
+> "this machine is running Worldwide" state.** It is two switches on two
+> machines -- `rollback_twoclock` on the client, `rollback_correct` on the
+> server -- with nothing tying them together and neither able to see the
+> other. The first version of the fix was a no-op precisely because it asked
+> the host about the client's switch. Any future code that means "are we
+> running Worldwide" has to pick a side deliberately, and the delay policy
+> now leans on `g_correctrate` as a **proxy** until capability advertising
+> exists.
+>
+> **Two things this adds to the list below**, both small and both real:
+> Phase D gains "somebody hosts and judges" (see there), and the capability
+> advertising item gains a second customer (see there).
+>
+> **Still open, narrowed:** the relabel histogram's `+2` cluster, 2557 of
+> 6403, belongs to neither the host (exempting him cost it 778) nor
+> obviously the remote client (offset 2 needs `timegap < 2` under
+> `rollback_lag 6`). No hypothesis is recorded. The instrument that settles
+> it is logging `lagDelay` where it goes on the wire (`d_clisrv.c:6788`),
+> tagged by sender.
+
 ## Phase A -- Close the desync
 
 **Blocks everything.** A full state resend every fifteen seconds makes every other
@@ -173,6 +204,17 @@ one. Client-side prediction only turns on against a server that has opted in
 with a value recommended from the server's own settings and the measured
 ping.
 
+**A second customer for this, found 2026-09-20 (`WORLDWIDE.md` 8.26):** the
+gentleman's-delay policy needs the same answer and cannot get it either. A
+host decides whether to charge himself a delay based on `g_correctrate` --
+*his own* correction-channel switch -- because the question he actually wants
+answered is **"are my clients predicting?"**, and nothing on the wire tells
+him. That is a proxy, it is named as one in `K_RollbackPays()`'s comment, and
+it is wrong in both directions: a host with the channel on but vanilla
+clients connected exempts himself and gains an edge; a host with it off but
+predicting clients keeps charging himself for nothing. **When the bit below
+exists, `K_RollbackPays()` should ask it and stop inferring.**
+
 **Already there, checked rather than assumed, 2026-09-14 -- this is the
 delivery mechanism for the item above, not new plumbing:**
 
@@ -240,9 +282,18 @@ hardcoded default.
   answer is position history and interpolation (`cv_netsteadyplayers`, `histx/y/z`)
   and we have nothing equivalent.
 - **The depth**: what lead actually feels best, which then feeds back into B.
+- **Somebody hosts and judges** (added 2026-09-20). Every reactivity verdict
+  this project owns -- *"ça répond tout de suite"*, five races, then again
+  after the architecture changed underneath it -- was given **from the
+  client's seat**. Nobody has ever hosted a listen server and said whether it
+  felt responsive, and until 8.27 the honest expectation was that it did not:
+  the host was paying 170-200 ms that nobody was measuring. That delay is now
+  gone, and the only instrument that can confirm it is a person. ⚠ The
+  unattended bench **cannot** fake this one -- it has no opinion.
 
 **Done when:** a person prefers it to the control, on three races, at a latency
-that is stated rather than assumed.
+that is stated rather than assumed -- **and at least one of those judgements is
+made while hosting.**
 
 ---
 
