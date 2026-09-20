@@ -1556,3 +1556,60 @@ inferring. The server print now carries `correctrate` alongside
 `rollbackpays` so the next reading says which term did the work, rather than
 leaving `twoclock 0` sitting there looking like the answer when it is 0 on
 that side by construction.
+
+### 8.27 The host is exempted, measured -- and the `+6/+7` cluster was his
+
+Build `4e641407e`, artifact taken by run id with the new instrument string
+checked in the binary first. The server print is now **two lines for a whole
+race**, against thirty-two:
+
+```
+rollback_lagcheck: [server] target_lag -> 2 (fastest 0, rollbackpays 0, twoclock 0, correctrate 0, gamestate 13)
+rollback_lagcheck: [server] target_lag -> 0 (fastest 1, rollbackpays 1, twoclock 0, correctrate 4, gamestate 1)
+```
+
+`rollbackpays 1`, `correctrate 4`, `twoclock 0` -- the new term is visibly the
+one doing the work, which is why it was added to the print. `target_lag`
+reaches 0 when the race starts and **never moves again**: the 6↔7 oscillation
+is gone. **The host no longer charges itself 170-200 ms on its own input.**
+The client print is unchanged at one line, as construction promised.
+
+**And the histogram moved, which is what settles 8.24's question:**
+
+| offset | before (8.26) | after | |
+|---|---|---|---|
+| `+0` | 36 | **2036** | +2000 |
+| `+1` | 475 | 505 | |
+| `+2` | 3335 | **2557** | -778 |
+| `+6` | 314 | **1** | |
+| `+7` | 1232 | **124** | -1421 with +6 |
+| `+8` | 997 | 1176 | |
+| mean | 4.01 | **2.48** | |
+
+The `+6`/`+7` mass collapsed and `+0` swelled by almost exactly as much.
+**So the host owned `+6`/`+7`**, and the algebra says why: his packets
+arrived inside their budget, so their offset *was* his `wantdelay`, 6 or 7.
+With `wantdelay = 0` the receiver falls through to `timegap`, which on a
+loopback is 0. Predicted in 8.25, and this time the independent variable
+actually moved, so the reading counts.
+
+⚠ **`+2` is still there -- 2557 of 6403 -- and it is now the open question,
+narrowed rather than answered.** It is not (mostly) the host's gentleman's
+delay, since exempting him cost it only 778. But it is hard to attribute to
+the remote client either: an offset of exactly 2 requires `wantdelay = 2`
+*and* `timegap < 2`, and that client runs under `rollback_lag 6`, so its
+`timegap` should never be below 6 -- its own traffic is visible at `+7`/`+8`.
+**A third possibility is not yet excluded and no guess is recorded here.**
+The instrument that settles it is the one 8.24 already named and this section
+does not replace: log `lagDelay` where it goes on the wire
+(`d_clisrv.c:6788`), tagged by sender.
+
+**Unchanged and worth stating:** zero `Game state reloaded` in both logs,
+three races running. The exemption did not destabilise anything.
+
+⚠ **What has still never been measured is the thing the fix is for.** Nobody
+has hosted a listen server on this build and said whether it feels
+responsive. Every reactivity judgement in this document -- *"ça répond tout
+de suite"*, five races, twice -- was made from the client's seat. **This one
+needs somebody at the controls, on the host, and it is the first entry in
+"What needs somebody at the controls" that the bench cannot fake.**
