@@ -1337,6 +1337,13 @@ cannot be what makes half the packets carry `wantdelay = 2`. The client-side
 mindelay exemption is working exactly as its comment claims. That lead is
 closed.
 
+> ⚠ **That second-to-last sentence is wrong, and 8.25 retracts it.** The same
+> line prints `predictahead 0, twoclock 0`, so the exemption was *not* firing
+> when it printed: the branch taken was `target_lag = cv_mindelay.value`, and
+> it still came out 0. What is measured is that the client's `target_lag` is 0
+> for the whole race. *Why* is not measured, and this instrument cannot tell
+> the two paths apart, because both of them end at 0.
+
 And the relabel histogram reproduced almost to the packet, which is worth
 noting on its own -- this project's numbers have been n=1 too often:
 
@@ -1449,3 +1456,50 @@ already**: log the value at the point it goes on the wire
 sender, rather than a variable two functions upstream of it. Watching
 `target_lag` instead of `lagDelay` is what made 8.22 read half the population
 and call it all of it.
+
+### 8.25 Exempting the host -- and retracting what 8.23 said about the client
+
+**First, the retraction, because it changes what 8.23 is worth.** That
+section read the client's single `target_lag -> 0` as the exemption working.
+It is not. The very same line reports `predictahead 0, twoclock 0`, so
+`K_RollbackPays()` was false at that call and the branch taken was
+`target_lag = cv_mindelay.value` -- which still printed 0, although
+`mindelay "2"` sits in *both* machines' configs and `cv_mindelay` is declared
+`Player("mindelay", "2")`. The arithmetic is forced: `cv_mindelay.value` read
+0 at that call. Why a profile-backed cvar with a default of 2 reads 0 at
+connect is **not established and is not worth a guess here**.
+
+What survives is narrower and still useful: **the client's `target_lag` is 0
+for the whole race, measured.** Which of the two paths puts it there is
+something this instrument structurally cannot say, because both end at 0.
+Filed with the project's other instrument-misreadings: an oracle whose two
+outcomes are the same value distinguishes nothing.
+
+**The fix, in `K_RollbackPays()`.** The predicate asked
+`K_RollbackTwoClock() > 0`, which is gated on `client` and so answers *"is
+speculation running here"*. The delay policy needs *"is this machine running
+Worldwide at all"*. Those come apart on exactly one machine -- a listen
+server -- and that is the one with a person on node 0. Split into
+`K_RollbackTwoClockConfigured()` (reads `g_twoclock` and the gamestate, no
+role gate) and left `K_RollbackTwoClock()` alone, because its `client` gate
+is right for the loop: an authoritative server must not speculate.
+
+**No client-side change by construction:** on a client `client` is true, so
+the old and new expressions are the same term for the same inputs. Only the
+host's answer moves.
+
+⚠ **Written before the race, per the rule that a prediction costs nothing and
+an unwritten one is worth nothing:**
+
+1. `[server] target_lag -> 0` at `GS_LEVEL`, and staying there -- so the 6↔7
+   oscillation of 8.24 disappears from the log.
+2. **This doubles as the discriminator for 8.24's open question.** With the
+   host's `wantdelay` at 0 its own loopback packets give the receiver
+   `offset = timegap`, which on a loopback is 0 or 1. So *if* the host owns
+   the `+2` cluster, `+2` should collapse from 3312 toward nothing and
+   `+0`/`+1` should swell by roughly that much. If `+2` survives at ~50%, the
+   host is not the `+2` sender, the cluster belongs to the remote client, and
+   the question reopens somewhere other than where 8.24 pointed.
+
+Either outcome is worth the one race, which is the only reason to run it
+before writing anything else.

@@ -4215,6 +4215,19 @@ int32_t K_RollbackTwoClock(void)
 	return g_twoclock;
 }
 
+/** Is two-clock mode switched on here, whatever role this machine plays?
+  *
+  * K_RollbackTwoClock() answers a deliberately narrower question -- *is
+  * speculation running on this machine* -- and its `client == false` is right
+  * for that: a server is authoritative and has nothing to predict. The delay
+  * policy needs the other question, and asking the narrow one for it is what
+  * the measurement below caught.
+  */
+static dboolean K_RollbackTwoClockConfigured(void)
+{
+	return (g_twoclock > 0 && gamestate == GS_LEVEL);
+}
+
 /** The mindelay/gentleman's-delay exemption used to ask K_RollbackPredictAhead()
   * alone, which only ever answers for the old loop: rollback_twoclock zeroes
   * g_loopahead on the way in (see Command_RollbackTwoClock_f -- the two are
@@ -4222,15 +4235,32 @@ int32_t K_RollbackTwoClock(void)
   * always came back false and the fixed delay kept charging for a round trip
   * the speculation was already covering. This asks both.
   *
-  * Symmetric with where it is read: UpdatePingTable's server branch only ever
-  * sets delay for node 0 (the local player of a listen server), so on that
-  * side this is really asking about the host's own view, same as it is on a
-  * plain client -- K_RollbackTwoClock() already returns 0 off a dedicated
-  * server (client == false there), so this is safe to call from either side.
+  * ⚠ The paragraph that used to sit here argued this was safe to call from
+  * either side, because K_RollbackTwoClock() returns 0 off a dedicated server
+  * where `client == false`. That is true and it is the harmless half. `client`
+  * is `(!server)` (d_clisrv.h), so it is false on a *listen* server too -- and
+  * there node 0 is a person holding a controller. Measured before changing
+  * anything (WORLDWIDE.md 8.24): rollbackpays read 0 on the host at every
+  * print of a full race, so the host fell back to raw ping and charged itself
+  * 6-7 tics of gentleman's delay -- 170-200 ms, the exact cost this branch
+  * exists to remove -- while the remote client was charged none. The comment
+  * checked the case where the answer did not matter and generalised to the
+  * case where it did.
+  *
+  * The delay's whole purpose is to equalise: without it a host has instant
+  * input while remote players eat their ping. Once those remote players
+  * predict, their input lag is already ~0, so keeping the host's handicap does
+  * not equalise anything -- it inverts the asymmetry it was built to prevent.
+  *
+  * ⚠ Not settled by this, and worth saying plainly: a host exempted here has
+  * an edge over any remote player who is *not* running Worldwide. That is the
+  * same trade the client-side exemption already makes, and the honest fix is
+  * the capability advertising already scoped on the roadmap, not this
+  * predicate.
   */
 dboolean K_RollbackPays(void)
 {
-	return (K_RollbackPredictAhead() > 0) || (K_RollbackTwoClock() > 0);
+	return (K_RollbackPredictAhead() > 0) || K_RollbackTwoClockConfigured();
 }
 
 dboolean K_RollbackSpeculating(void)
