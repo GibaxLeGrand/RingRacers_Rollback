@@ -1381,3 +1381,71 @@ a process takes one branch or the other, never both. One race reads it: if
 the host's `target_lag` sits at 2 while the client's sits at 0, the
 histogram's two clusters are named and the question becomes whether the host
 should be paying a gentleman's delay to itself at all.
+
+### 8.24 The two branches are not symmetric: on a listen server the host pays a delay the client does not
+
+The `[server]` print ran, same scenario, build `214111b46` (CI green, both
+markers verified present in the binary before the race). It is not one line:
+
+```
+rollback_lagcheck: [server] target_lag -> 2 (fastest 0, rollbackpays 0, twoclock 0, gamestate 13)
+rollback_lagcheck: [server] target_lag -> 6 (fastest 6, rollbackpays 0, twoclock 0, gamestate 1)
+rollback_lagcheck: [server] target_lag -> 7 (fastest 7, rollbackpays 0, twoclock 0, gamestate 1)
+... 6 <-> 7, thirty-two more times, the whole race ...
+rollback_lagcheck: [server] target_lag -> 2 (fastest 0, rollbackpays 0, twoclock 0, gamestate 1)
+```
+
+against the client's single `[client] target_lag -> 0`, unchanged from 8.23.
+
+**`rollbackpays 0` and `twoclock 0`, on the server, for the entire race.**
+Both read zero at every single print, at `gamestate 1` (GS_LEVEL), with the
+race plainly running. So the exemption that zeroes the gentleman's delay is
+**not** applying on the host side, and `target_lag = fastest` -- the raw ping
+figure, 6 to 7 tics under `rollback_lag 6` -- stands instead.
+
+**The mechanism, and it is one line.** `d_clisrv.h:676`:
+
+```c
+#define client (!server)
+```
+
+`K_RollbackTwoClock()` opens with `if (g_twoclock <= 0 || client == false ||
+gamestate != GS_LEVEL) return 0;`. On a listen server `server` is true, so
+`client` is false, so this returns 0 regardless of `g_twoclock`. That makes
+`K_RollbackPays()` false, and `UpdatePingTable`'s server branch then takes
+`target_lag = fastest` with the `cv_mindelay` floor underneath it.
+
+⚠ **`K_RollbackPays()`'s own comment reasons about exactly this and gets it
+half right**: *"K_RollbackTwoClock() already returns 0 off a dedicated server
+(client == false there), so this is safe to call from either side."* True for
+a dedicated server, where node 0 has no human on it and the delay it computes
+is nobody's input lag. **But it is the same `client == false` on a listen
+server**, where node 0 is a person holding a controller. The comment checked
+the harmless case and generalised to the harmful one. Third time on this
+branch that an invariant asserted next to the code has not held; the rule
+stands and it is cheap -- measure the claim, do not read it.
+
+**What this means in play, and it is not an instrumentation detail:** the
+host of a listen server is charged 6 to 7 tics of gentleman's delay on their
+own input -- 170 to 200 ms, the exact cost this project exists to remove --
+while the remote client, correctly exempted, is charged none. Worldwide has
+been measured from the client's seat every time. **Nobody has ever asked the
+host whether it felt responsive**, and by this reading it should not have.
+
+**What is still open, and stated as open.** This does *not* yet close the
+relabel histogram's `+2` cluster. Worked through: an offset of exactly
+`wantdelay` is what the receiver produces whenever a packet arrives inside its
+budget, and `timegap` otherwise -- so the client's `wantdelay = 0` explains
+the `+6..+8` spread (raw transit) cleanly, but a host sending 6 or 7 should
+land on a constant `+6`/`+7`, not on `+2` 51% of the time.
+`MAXGENTLEMENDELAY` is `TICRATE`, so it is not a cap, and the
+`reference_lag`/`spike_time` smoothing should only hold the low value for
+`GENTLEMANSMOOTHING` tics. **So one of the three -- who sends, what smoothing
+does, or what the receiver computes -- is not doing what reading it says.**
+
+**The instrument that closes it is the obvious one and was skipped once
+already**: log the value at the point it goes on the wire
+(`netbuffer->u.clientpak.wantdelay = lagDelay`, `d_clisrv.c:6788`), per
+sender, rather than a variable two functions upstream of it. Watching
+`target_lag` instead of `lagDelay` is what made 8.22 read half the population
+and call it all of it.
