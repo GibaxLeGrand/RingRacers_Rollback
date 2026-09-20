@@ -1317,3 +1317,67 @@ is genuinely locked at 0 for two-clock mode's whole duration, this prints
 once, at connect, and the +2 spike has a different, still-unknown source. If
 it moves, this names exactly when and against which of the two exemptions
 failing. Not yet run.
+
+### 8.23 `rollback_lagcheck` read: `target_lag` never moves on the client, and the instrument was watching one of two senders
+
+The 8.22 instrument ran, on a fresh `playtest.sh correct` race against a
+verified binary (`5cb11ff0e`, CI artifact re-downloaded first -- the copy
+sitting in the game folder predated the commit and did not contain
+`rollback_lagcheck` at all, which is the binary-verification rule paying for
+itself again). The client's whole race produced **exactly one line**:
+
+```
+rollback_lagcheck: target_lag -> 0 (predictahead 0, twoclock 0, gamestate 1)
+```
+
+One line, at connect, and never again. That is 8.22's first branch, stated
+before the measurement and now met: **`target_lag` is genuinely locked at 0
+on the client for two-clock mode's entire duration.** It does not move, so it
+cannot be what makes half the packets carry `wantdelay = 2`. The client-side
+mindelay exemption is working exactly as its comment claims. That lead is
+closed.
+
+And the relabel histogram reproduced almost to the packet, which is worth
+noting on its own -- this project's numbers have been n=1 too often:
+
+```
+6453 packets, faketic - realstart ranged 0 to 8, mean 4.15
+  +0 36   +1 472   +2 3273   +3 2   +4 1   +5 1   +6 257   +7 1067   +8 1344
+```
+
+against 8.22's 6441 / +2 3263 / mean 4.12. Same bimodal split, same
+proportions. **Zero `Game state reloaded` in both logs**, consistent with the
+correction channel's own measurements.
+
+**So where does `wantdelay = 2` come from, if not from the client?** Reading
+the send path rather than guessing: `netbuffer->u.clientpak.wantdelay` is not
+assigned `target_lag` directly. It is assigned `lagDelay`
+(`d_clisrv.c:6788`), a local in `CL_SendClientCmd` computed from `target_lag`
+behind `if (target_lag > 0)` -- and `CL_SendClientCmd()` is called from **two
+places**: `if (client)` and, five lines earlier, `if (server)`
+(`d_clisrv.c:8035`). A listen server sends a clientpak for its own node 0
+player. So the `wantdelay` values arriving at the server's `PT_CLIENTCMD`
+handler -- the population the relabel histogram counts -- come from **two
+senders**, and the two compute `target_lag` in **two different branches** of
+`UpdatePingTable`: the remote client in the `else` branch (instrumented,
+locked at 0), the host in the `if (server)` branch (never instrumented). A
+bimodal histogram with two senders in it is no longer a puzzle; it is a
+question about which sender owns which mode, and the answer has simply never
+been measured.
+
+⚠ `K_RollbackPays()`'s own comment argues the two branches are symmetric --
+*"on that side this is really asking about the host's own view, same as it is
+on a plain client"*. That is a design claim, not a reading. This project has
+already been burned twice by an invariant written next to code that did not
+honour it (the keeper called mid-tic while its comment promised end-of-tic;
+the `local` flag's own promise about renderflags). **Do not close this on the
+strength of the comment.**
+
+**Built, not yet run:** the same edge-triggered print, now in the server
+branch too, tagged `[server]` against the client's `[client]`, and reporting
+the three inputs that branch actually uses (`fastest`, `rollbackpays`,
+`twoclock`). The statics are hoisted to function scope, which is safe because
+a process takes one branch or the other, never both. One race reads it: if
+the host's `target_lag` sits at 2 while the client's sits at 0, the
+histogram's two clusters are named and the question becomes whether the host
+should be paying a gentleman's delay to itself at all.

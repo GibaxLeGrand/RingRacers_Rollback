@@ -7582,6 +7582,11 @@ static void UpdatePingTable(void)
 
 	int32_t i;
 
+	// Shared by both branches below: a process is one role or the other, never
+	// both, so one pair of statics covers whichever branch this build runs.
+	static tic_t lastprinted_target_lag = (tic_t)-1;
+	static dboolean lastprinted_valid = false;
+
 	if (server)
 	{
 		if (Playing() && !(gametime % 8)) // Value chosen based on _my vibes man_
@@ -7658,12 +7663,27 @@ static void UpdatePingTable(void)
 			case 1:
 				playerdelaytable[nodetoplayer[0]] = target_lag;
 		}
+
+		// Same print as the client branch below, and it is here because the
+		// first reading only covered that branch. A listen server calls
+		// CL_SendClientCmd() for its own node 0 player too (D_ClientServerTic,
+		// `if (server)`), so the wantdelay the server receives comes from *two*
+		// senders computing target_lag in two different places -- and only one
+		// of them was being watched. The comment on K_RollbackPays() argues the
+		// two are symmetric; this measures it instead.
+		if (lastprinted_valid == false || target_lag != lastprinted_target_lag)
+		{
+			CONS_Printf("rollback_lagcheck: [server] target_lag -> %u (fastest %u, "
+				"rollbackpays %d, twoclock %d, gamestate %d)\n",
+				(unsigned)target_lag, (unsigned)fastest, (int32_t)rollbackpays,
+				K_RollbackTwoClock(), (int32_t)gamestate);
+
+			lastprinted_target_lag = target_lag;
+			lastprinted_valid = true;
+		}
 	}
 	else // We're a client, handle mindelay on the way out.
 	{
-		static tic_t lastprinted_target_lag = (tic_t)-1;
-		static dboolean lastprinted_valid = false;
-
 		// The same exemption as above, and it belongs here too: this is the half
 		// that was missed. target_lag leaves as wantdelay on every packet and the
 		// server does faketic += (wantdelay - timegap), so a client with a
@@ -7691,7 +7711,7 @@ static void UpdatePingTable(void)
 
 		if (lastprinted_valid == false || target_lag != lastprinted_target_lag)
 		{
-			CONS_Printf("rollback_lagcheck: target_lag -> %u (predictahead %d, "
+			CONS_Printf("rollback_lagcheck: [client] target_lag -> %u (predictahead %d, "
 				"twoclock %d, gamestate %d)\n",
 				(unsigned)target_lag, K_RollbackPredictAhead(), K_RollbackTwoClock(),
 				(int32_t)gamestate);
