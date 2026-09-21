@@ -41,12 +41,18 @@ Every piece is behind a switch that is off by default.
    8.28 is fixed in code (8.29, not yet verified). Still missing: the refusal of
    vanilla clients, the automatic mode switch, and a release-config build --
    CI builds are `DEVELOP` and cannot see public servers at all (8.30).
-2. **The drift's cause** (Phase A). Excluded: the archive, the restore,
-   determinism, the synchronised RNG, the damage path, the confirmed clock
-   running on a guess, late resends. The live lead is the gap between 8.19 and
-   8.20 (8.28, point 2).
+2. **The drift's cause** (Phase A). **Best candidate, found by reading
+   (8.31):** the speculation writes the local player's *current* input over a
+   tic the server has already sent, and the next pass runs that tic as
+   confirmed on it. Fix built behind `rollback_cleancmds`, off by default, with
+   counters that run either way. **Not measured yet**: one driven race, switch
+   off then on, settles it.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
-4. **The relabel histogram's `+2` cluster** (8.27).
+   The relink, half of a restore, is now indexed instead of quadratic (8.30,
+   not measured).
+4. **The relabel histogram's `+2` cluster** (8.27). Hypothesis: the host
+   outside a race, which would make it harmless. `rollback_relabel` now splits
+   by sender and race state to test it (8.32).
 5. **Never run under prediction:** a person playing on the host; a full race;
    Battle, Grand Prix, Encore; anything longer than a scripted race.
 
@@ -78,6 +84,13 @@ time.**
 | 8.19 | "this is the mechanism" is withdrawn by 8.20, and 8.20 has a gap (8.28) |
 | 8.23 | its reading of the client exemption is retracted in 8.25 (marked inline) |
 | 8.25 | its fix was a no-op, explained in 8.26 and replaced in 8.26-8.27 |
+| 8.28 point 2 | the gap it describes is explained by 8.31 |
+| 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
+
+**Pushed on 2026-09-21, compiled by CI, none of it run:** roulette fields
+local-only (8.29), indexed relink (8.30), `rollback_cleancmds` (8.31), relabel
+split (8.32), the bot-overwrite bound check, `old_z` restored on load, and a
+release-config Windows exe in CI (`ringracers-win64-release-<sha>`).
 
 ## 0. The rename, and what it actually commits to
 
@@ -1836,7 +1849,8 @@ Read, not measured.
 3. **Nor is the client labelling its packets with a speculated tic.**
    `K_RollbackUnspeculate` runs before `NetUpdate` (`d_clisrv.c:7179-7182`) and
    the label is `lastconfirmedtic` (`:6686-6689`).
-4. **The speculation writes into `netcmds` and nothing undoes it.**
+4. ⚠ *The conclusion of this point ("harmless") is wrong -- see 8.31, found the
+   same day.* **The speculation writes into `netcmds` and nothing undoes it.**
    `K_RollbackPredictInputs` writes guesses -- and this machine's live input,
    flagged `TICCMD_RECEIVED` -- into `netcmds[T]` for the speculated tics.
    `K_RollbackUnspeculate` restores the world, but `netcmds` is not in the

@@ -37,21 +37,39 @@ it described an architecture where the authoritative clock ran ahead.
 
 ## Next, in order
 
-1. **Make the savegame vanilla again** -- **done in code** (`WORLDWIDE.md`
-   8.29): the four roulette fields are in local snapshots only. Still to
-   verify, each a launch to be asked for: `soak_leak.cfg` stays at 0, then a
-   join in each direction against a stock build of the same base.
-2. **Close the gap between 8.19 and 8.20** (8.28, point 2): the one live lead on
-   the drift. One instrument, three values per tic, one driven race.
-3. **Somebody hosts and judges.** The host's 170-200 ms delay was removed on
-   2026-09-20 (8.27) and nobody has played from the host's seat since. One race,
-   and only a person can do it.
-4. **Phase B's first measurement**: a pass at sixteen karts, late in a race.
-5. **Still owed from 2026-09-10**: four more unattended repeats of
-   `playtest.sh correct` (the driven repeat is done: 8.16, 8.18), and the
-   correction-rate sweep, `rollback_correct 8`, `16`, `35` -- at 0.25 units of
-   residual per four tics, one correction every four tics is probably more than
-   needed, and each halving is free bandwidth.
+State on 2026-09-21: step 1 below is **pushed and compiled, nothing has run**.
+The next session happens on the original machine, where the harness and the
+game folder live. **Every launch in it is asked for first.**
+
+1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
+   each: roulette fields local-only (8.29), indexed relink (8.30),
+   `rollback_cleancmds` (8.31), relabel split (8.32), bot-overwrite bound check,
+   `old_z` restored on load, release-config exe in CI.
+2. **Check CI is green on `b9cbdc774`** and take the dev artifact by that sha.
+3. **Prepare the harness** (no launch): add `rollback_cleancmds` to
+   `playclient_correct.cfg`, and print `rollback_cleancmds`, `rollback_drift`
+   and the restore profile at the same checkpoints as the other reports. Best
+   done by first copying the harness into this repository (see *Backlog*).
+4. **The test session, one launch at a time, each asked for:**
+   - `soak_leak.cfg`, unattended: 0 failures, as in 8.15, confirms the roulette
+     fields are still carried locally. The restore profile's "relink pointers"
+     step prices the index (4.7 ms before).
+   - **One driven `playtest.sh correct` race, `rollback_cleancmds 0` for the
+     first half and `1` for the second.** Written before the run (8.31): the
+     "different from the server" count is non-zero while driving; with the
+     switch on, mean drift falls well below 0.25-0.86 units, spikes on the local
+     kart mostly go, and the `rollback_inputlog` hashes agree. The same race
+     reads the relabel split (8.32: `+2` should be "host, outside a race").
+   - **A race played from the host's seat**, to judge the feel now the host's
+     delay is gone (8.27). Only a person can do this one.
+5. **Depending on 4:** if `rollback_cleancmds` closes the drift, turn it on by
+   default, then run the correction-rate sweep (`rollback_correct 8`, `16`,
+   `35`) that has been owed since 2026-09-10 -- less drift should mean far fewer
+   corrections. If it does not, the next instrument hashes the program's global
+   memory (the exe's `.data`/`.bss`) just before a speculation and just after
+   the restore, narrows a difference down to an address, and names it with the
+   `.pdb` -- the blind spot every archive-based check shares.
+6. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---
 
@@ -69,15 +87,15 @@ roulette fix, 8.15); tic determinism (0/330 resim checks); the synchronised RNG
 hits, same hashes, 8.8); the confirmed clock running on a guess (8.9, 8.17,
 8.20); late resends (0 arrivals, 8.17).
 
-**Live lead:** 8.19 shows the client's confirmed world running different inputs
-than the server's for the human kart. 8.20 attributes it to the server's
-`faketic` relabelling, but relabelling alone should not make two confirmed
-worlds disagree (8.28, point 2). Settle that first.
+**Best candidate (8.31, read, not measured):** the speculation starts on a tic
+the server has already sent -- the netticbuffer reserve stops the confirmed loop
+one short -- and overwrites the local player's input in it with the current
+one; the next pass runs that tic as confirmed. It explains 8.19, the local kart
+owning most spikes, and `nospec` reading zero. Fix behind `rollback_cleancmds`.
 
 **Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
-8.27). The instrument is named: log `lagDelay` where it goes on the wire
-(`netbuffer->u.clientpak.wantdelay = lagDelay` in `CL_SendClientCmd`), tagged
-by sender.
+8.27). Hypothesis in 8.32: the host outside a race, harmless. The split that
+tests it is built.
 
 **Done when:** zero `Game state reloaded` with the resend **not** suppressed
 (`rollback_correct N 0`) over five unattended races and two driven ones -- or,
@@ -97,9 +115,9 @@ restore alone was 8.6 ms at sixteen karts late in a race. **Assume it does not
 fit, and measure.**
 
 **A cheap lever first, found by reading** (`WORLDWIDE.md` 8.30):
-`P_RelinkPointers`, 4.7 ms of an 8.6 ms restore, resolves every pointer with a
-linear scan of all mobjs. An index from `mobjnum` to object makes it linear
-instead of quadratic, without changing what it computes.
+`P_RelinkPointers`, 4.7 ms of an 8.6 ms restore, resolved every pointer with a
+linear scan of all mobjs. **Now indexed** by `mobjnum` (2026-09-21), same
+answer, not yet measured.
 
 **Then two structural levers, in this order:**
 
@@ -274,10 +292,9 @@ useful.
 
 - `botvars.diffincrease` is `int16_t` but archived with `WRITEUINT8`/`READUINT8`
   (`p_saveg.cpp:867`, `:1635`). Grand Prix only, between rounds.
-- `old_z` is never restored, and `K_HandleLapIncrement` reads `old_x`/`old_y` as
-  simulation after a restore (`WORLDWIDE.md` 8.3).
-- Out-of-bounds read in the bot-overwrite search: the array is indexed before the
-  bound is checked (`d_clisrv.c:4120`). Upstream code.
+- `K_HandleLapIncrement` reads `old_x`/`old_y` as simulation after a restore
+  (`WORLDWIDE.md` 8.3). (`old_z` not being restored is fixed, 2026-09-21.)
+- ~~Out-of-bounds read in the bot-overwrite search~~: fixed 2026-09-21.
 - On Windows `latest-log.txt` ignores `-home`/`-logdir`, so two instances in one
   folder share a log (`ROLLBACK.md`, two-instance harness). Upstream code.
 - **No upstream reporting** (Alex, 2026-09-21): bugs in upstream code are not
