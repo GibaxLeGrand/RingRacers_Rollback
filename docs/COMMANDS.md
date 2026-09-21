@@ -273,14 +273,19 @@ speculation no longer touches tics the server has **already sent**.
 
 Without it, the `netticbuffer` reserve stops the confirmed loop one tic short
 of `neededtic`, and the speculation writes your input *of the moment* over the
-one the server had assigned to that tic. The tic is then played as confirmed
-with the wrong input: this is the best candidate for the drift
-(`WORLDWIDE.md` 8.31).
+one the server had assigned to that tic. It also recomputes **every bot's**
+input on that tic from this machine's world, because a bot's ticcmd never
+carries `TICCMD_RECEIVED`. The tic is then played as confirmed with the wrong
+inputs: this is the best candidate for the drift (`WORLDWIDE.md` 8.31, 8.33).
 
 - No argument: the state, and two counters that run **even when off** — how
   many local inputs were written over an already-received tic, and how many
   differed from the server's. The second one should read 0 when nobody is
   driving.
+- ⚠ The counters cover **your own inputs only**. The switch also stops the
+  bots' recomputation, but nothing here counts it: to see it, compare the
+  `rollback_inputlog` lines of both machines tic by tic (the private notes'
+  harness has a script for this).
 - Changing the value resets the counters, so the same race can be read off
   then on.
 

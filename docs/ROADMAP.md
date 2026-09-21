@@ -35,48 +35,63 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
   free; running them is asked for.
 - Measure on a binary verified by its sha. Write the prediction before the run.
   Keep a control in the same session.
-- ⚠ The harness (`playtest.sh`, the `*.cfg` scenarios) lives only in the game
-  folder of the original machine. It carries local paths, so it goes into the
-  private notes repository (`harnais/`), never the public one. Versioning it
-  there is a prerequisite for measuring from anywhere else.
+- The harness (`playtest.sh`, `soak.sh`, the `*.cfg` scenarios) is versioned in
+  the private notes repository (`harnais/`), never the public one: it carries
+  local paths. The game folder comes from an environment variable.
 
 ## Next, in order
 
-State on 2026-09-21: step 1 below is **pushed and compiled, nothing has run**.
-The next session happens on the original machine, where the harness and the
-game folder live. **Every launch in it is asked for first.**
+State on 2026-09-21, evening: steps 1 to 3 are done, and the first launch of
+the test session happened (`soak.sh leak`, asked for and granted) -- it broke
+its own prediction and found a genuine gap, now fixed in code (8.34). **The
+fix is not yet pushed, not yet in a CI build, and not yet re-verified. Every
+further launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
    `rollback_cleancmds` (8.31), relabel split (8.32), bot-overwrite bound check,
    `old_z` restored on load, release-config exe in CI.
-2. **Check CI is green on the branch's latest commit** and take the dev
-   artifact of *that* commit (`ringracers-win64-<sha>`), so the binary check
-   against `git rev-parse --short=7 HEAD` passes. The last code change is
-   `b9cbdc774`; later commits touch only docs.
-3. **Prepare the harness** (no launch): add `rollback_cleancmds` to
-   `playclient_correct.cfg`, and print `rollback_cleancmds`, `rollback_drift`
-   and the restore profile at the same checkpoints as the other reports. Best
-   done by first copying the harness into the private notes' `harnais/`.
+2. ~~**Take the dev artifact of the branch's latest commit**~~ and check its
+   sha against `git rev-parse --short=7 HEAD`. Done: `7b8d605`, CI green, the
+   harness now prints the check itself before every run.
+3. ~~**Prepare the harness.**~~ Done (8.33): `playclient_correct.cfg` runs three
+   1000-tic windows, `rollback_cleancmds` off / on / off, each window reporting
+   and resetting its own counters; the server re-arms its per-tic input log so
+   it covers the whole race; `soak_leak.cfg` ends on one `rollback_test` for
+   the restore profile; `cleancmds_report.py` compares the input every player
+   ran on every confirmed tic, client against server, window by window.
 4. **The test session, one launch at a time, each asked for:**
-   - `soak_leak.cfg`, unattended: 0 failures, as in 8.15, confirms the roulette
-     fields are still carried locally. The restore profile's "relink pointers"
-     step prices the index (4.7 ms before).
-   - **One driven `playtest.sh correct` race, `rollback_cleancmds 0` for the
-     first half and `1` for the second.** Written before the run (8.31): the
-     "different from the server" count is non-zero while driving; with the
-     switch on, mean drift falls well below 0.25-0.86 units, spikes on the local
-     kart mostly go, and the `rollback_inputlog` hashes agree. The same race
-     reads the relabel split (8.32: `+2` should be "host, outside a race").
+   - ~~`soak.sh leak`~~ run once on 2026-09-21: **259/261, not the predicted
+     0/261.** Not the roulette fields already fixed in 8.15/8.29 -- two more,
+     `itemRoulette.playing`/`.exiting`, were never archived at all (8.34), now
+     fixed in code but **not yet re-run**. The relink index's price came back
+     for free in the same run: the "relink pointers" step no longer prints at
+     all (under 100us, against 4.7 ms before, better than the predicted
+     0.5 ms). **Re-run `soak.sh leak` on the next binary; prediction: 0/261.**
+   - **One driven `playtest.sh correct` race**, read with
+     `cleancmds_report.py`. Written before the run (8.33): in the off windows
+     most of the local kart's inputs and about half the bots' differ from the
+     server's at the same tic; in the on window none do, and mean drift falls
+     well below the off windows'. **Ask the driver whether the middle window
+     felt different**: the fix may cost feel (8.33). The same race reads the
+     relabel split (8.32: `+2` should be "host, outside a race").
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
-5. **Depending on 4:** if `rollback_cleancmds` closes the drift, turn it on by
-   default, then run the correction-rate sweep (`rollback_correct 8`, `16`,
-   `35`) that has been owed since 2026-09-10 -- less drift should mean far fewer
-   corrections. If it does not, the next instrument hashes the program's global
-   memory (the exe's `.data`/`.bss`) just before a speculation and just after
-   the restore, narrows a difference down to an address, and names it with the
-   `.pdb` -- the blind spot every archive-based check shares.
+5. **Depending on 4:**
+   - the inputs agree and the drift falls, **and** the feel holds: turn
+     `rollback_cleancmds` on by default, then run the correction-rate sweep
+     (`rollback_correct 8`, `16`, `35`) owed since 2026-09-10 -- less drift
+     should mean far fewer corrections;
+   - the inputs agree and the drift falls, **but** the on window feels late:
+     keep the fix, and make the speculation carry the local input the server
+     has not played yet -- at least lag + 1 tics deep, replaying the local
+     input *history* tic by tic instead of the latest sample repeated (8.33);
+   - the inputs agree and the drift does not move: 8.31 was right about the
+     inputs and wrong about the drift. The next instrument hashes the
+     program's global memory (the exe's `.data`/`.bss`) just before a
+     speculation and just after the restore, narrows a difference down to an
+     address, and names it with the `.pdb` -- the blind spot every
+     archive-based check shares.
 6. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---
@@ -95,11 +110,14 @@ roulette fix, 8.15); tic determinism (0/330 resim checks); the synchronised RNG
 hits, same hashes, 8.8); the confirmed clock running on a guess (8.9, 8.17,
 8.20); late resends (0 arrivals, 8.17).
 
-**Best candidate (8.31, read, not measured):** the speculation starts on a tic
-the server has already sent -- the netticbuffer reserve stops the confirmed loop
-one short -- and overwrites the local player's input in it with the current
-one; the next pass runs that tic as confirmed. It explains 8.19, the local kart
-owning most spikes, and `nospec` reading zero. Fix behind `rollback_cleancmds`.
+**Best candidate (8.31, read; seen in old logs, 8.33; not measured with the
+fix):** the speculation starts on a tic the server has already sent -- the
+netticbuffer reserve stops the confirmed loop one short -- and overwrites the
+local player's input in it with the current one, and every bot's input with
+one recomputed from the client's world; the next pass runs that tic as
+confirmed. The 2026-09-20 logs show it on 94% of the local kart's confirmed
+tics and on half the bots' inputs. It explains 8.19, the local kart owning most
+spikes, and `nospec` reading zero. Fix behind `rollback_cleancmds`.
 
 **Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
 8.27). Hypothesis in 8.32: the host outside a race, harmless. The split that
@@ -307,7 +325,7 @@ useful.
   folder share a log (`ROLLBACK.md`, two-instance harness). Upstream code.
 - **No upstream reporting** (Gibax, 2026-09-21): bugs in upstream code are not
   reported to Kart Krew. They are fixed here only when they hurt WORLDWIDE.
-- The harness is not versioned (see the ground rules).
+- ~~The harness is not versioned~~: versioned in the private notes, 2026-09-21.
 
 ---
 

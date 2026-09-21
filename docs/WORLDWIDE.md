@@ -32,7 +32,7 @@ Every piece is behind a switch that is off by default.
 | | |
 |---|---|
 | input lag, client's seat | gone -- "ça répond tout de suite", five races, and again after the pivot |
-| snapshot determinism | 12/12 replays byte-identical; 0/522 leak checks (8.15); 0/330 resim checks (8.9) |
+| snapshot determinism | 12/12 replays byte-identical; 0/522 leak checks (8.15); 0/330 resim checks (8.9); ⚠ **259/261 on 2026-09-21** -- `itemRoulette.playing`/`.exiting` never archived, fixed in code, not yet re-run (8.34) |
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
 | residual drift | mean 0.25 to 0.86 units, worst 36 to 59 -- a kart is about 40 wide |
 | cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
@@ -48,8 +48,13 @@ Every piece is behind a switch that is off by default.
    (8.31):** the speculation writes the local player's *current* input over a
    tic the server has already sent, and the next pass runs that tic as
    confirmed on it. Fix built behind `rollback_cleancmds`, off by default, with
-   counters that run either way. **Not measured yet**: one driven race, switch
-   off then on, settles it.
+   counters that run either way. **Seen in the 2026-09-20 logs (8.33):** the
+   client's kart ran 94% of its confirmed tics on the input the server filed
+   seven tics later, and half the bots' inputs were recomputed by the client on
+   the same received tic -- a second face the fix covers but its counters do
+   not count. **Not measured with the fix yet**: one driven race, switch off,
+   on, off, settles it. Risk written down before it: with the fix on, the feel
+   may lag, because four tics of speculation do not cover the seven-tic gap.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
    The relink, half of a restore, is now indexed instead of quadratic (8.30,
    not measured).
@@ -58,6 +63,10 @@ Every piece is behind a switch that is off by default.
    by sender and race state to test it (8.32).
 5. **Never run under prediction:** a person playing on the host; a full race;
    Battle, Grand Prix, Encore; anything longer than a scripted race.
+6. **`soak_leak.cfg` broke its own prediction (8.34):** `itemRoulette.playing`
+   and `.exiting` were never archived at all, in either mode. Fixed in code,
+   gated by `localsnapshot`/`localrestore` like the other four roulette fields
+   -- **not yet re-run.**
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -66,11 +75,11 @@ WORLDWIDE client that joins it behaves exactly as a vanilla client. This
 supersedes 8.4 and 8.14 wherever they say stock compatibility is "given up" or
 "abandoned".
 
-⚠ **The test harness is not versioned yet.** `playtest.sh` and the `*.cfg`
-scenarios every measurement below relies on live in the game folder of the
-original machine (8.21). They carry local paths, so they are to be versioned in
-the private notes repository (`harnais/`), never in the public one. **No launch without Gibax's explicit go-ahead, each
-time.**
+**The test harness is versioned in the private notes repository** (`harnais/`,
+since 2026-09-21), never in the public one: it carries local paths. The
+scripts run the scenarios from there and take the game folder from an
+environment variable, and they print whether the installed exe is the code
+repository's HEAD. **No launch without Gibax's explicit go-ahead, each time.**
 
 **Which sections below still hold.**
 
@@ -83,13 +92,14 @@ time.**
 | §7 | superseded by `ROADMAP.md`, rewritten on 2026-09-21 |
 | 8.4 | the packet is now 56 bytes a kart: 38 applied, 18 diagnostic (8.7) |
 | 8.8 | its mechanism ("the confirmed clock runs a guessed tic") is refuted in 8.9 and 8.17 |
-| 8.14 | "vanilla compatibility already abandoned" is superseded by the policy; see 8.28 |
+| 8.14 | "vanilla compatibility already abandoned" is superseded by the policy; see 8.28. Its roulette-leak fix is itself incomplete: `playing`/`exiting` were missed (8.34) |
 | 8.18 | its candidate (the server guessing a remote client's input) is refuted in 8.20 |
 | 8.19 | "this is the mechanism" is withdrawn by 8.20, and 8.20 has a gap (8.28) |
 | 8.23 | its reading of the client exemption is retracted in 8.25 (marked inline) |
 | 8.25 | its fix was a no-op, explained in 8.26 and replaced in 8.26-8.27 |
 | 8.28 point 2 | the gap it describes is explained by 8.31 |
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
+| 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
 
 **Pushed on 2026-09-21, compiled by CI, none of it run:** roulette fields
 local-only (8.29), indexed relink (8.30), `rollback_cleancmds` (8.31), relabel
@@ -1915,6 +1925,8 @@ received tics stay exactly as the server sent them. Counted either way: how many
 local inputs were (or would have been) written over a received tic, and how many
 of them differed from the server's -- the second count is the size of the
 effect, and it should be 0 when nobody drives.
+⚠ *The counts cover the local players only. The same write hits every bot on
+that tic, which the switch also stops but the counts do not see -- see 8.33.*
 
 **Prediction written before any run:** with `rollback_cleancmds 0` in a driven
 race, the changed count is non-zero and grows with steering; with it on, mean
@@ -1947,3 +1959,156 @@ If that is right, the cluster is harmless: no race is being delayed.
 host or remote, in a race or not (`node == servernode`,
 `gamestate == GS_LEVEL`). Prediction: `+2` sits almost entirely in "host,
 outside a race". If it sits in "remote, in a race", this reading is wrong.
+
+### 8.33 The 2026-09-20 logs already show 8.31, at full scale and on the bots too
+
+Read from logs already on disk, and from the code. No new run.
+
+The harness went into the private notes repository on 2026-09-21, and its
+first new piece is a report that compares, **tic by tic**, the input each
+player ran on a confirmed tic on the client against the one the server ran on
+the same tic (`rollback_input:` lines, both logs). The running hash in the
+`rollback_drift` report cannot do this: the 2026-09-20 race printed equal counts
+and different hashes from the very first report, because the two machines
+start folding at different points, and once a running hash parts it never
+agrees again. Tried first on the 2026-09-20 driven `correct` race (binary
+`4e64140`, before `rollback_cleancmds` existed), tics 2192-3722, and the
+alignment scanned from -12 to +12 tics per player:
+
+| player | same tic | best shift |
+|---|---|---|
+| p8, the client's own kart | 279 of 1530 agree | **+7: 1432 of 1523 (94%)** |
+| p1-p7, bots | 5263 of 10711 agree (49%; 31% to 73% per bot) | 0 -- no shift does better |
+| p0, the idle host | all | uninformative: a constant input matches at any shift |
+
+The server's log stopped at its 20000-line cap at tic 3722, so the last 33 tics
+of the client's window had nothing to compare against (304 lines); they are
+left out, not counted as agreeing.
+
+**The client's own kart.** On 94% of its confirmed tics it ran, at tic T, the
+input the server filed at T+7 -- `rollback_lag 6` plus the reserve's one tic.
+8.31 described the speculation writing the current input over *a* received tic;
+this says it is **nearly every** confirmed tic, which is what 8.31's mechanism
+gives when each pass runs one confirmed tic and stops one short: every
+confirmed tic was the first speculated tic of the pass before. The confirmed
+world plays the local kart's whole input stream seven tics early, and the
+correction channel pulls it back every four tics. Worst drift sits on p8 in
+every report of that race (6.9, 28.1, 40.9 units).
+
+**The bots -- the second face of the same mechanism.** A bot's ticcmd is built
+by `K_BuildBotTiccmd`, which clears the command and sets `TICCMD_BOT` only
+(`k_bot.cpp:2083`, `:2087`); `TICCMD_RECEIVED` is never set, on the server or
+anywhere else. `G_MoveTiccmd` copies the flags verbatim (`g_game.c:1026`), so a
+bot's input arrives at the client without it. `K_RollbackPredictInputs` skips
+a slot only when it carries `TICCMD_RECEIVED`, so on the received tic the
+speculation starts on, it **recomputes every bot's input from the client's own
+world** and writes it over the server's. The next pass runs that tic as
+confirmed on it. That is the half of the bots' ticcmds that disagree, at shift
+0 -- not a relabel, a recomputation. Why a recomputed input differs at all is
+read, not measured: the server builds a bot's input in `SV_Maketic`, which
+`NetUpdate` calls once per elapsed real tic in a loop (`d_clisrv.c:8116`), all
+from the world as it stands at that moment; the client rebuilds it from its
+world after T-1 (in which, in a driven race, the local kart also runs seven
+tics ahead). The first difference needs no driver, which would fit the 10/09 undriven bot race (`botdesync`, 2-3 resyncs
+with nobody at the wheel).
+
+`rollback_cleancmds 1` covers both faces: it returns before either loop on any
+tic below `neededtic`. But **its counters see only the first**:
+`K_RollbackCountReceivedWrites` (`k_rollback.c:5146`) counts local players, not
+bots. The per-tic comparison is the instrument for the bots.
+
+**The race scenario, rebuilt for this** (private notes, `harnais/`): three
+windows of 1000 tics, `rollback_cleancmds` **off, on, off**. The third window
+is the control for the race phase -- the 2026-09-20 race's mean drift went
+0.152, 0.269, 0.334 over its three reports, so a drop between two windows of
+one race proves nothing on its own. At each boundary the client prints its
+reports, flips the switch, then resets the drift, cost and input-log counters
+(`rollback_drift 1`, `rollback_twoclock 4`, `rollback_inputlog 1`), so each
+window reads alone. The server re-arms its input log at every report, so the
+per-tic log covers the whole race.
+
+**Prediction, written before the run** (binary `7b8d605`):
+
+- **Off windows:** at the same tic, most of p8's inputs and about half of the
+  bots' disagree with the server, as on 2026-09-20; p8 agrees at +7.
+  `rollback_cleancmds` reports a non-zero "different from the server" count
+  that grows with steering.
+- **On window:** at the same tic, p8's and the bots' inputs agree with the
+  server's on every tic, bar a tic or two at the switch. Mean drift well below
+  the off windows', and p8 no longer owns the worst sample.
+- **Cost:** unchanged by the switch; each pass does the same work.
+- **Feel -- the risk, not a prediction of success.** With the switch on, the
+  confirmed world plays the local input when the server does, about seven tics
+  after it was made, and the speculation covers only four tics above the
+  confirmed frontier, with the *current* input repeated. So a turn should start
+  on screen at once, then its rate should lag by about 0.2 s. The off windows
+  felt immediate partly *because* of the defect: every sample was applied the
+  tic it was made, on the confirmed world. If the on window feels worse, the
+  answer is not to switch it back off: it is to speculate at least lag + 1
+  tics, replaying the local input **history** tic by tic rather than the latest
+  sample repeated (Quake 3 replays every command the server has not
+  acknowledged). Not built; to be decided after the race.
+- If the inputs agree in the on window and drift does not move, 8.31 is right
+  about the inputs and wrong about the drift.
+
+**Also prepared for the leak soak:** `soak_leak.cfg` now stops the soak, then
+runs one `rollback_test` late in the race, whose restore profile prices the
+relink index (8.30). Prediction: 0 failures, as in 8.15, and the
+`relink pointers` step under 0.5 ms against 4.7 ms before. It may not print at
+all: `K_PrintLoadProfile` hides steps under 100 us.
+
+### 8.34 `soak_leak.cfg` broke its own prediction: two more roulette fields were never archived
+
+Measured (binary `7b8d605`, unattended, `soak.sh leak`), against a prediction
+of 0 failures written down in 8.33. **Result: 261 checks, 2 failures** -- at
+leveltime 1400 and 1520, both "a pass on the REAL inputs already changed the
+tic that followed it" (`rollback_leak`'s honest-pass check, not the
+misprediction one). The prediction was wrong; this section is why.
+
+Both failures name the same two fields, once each: a byte at 672 into
+`player_t` going `00`->`20`/`00`->`ff`, and one at 680 going `00`->`08`/`00`->
+`20`. The memory-comparison walker (`K_ComparePlayers`) that printed them
+stops short of the roulette, unlike the archive-stream walker
+(`P_NamePlayerField`), so it names them only by struct offset. Read against
+the `.pdb` with `cdb -c "dt player_t"` (`itemRoulette` starts at `+0x288`,
+`itemroulette_t` from `d_player.h`): **672 is `itemRoulette.itemList.cap`,
+680 is `itemRoulette.playing`.**
+
+`itemList.cap` is deliberately not restored to the snapshot's value when the
+block is already large enough (`p_saveg.cpp`, the comment above the read code:
+"both passes of a check share this allocation... unaffected"). That holds for
+`rollback_test`'s round trip on one allocation. `rollback_leak` runs the *same*
+tic three times over three restores of the *same* player array, so a genuine
+allocation growth during the honest pass's detour is exactly what changes
+`cap` between the reference and the honest-pass snapshot -- not a leak, the
+comment's own reasoning working as designed, just not anticipated for this
+checker. Left alone.
+
+**`itemRoulette.playing` is a real leak.** It is never written or read by
+`P_NetArchivePlayers`/`P_NetUnArchivePlayers` at all -- not gated by
+`localsnapshot`, just absent, alongside `exiting`. Read by
+`K_GetItemRouletteDistance` (item-odds distance, `k_kart.c:15065`, `:15457`,
+`:17810`, `:17812`) and mutated every tic the roulette spins
+(`k_roulette.c:771`, `:796`). Exactly the class of bug 8.14/8.15 fixed for
+`baseDist`/`firstDist`/`secondDist`/`secondToFirst`: "neither archived until
+now, so a restore mid-roulette left them holding whatever the world last
+computed rather than what this snapshot actually had" -- except these two were
+simply missed when that fix was written, not decided against.
+
+**Fixed** (`p_saveg.cpp`, not yet measured): `playing` and `exiting` now
+written and read alongside `preexpdist`/`dist`, gated by
+`localsnapshot`/`localrestore` like `baseDist` and its siblings -- the netgame
+savegame keeps stock grammar (8.28), and `k_rollback.c`'s ring already saves
+local (`P_SaveNetGame(&save, true, true)`), so the fix reaches the checker
+that found the gap.
+
+**The same run also confirms 8.30's relink index**, unasked: the restore
+profile it printed at the end (`misc` 160us, `thinkers purge` 322, `thinkers`
+549, `colormaps` 237, `waypoints` 173, `chain order` 647) has no
+`relink pointers` line at all -- `K_PrintLoadProfile` hides steps under 100us,
+so the step that cost 4.7 ms before the index now costs under a tenth of a
+millisecond. Better than the under-0.5ms prediction in `ROADMAP.md`.
+
+**Not yet re-run.** Prediction for the next `soak.sh leak`: 0 failures, same
+scenario, same binary sha discipline. If `cap` alone still trips a failure
+occasionally, that is the allocation-growth case above, not a regression.
