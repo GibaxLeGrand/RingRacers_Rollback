@@ -45,7 +45,10 @@ game folder live. **Every launch in it is asked for first.**
    each: roulette fields local-only (8.29), indexed relink (8.30),
    `rollback_cleancmds` (8.31), relabel split (8.32), bot-overwrite bound check,
    `old_z` restored on load, release-config exe in CI.
-2. **Check CI is green on `b9cbdc774`** and take the dev artifact by that sha.
+2. **Check CI is green on the branch's latest commit** and take the dev
+   artifact of *that* commit (`ringracers-win64-<sha>`), so the binary check
+   against `git rev-parse --short=7 HEAD` passes. The last code change is
+   `b9cbdc774`; later commits touch only docs.
 3. **Prepare the harness** (no launch): add `rollback_cleancmds` to
    `playclient_correct.cfg`, and print `rollback_cleancmds`, `rollback_drift`
    and the restore profile at the same checkpoints as the other reports. Best
