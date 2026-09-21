@@ -41,10 +41,10 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
 
 ## Next, in order
 
-State on 2026-09-21, evening: steps 1 to 3 are done, and the first launch of
-the test session happened (`soak.sh leak`, asked for and granted) -- it broke
-its own prediction and found a genuine gap, now fixed in code (8.34). **The
-fix is not yet pushed, not yet in a CI build, and not yet re-verified. Every
+State on 2026-09-21, evening: steps 1 to 4's first bullet are done.
+`soak.sh leak` broke its own prediction, found a genuine gap
+(`itemRoulette.playing`/`.exiting` never archived), and the fix is pushed,
+built (`3400299`, CI green, sha verified), and re-confirmed (8.34). **Every
 further launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
@@ -61,13 +61,14 @@ further launch is asked for first.**
    the restore profile; `cleancmds_report.py` compares the input every player
    ran on every confirmed tic, client against server, window by window.
 4. **The test session, one launch at a time, each asked for:**
-   - ~~`soak.sh leak`~~ run once on 2026-09-21: **259/261, not the predicted
-     0/261.** Not the roulette fields already fixed in 8.15/8.29 -- two more,
-     `itemRoulette.playing`/`.exiting`, were never archived at all (8.34), now
-     fixed in code but **not yet re-run**. The relink index's price came back
-     for free in the same run: the "relink pointers" step no longer prints at
-     all (under 100us, against 4.7 ms before, better than the predicted
-     0.5 ms). **Re-run `soak.sh leak` on the next binary; prediction: 0/261.**
+   - ~~`soak.sh leak`~~ done twice on 2026-09-21. First: **259/261**, not the
+     predicted 0/261 -- `itemRoulette.playing`/`.exiting` were never archived
+     at all (8.34), missed alongside the four fields 8.15/8.29 already fixed.
+     Fixed, pushed, a fresh CI binary (`3400299`) verified and re-run same
+     evening: **1/260**, the lone survivor is the already-understood
+     `itemList.cap` case, not a regression. The relink index's price came back
+     for free in both runs: the "relink pointers" restore-profile step no
+     longer prints at all (under 100us, against 4.7 ms before).
    - **One driven `playtest.sh correct` race**, read with
      `cleancmds_report.py`. Written before the run (8.33): in the off windows
      most of the local kart's inputs and about half the bots' differ from the

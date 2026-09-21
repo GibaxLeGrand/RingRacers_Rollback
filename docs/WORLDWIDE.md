@@ -32,7 +32,7 @@ Every piece is behind a switch that is off by default.
 | | |
 |---|---|
 | input lag, client's seat | gone -- "ça répond tout de suite", five races, and again after the pivot |
-| snapshot determinism | 12/12 replays byte-identical; 0/522 leak checks (8.15); 0/330 resim checks (8.9); ⚠ **259/261 on 2026-09-21** -- `itemRoulette.playing`/`.exiting` never archived, fixed in code, not yet re-run (8.34) |
+| snapshot determinism | 12/12 replays byte-identical; 0/522 leak checks (8.15); 0/330 resim checks (8.9); `itemRoulette.playing`/`.exiting` fixed 2026-09-21 (8.34), 259/261 → **1/260**, the survivor named as the expected `itemList.cap` case |
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
 | residual drift | mean 0.25 to 0.86 units, worst 36 to 59 -- a kart is about 40 wide |
 | cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
@@ -63,10 +63,10 @@ Every piece is behind a switch that is off by default.
    by sender and race state to test it (8.32).
 5. **Never run under prediction:** a person playing on the host; a full race;
    Battle, Grand Prix, Encore; anything longer than a scripted race.
-6. **`soak_leak.cfg` broke its own prediction (8.34):** `itemRoulette.playing`
-   and `.exiting` were never archived at all, in either mode. Fixed in code,
-   gated by `localsnapshot`/`localrestore` like the other four roulette fields
-   -- **not yet re-run.**
+6. ~~`soak_leak.cfg` broke its own prediction~~ (8.34): `itemRoulette.playing`/
+   `.exiting` were never archived at all. **Fixed and confirmed**: 259/261 →
+   1/260, the survivor is the already-understood `itemList.cap` case, not a
+   regression.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -2109,6 +2109,12 @@ profile it printed at the end (`misc` 160us, `thinkers purge` 322, `thinkers`
 so the step that cost 4.7 ms before the index now costs under a tenth of a
 millisecond. Better than the under-0.5ms prediction in `ROADMAP.md`.
 
-**Not yet re-run.** Prediction for the next `soak.sh leak`: 0 failures, same
-scenario, same binary sha discipline. If `cap` alone still trips a failure
-occasionally, that is the allocation-growth case above, not a regression.
+**Re-run the same evening, binary `3400299` (HEAD, sha verified): 1 failure in
+260 checks, not the predicted 0.** But the prediction's own escape clause is
+exactly what happened: the one surviving failure names byte 672 alone --
+`itemList.cap` -- with **no byte 680**. `playing` never came back. The fix
+closed the leak it was written for; `cap`'s occasional, expected drift is what
+is left, matching the reasoning above rather than contradicting it.
+
+The relink index (8.30) holds too: the restore profile from the same run again
+has no `relink pointers` line.
