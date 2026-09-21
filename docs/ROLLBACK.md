@@ -508,7 +508,8 @@ and refuse to run if it is missing. `gh run list --limit 1` answers with the
 measurement was once taken against the artifact of the commit before -- take
 the run by `headSha` instead.
 
-The game folder is `D:\RingRacers - 24 - Copie`. The scenarios live there and
+The game folder (its path is in the private notes, removed from this public
+file on 2026-09-21) holds the scenarios. They live there and
 end in `quit`, so each run stops by itself:
 
 | file | what it does |

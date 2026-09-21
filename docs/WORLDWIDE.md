@@ -56,7 +56,7 @@ Every piece is behind a switch that is off by default.
 5. **Never run under prediction:** a person playing on the host; a full race;
    Battle, Grand Prix, Encore; anything longer than a scripted race.
 
-**Compatibility policy, decided by Alex on 2026-09-21: the server decides.** A
+**Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
 clients only. A vanilla server runs the stock delay-based netcode, and a
 WORLDWIDE client that joins it behaves exactly as a vanilla client. This
@@ -65,7 +65,8 @@ supersedes 8.4 and 8.14 wherever they say stock compatibility is "given up" or
 
 ⚠ **The test harness is not in this repository.** `playtest.sh` and the `*.cfg`
 scenarios every measurement below relies on live in the game folder of the
-original machine (8.21). **No launch without Alex's explicit go-ahead, each
+original machine (8.21). They carry local paths, so they are to be versioned in
+the private notes repository (see `README.md`), not here. **No launch without Gibax's explicit go-ahead, each
 time.**
 
 **Which sections below still hold.**

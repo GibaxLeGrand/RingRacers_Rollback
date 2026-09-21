@@ -7,8 +7,12 @@ Branche de travail : `rollback-netcode`.
 
 1. [docs/README.md](docs/README.md) — règles de travail, décisions prises, où se
    trouve quoi, état de chaque document.
-2. [docs/WORLDWIDE.md](docs/WORLDWIDE.md), bloc *Current state* en tête.
-3. [docs/ROADMAP.md](docs/ROADMAP.md) — la suite.
+2. **Les notes privées**, si elles sont clonées à côté de ce dépôt :
+   `../RingRacers_Worldwide-notes/README.md`, puis `memoire-agent.md` et la
+   dernière note de `sessions/`. Environnement local, mémoire de travail,
+   audits, harnais.
+3. [docs/WORLDWIDE.md](docs/WORLDWIDE.md), bloc *Current state* en tête.
+4. [docs/ROADMAP.md](docs/ROADMAP.md) — la suite.
 
 ## Règles non négociables
 
@@ -23,4 +27,6 @@ Branche de travail : `rollback-netcode`.
 - **Compatibilité : le serveur décide.** Serveur en mode WORLDWIDE : prédiction,
   clients WORLDWIDE seulement. Serveur vanilla : netcode d'origine, et un client
   WORLDWIDE s'y comporte comme un client vanilla.
+- **Ce dépôt est public : aucune info personnelle** (chemins locaux, nom
+  d'utilisateur, prénom). Elle va dans les notes privées. On écrit « Gibax ».
 - On échange avec le porteur du projet **en français**.

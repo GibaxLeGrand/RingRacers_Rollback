@@ -26,14 +26,15 @@ it described an architecture where the authoritative clock ran ahead.
 
 ## Ground rules for every step
 
-- **No launch without Alex's explicit go-ahead, every time**: the game, a
+- **No launch without Gibax's explicit go-ahead, every time**: the game, a
   `playtest.sh` scenario, a soak, the bench. Writing code and scenarios is
   free; running them is asked for.
 - Measure on a binary verified by its sha. Write the prediction before the run.
   Keep a control in the same session.
 - ⚠ The harness (`playtest.sh`, the `*.cfg` scenarios) lives only in the game
-  folder of the original machine and is not in this repository. Versioning it
-  is a prerequisite for measuring from anywhere else.
+  folder of the original machine. It carries local paths, so it goes into the
+  private notes repository (`harnais/`), not this one. Versioning it there is a
+  prerequisite for measuring from anywhere else.
 
 ## Next, in order
 
@@ -52,7 +53,7 @@ game folder live. **Every launch in it is asked for first.**
 3. **Prepare the harness** (no launch): add `rollback_cleancmds` to
    `playclient_correct.cfg`, and print `rollback_cleancmds`, `rollback_drift`
    and the restore profile at the same checkpoints as the other reports. Best
-   done by first copying the harness into this repository (see *Backlog*).
+   done by first copying the harness into the private notes (`harnais/`).
 4. **The test session, one launch at a time, each asked for:**
    - `soak_leak.cfg`, unattended: 0 failures, as in 8.15, confirms the roulette
      fields are still carried locally. The restore profile's "relink pointers"
@@ -160,7 +161,7 @@ read and understood.
 
 ## Compatibility and capability advertising
 
-**Policy, decided by Alex on 2026-09-21: the server decides.**
+**Policy, decided by Gibax on 2026-09-21: the server decides.**
 
 - A server in **WORLDWIDE mode** runs client-side prediction and the correction
   channel, and accepts **WORLDWIDE clients only**.
@@ -300,7 +301,7 @@ useful.
 - ~~Out-of-bounds read in the bot-overwrite search~~: fixed 2026-09-21.
 - On Windows `latest-log.txt` ignores `-home`/`-logdir`, so two instances in one
   folder share a log (`ROLLBACK.md`, two-instance harness). Upstream code.
-- **No upstream reporting** (Alex, 2026-09-21): bugs in upstream code are not
+- **No upstream reporting** (Gibax, 2026-09-21): bugs in upstream code are not
   reported to Kart Krew. They are fixed here only when they hurt WORLDWIDE.
 - The harness is not versioned (see the ground rules).
 
