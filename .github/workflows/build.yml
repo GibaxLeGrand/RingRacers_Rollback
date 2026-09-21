@@ -55,8 +55,25 @@ jobs:
         run: cmake --build build/
 
   windows:
-    name: Windows x86_64 (clang cross)
+    name: Windows x86_64 (clang cross, ${{ matrix.variant }})
     runs-on: ubuntu-latest
+
+    # dev: DEVELOP defined, VERSION/SUBVERSION left at 0 -- the build every
+    # measurement uses, under its historical artifact name.
+    # release: DEVELOP off, so it carries the real version numbers and can see
+    # the servers of that version. Needed for the compatibility policy (a
+    # WORLDWIDE client on a vanilla server); only as useful as the release base
+    # the branch sits on (WORLDWIDE.md 8.30).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: dev
+            dev_build: 'ON'
+            artifact: ringracers-win64
+          - variant: release
+            dev_build: 'OFF'
+            artifact: ringracers-win64-release
 
     # Same cross-compiler image upstream uses.
     container: mstorsjo/llvm-mingw:20260616
@@ -127,7 +144,7 @@ jobs:
             -DCMAKE_C_FLAGS_RELWITHDEBINFO="-g -gcodeview -O3 -DNDEBUG" \
             -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-g -gcodeview -O3 -DNDEBUG" \
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,--pdb= -Wl,-s -static -static-libgcc -static-libstdc++ -lpthread" \
-            -DSRB2_CONFIG_DEV_BUILD=ON
+            -DSRB2_CONFIG_DEV_BUILD=${{ matrix.dev_build }}
 
       - name: Build
         run: cmake --build build -- -k 0
@@ -138,7 +155,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ringracers-win64-${{ github.sha }}
+          name: ${{ matrix.artifact }}-${{ github.sha }}
           path: |
             build/ringracers*.exe
             build/ringracers*.pdb
