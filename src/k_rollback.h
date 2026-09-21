@@ -137,8 +137,9 @@ void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash);
   * faketic minus the tic the client actually tagged it with (realstart).
   * Called from the server's receive handler only -- a client never relabels
   * anything, and the histogram says so on its own if this is ever called
-  * from one (every sample would land at zero). */
-void K_RollbackNoteRelabel(int32_t delta);
+  * from one (every sample would land at zero). Also split by sender (this
+  * server's own node or a remote one) and by whether a level is running. */
+void K_RollbackNoteRelabel(int32_t delta, dboolean fromhost, dboolean inlevel);
 
 /** Measures the stored correction against this client's confirmed world, and
   * applies it when asked to. Called from the tic loop once the confirmed world

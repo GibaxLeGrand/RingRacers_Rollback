@@ -1907,3 +1907,25 @@ with the count non-zero, this reading is wrong.
 Another fix would be to stand the reserve down in two-clock mode as well, so the
 speculation always starts at `neededtic`. Not done: it changes the confirmed
 loop's pacing, which is a second variable.
+
+### 8.32 A hypothesis for the `+2` cluster, and the split that tests it
+
+Read, not measured.
+
+`K_RollbackCorrectingHere()` and `K_RollbackTwoClockConfigured()` both require
+`gamestate == GS_LEVEL`. Outside a race the host's delay exemption is off, so
+its `target_lag` is the `cv_mindelay` floor, 2 -- and 8.27's own first print
+shows exactly that: `target_lag -> 2 (... gamestate 13)` before the race. The
+host's clientpak goes through its own loopback, where `timegap` is 0 or 1, so
+the receiver files it at `wantdelay`: **exactly +2**. The host runs the whole
+session -- waiting in the menu for the client, the race, whatever follows --
+so it contributes far more packets outside a race than the client does. The 778
+that the exemption removed from `+2` would be the start of the race, before the
+host's ping was measured.
+
+If that is right, the cluster is harmless: no race is being delayed.
+
+**Built:** `rollback_relabel` now also prints the histogram split four ways --
+host or remote, in a race or not (`node == servernode`,
+`gamestate == GS_LEVEL`). Prediction: `+2` sits almost entirely in "host,
+outside a race". If it sits in "remote, in a race", this reading is wrong.

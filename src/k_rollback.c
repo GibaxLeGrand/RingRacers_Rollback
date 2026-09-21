@@ -3798,6 +3798,17 @@ static int64_t g_relabelsum;
 static int32_t g_relabelmin;
 static int32_t g_relabelmax;
 
+// The same histogram split by who sent the packet and whether a race was on.
+// A listen server sends its own clientpak, and the delay exemption only applies
+// in GS_LEVEL, so the +2 cluster of 8.27 may be the host before the race
+// starts -- this says so or refutes it.
+#define RELABEL_HOST_LEVEL 0
+#define RELABEL_HOST_OTHER 1
+#define RELABEL_REMOTE_LEVEL 2
+#define RELABEL_REMOTE_OTHER 3
+static uint32_t g_relabelsplit[4][(2 * ROLLBACK_RELABELSPAN) + 1];
+static uint32_t g_relabelsplitcount[4];
+
 /** How far apart two tics are, either way round.
   *
   * tic_t is unsigned, so the ordinary subtraction is a trap.
@@ -4544,8 +4555,17 @@ void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash)
 		*hash = g_liveinputhash;
 }
 
-void K_RollbackNoteRelabel(int32_t delta)
+void K_RollbackNoteRelabel(int32_t delta, dboolean fromhost, dboolean inlevel)
 {
+	const int32_t split = fromhost
+		? (inlevel ? RELABEL_HOST_LEVEL : RELABEL_HOST_OTHER)
+		: (inlevel ? RELABEL_REMOTE_LEVEL : RELABEL_REMOTE_OTHER);
+
+	g_relabelsplitcount[split]++;
+
+	if (delta >= -ROLLBACK_RELABELSPAN && delta <= ROLLBACK_RELABELSPAN)
+		g_relabelsplit[split][delta + ROLLBACK_RELABELSPAN]++;
+
 	if (g_relabelcount == 0 || delta < g_relabelmin)
 		g_relabelmin = delta;
 
@@ -4602,6 +4622,36 @@ static void Command_RollbackRelabel_f(void)
 			continue;
 
 		CONS_Printf("rollback_relabel:   %+d tics, %u times" "\n", off, seen);
+	}
+
+	{
+		static const char *const names[4] = {
+			"host, in a race", "host, outside a race",
+			"remote, in a race", "remote, outside a race"
+		};
+		int32_t s;
+
+		for (s = 0; s < 4; s++)
+		{
+			char line[512];
+			size_t used;
+
+			if (g_relabelsplitcount[s] == 0)
+				continue;
+
+			used = (size_t)snprintf(line, sizeof line, "rollback_relabel: [%s] %u packets:",
+				names[s], g_relabelsplitcount[s]);
+
+			for (off = -ROLLBACK_RELABELSPAN; off <= ROLLBACK_RELABELSPAN && used < sizeof line; off++)
+			{
+				const uint32_t seen = g_relabelsplit[s][off + ROLLBACK_RELABELSPAN];
+
+				if (seen != 0)
+					used += (size_t)snprintf(line + used, sizeof line - used, " %+d x%u", off, seen);
+			}
+
+			CONS_Printf("%s\n", line);
+		}
 	}
 }
 

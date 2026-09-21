@@ -164,9 +164,11 @@ bimodal parce que **plusieurs émetteurs** y sont mélangés :
   **étalement** aussi large que la gigue.
 
 ⚠ Un serveur-écoute s'envoie ses propres paquets (`CL_SendClientCmd()` est
-appelé sous `if (server)` aussi), donc l'histogramme compte **le host et les
-clients ensemble**. Attribuer un cluster à quelqu'un demande de faire varier
-un seul émetteur et de regarder quelle masse bouge (voir `WORLDWIDE.md` 8.27).
+appelé sous `if (server)` aussi), donc l'histogramme total compte **le host et
+les clients ensemble**. Depuis le 2026-09-21, le rapport ajoute quatre lignes
+qui séparent les paquets : **hôte ou client distant**, **pendant une course ou
+en dehors**. L'hypothèse à tester (`WORLDWIDE.md` 8.32) : le cluster `+2` vient
+de l'hôte **en dehors d'une course**, où l'exemption de délai ne s'applique pas.
 
 ### `rollback_lagcheck` — n'existe pas comme commande
 Cherché comme commande, il n'y est pas : c'est une **impression
