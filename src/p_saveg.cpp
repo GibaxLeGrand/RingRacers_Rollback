@@ -5063,6 +5063,58 @@ static void P_NetUnArchiveTubeWaypoints(savebuffer_t *save)
 	TracyCZoneEnd(__zone);
 }
 
+// P_RelinkPointers resolves every pointer through P_FindNewPosition, and a walk
+// of every mobj per pointer made the relink quadratic -- most of a restore
+// (WORLDWIDE.md 8.30). While it runs, this index answers instead. Length 0 means
+// no index, and the walk below is used.
+#define RELINKINDEX_MAX (1u << 18)
+static mobj_t **relinkindex;
+static size_t relinkindexcap;
+static size_t relinkindexlen;
+
+static void P_BuildRelinkIndex(void)
+{
+	thinker_t *th;
+	uint32_t highest = 0;
+
+	relinkindexlen = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (((mobj_t *)th)->mobjnum > highest)
+			highest = ((mobj_t *)th)->mobjnum;
+	}
+
+	if (highest >= RELINKINDEX_MAX)
+		return;
+
+	if ((size_t)highest + 1 > relinkindexcap)
+	{
+		relinkindexcap = (size_t)highest + 1;
+		relinkindex = (mobj_t **)Z_Realloc(relinkindex, relinkindexcap * sizeof (mobj_t *), PU_STATIC, NULL);
+	}
+
+	memset(relinkindex, 0, ((size_t)highest + 1) * sizeof (mobj_t *));
+
+	// First in list order wins, as it does for the walk, should two objects
+	// carry the same number.
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mobj = (mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (relinkindex[mobj->mobjnum] == NULL)
+			relinkindex[mobj->mobjnum] = mobj;
+	}
+
+	relinkindexlen = (size_t)highest + 1;
+}
+
 // Now save the pointers, tracer and target, but at load time we must
 // relink to this; the savegame contains the old position in the pointer
 // field copyed in the info field temporarily, but finally we just search
@@ -5071,6 +5123,16 @@ mobj_t *P_FindNewPosition(uint32_t oldposition)
 {
 	thinker_t *th;
 	mobj_t *mobj;
+
+	if (relinkindexlen != 0)
+	{
+		mobj = (oldposition < relinkindexlen) ? relinkindex[oldposition] : NULL;
+
+		if (mobj == NULL)
+			CONS_Debug(DBG_GAMELOGIC, "mobj %d not found\n", oldposition);
+
+		return mobj;
+	}
 
 	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
 	{
@@ -6686,6 +6748,8 @@ static void P_RelinkPointers(void)
 	mobj_t *mobj;
 	uint32_t temp, i;
 
+	P_BuildRelinkIndex();
+
 	P_LoadMobjPointers(RelinkMobjVoid);
 
 	if (g_endcam.panMobj)
@@ -6876,6 +6940,8 @@ static void P_RelinkPointers(void)
 				CONS_Debug(DBG_GAMELOGIC, "flybot not found on player %d\n", i);
 		}
 	}
+
+	relinkindexlen = 0;
 }
 
 static inline void P_NetArchiveSpecials(savebuffer_t *save)
