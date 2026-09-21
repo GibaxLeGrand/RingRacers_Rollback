@@ -41,12 +41,13 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
 
 ## Next, in order
 
-State on 2026-09-21, evening: steps 1 to 4's first two bullets are done.
-`soak.sh leak` broke its own prediction (roulette fields never archived,
-8.34), fixed and confirmed. The driven `correct` race then confirmed
-`rollback_cleancmds` fixes the inputs but not the drift (8.35) -- Phase A's
-cause is open again. **Still to ask: how did the on window feel to drive?**
-Then a host's-seat race, and step 5's memory-hash instrument. **Every further
+State on 2026-09-21, evening: steps 1 to 4's first two bullets are done, twice
+over. `soak.sh leak` broke its own prediction (roulette fields never
+archived, 8.34), fixed and confirmed. Two driven `correct` races confirmed
+`rollback_cleancmds` fixes the inputs both times (8.35, 8.37); the two
+disagreed on whether it moves the drift. Asked and answered: no felt
+difference either race (8.36). `rollback_cleancmds` is on by default now.
+Next: a host's-seat race, and step 5's memory-hash instrument. **Every further
 launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
@@ -71,24 +72,25 @@ launch is asked for first.**
      `itemList.cap` case, not a regression. The relink index's price came back
      for free in both runs: the "relink pointers" restore-profile step no
      longer prints at all (under 100us, against 4.7 ms before).
-   - ~~One driven `playtest.sh correct` race~~, read with `cleancmds_report.py`
-     (8.35). The inputs prediction landed: wrong-input tics fell from 64-81%
-     to 0.1% for the local player, 23-80% to 0.09% for the field. The drift
-     prediction did not: mean drift rose in every window regardless of the
-     switch (0.268 -> 0.474 -> 0.683), on the same shape as an earlier race's
-     pure time trend with no switch at all. **8.31 was right about the inputs,
-     wrong about the drift** -- see step 5. ~~Still to ask the driver: how did
-     the on window feel?~~ Asked (8.36): no difference, "ça répondait tout de
-     suite dans les trois fenêtres" -- and why, read in the code: what renders
-     is the speculation above `neededtic`, which the switch never touches.
-     **8.33's risk is closed, nothing to trade off.** The relabel split (8.32)
-     was also read from this race -- to fold in.
+   - ~~Two driven `playtest.sh correct` races~~, read with
+     `cleancmds_report.py` (8.35, 8.37). **The inputs prediction landed both
+     times**: wrong-input tics fell from 64-85%/23-74% off to 0-0.1% on.
+     **The drift prediction did not repeat**: the first race found no effect
+     beyond the race's own time trend; the second found a large one, in the
+     originally-predicted direction. An A/B race is not resolving Phase A's
+     cause on its own -- see step 5. ~~Still to ask the driver: how did the on
+     window feel?~~ Asked (8.36), twice now: no difference, "ça répondait tout
+     de suite" -- and why, read in the code: what renders is the speculation
+     above `neededtic`, which the switch never touches. **8.33's risk is
+     closed, nothing to trade off, either race.** The relabel split (8.32)
+     was also read from the first race -- to fold in.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
-5. **`rollback_cleancmds` on by default** -- nothing left weighing against it
-   (8.36). Then the correction-rate sweep (`rollback_correct 8`, `16`, `35`)
-   owed since 2026-09-10, since it is a fair question again now the inputs are
-   clean. **In parallel**, since the drift outcome is known (8.35): the next
+5. ~~`rollback_cleancmds` on by default~~ -- done, nothing weighed against it
+   (8.36) and the drift disagreement doesn't touch that reasoning. Then the
+   correction-rate sweep (`rollback_correct 8`, `16`, `35`) owed since
+   2026-09-10, since it is a fair question again now the inputs are clean.
+   **In parallel**, since two A/B races disagree (8.35, 8.37): the next
    instrument hashes the program's global memory (the exe's `.data`/`.bss`)
    just before a speculation and just after the restore, narrows a difference
    down to an address, and names it with the `.pdb` -- the blind spot every
@@ -111,15 +113,16 @@ roulette fix, 8.15); tic determinism (0/330 resim checks); the synchronised RNG
 hits, same hashes, 8.8); the confirmed clock running on a guess (8.9, 8.17,
 8.20); late resends (0 arrivals, 8.17).
 
-**Closed as a drift cause, fixed anyway (8.31, 8.33, 8.35):** the speculation
-started on a tic the server had already sent -- the netticbuffer reserve
-stopped the confirmed loop one short -- and overwrote the local player's input
-in it with the current one, and every bot's input with one recomputed from the
-client's world; the next pass ran that tic as confirmed. `rollback_cleancmds`
-fixed it: wrong-input tics fell from 64-81% to under 0.1% at race scale. Mean
-drift rose regardless, on the same shape as a race with no switch at all --
-this was not the drift's source. The fix stays (section 1 asks for it on its
-own); Phase A's cause is open again, next instrument below.
+**Fixed regardless, its effect on drift unsettled (8.31, 8.33, 8.35, 8.37):**
+the speculation started on a tic the server had already sent -- the
+netticbuffer reserve stopped the confirmed loop one short -- and overwrote the
+local player's input in it with the current one, and every bot's input with
+one recomputed from the client's world; the next pass ran that tic as
+confirmed. `rollback_cleancmds` fixed it twice over, at race scale (64-85%
+wrong-input tics down to 0-0.1%). Two A/B races disagreed on what that did to
+drift: the first found none, the second a large drop. The fix stays (section 1
+asks for it on its own, and it costs nothing felt, 8.36); Phase A's cause
+needs the instrument below, not a third A/B race.
 
 **Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
 8.27). Hypothesis in 8.32: the host outside a race, harmless. The split was

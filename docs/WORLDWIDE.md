@@ -44,16 +44,19 @@ Every piece is behind a switch that is off by default.
    8.28 is fixed in code (8.29, not yet verified). Still missing: the refusal of
    vanilla clients, the automatic mode switch, and a release-config build --
    CI builds are `DEVELOP` and cannot see public servers at all (8.30).
-2. **The drift's cause** (Phase A) -- **8.31 was right about the inputs, wrong
-   about the drift (8.35).** `rollback_cleancmds` closes the mechanism at race
-   scale: wrong-input tics fell from 64-81% to 0.1% for the local player, 23-80%
-   to 0.09% for the field. Drift did not fall -- it rose in every window
-   (0.268 -> 0.474 -> 0.683), on the same shape as an earlier race's pure
-   time trend with no switch at all. **Nothing to trade off**: the fix only
-   touches tics the player never sees (8.36 -- what renders is the speculation
-   above `neededtic`, which always ran the current input regardless of the
-   switch), so "ça répondait tout de suite dans les trois fenêtres". Free to
-   default on. Phase A's cause is open again. **Next instrument**: hash the
+2. **The drift's cause** (Phase A) -- **8.31 confirmed on the inputs, unsettled
+   on the drift (8.35, 8.37).** `rollback_cleancmds` closes the mechanism at
+   race scale, twice: wrong-input tics fell from 64-85%/23-74% off to 0-0.1%
+   on, in two separate races. **Drift disagreed between the two**: the first
+   showed no effect beyond the race's own time trend (on window landed on the
+   straight line between its neighbours, within 0.002); the second showed a
+   large one (0.358 units below that line). Two races, two shapes -- an A/B
+   race is not resolving this on its own. **Nothing to trade off either way**:
+   the fix only touches tics the player never sees (8.36 -- what renders is
+   the speculation above `neededtic`, which always ran the current input
+   regardless of the switch), so "ça répondait tout de suite dans les trois
+   fenêtres", twice. Free to default on, and now does. Phase A's cause needs
+   the next instrument to settle rather than another A/B race: hash the
    program's global memory just before a speculation and just after the
    restore, narrow a difference to an address with the `.pdb`.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
@@ -101,7 +104,8 @@ repository's HEAD. **No launch without Gibax's explicit go-ahead, each time.**
 | 8.28 point 2 | the gap it describes is explained by 8.31 |
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
-| 8.33 | its inputs prediction is confirmed at race scale; its drift prediction is refuted -- fixing the inputs did not lower the drift (8.35). Its feel risk did not materialise either (8.36) |
+| 8.33 | its inputs prediction is confirmed at race scale, twice; its drift prediction held in neither race the same way -- 8.35 refuted it, 8.37 confirmed it, the two disagree. Its feel risk did not materialise (8.36) |
+| 8.35 | "drift did not fall" does not generalise -- a second race found the opposite (8.37) |
 
 **Pushed on 2026-09-21, compiled by CI, none of it run:** roulette fields
 local-only (8.29), indexed relink (8.30), `rollback_cleancmds` (8.31), relabel
@@ -2202,3 +2206,43 @@ corrections either.
 
 8.33's risk is closed: **nothing to trade off.** `rollback_cleancmds` is free
 to default on.
+
+### 8.37 A second cleancmds race contradicts the first, on drift, not on inputs
+
+Measured (binary `89e5d30`, sha verified, same scenario as 8.35, a second
+driven `playtest.sh correct` race, run right after flipping the default in
+8.36 -- the three windows still set the switch explicitly, so the flip did not
+change what this race tested).
+
+**The inputs result repeats, cleaner than before.** On window: **0 of 1000**
+local mismatches, **0 of 8000** others -- not 1 and 7 as in 8.35, actually
+zero. Off windows: 85%/34% and 81%/74% mismatched. 8.31's mechanism and
+`rollback_cleancmds`'s fix are confirmed a second time, at race scale, with no
+residue at the boundary this time.
+
+**The drift result does not repeat.** 8.35's race: 0.268 -> 0.474 -> 0.683,
+the on window landing almost exactly on the straight line between the two off
+windows (0.476 predicted by that line, 0.474 measured -- no effect beyond
+time). **This race: 0.442 -> 0.133 -> 0.539** -- the on window **0.358 units
+below** that same straight-line prediction (0.491). A large effect, in the
+direction 8.33 originally predicted, where the first race found none.
+
+| | window 0 (off) | window 1 (on) | window 2 (off) | on vs. off-off line |
+|---|---|---|---|---|
+| 8.35 | 0.268 | 0.474 | 0.683 | -0.002 (no effect) |
+| 8.37 | 0.442 | 0.133 | 0.539 | -0.358 (large effect) |
+
+**Not resolved, and said so rather than picked.** Two races, two shapes: one
+says the switch does nothing to drift beyond the race-position trend, the
+other says it cuts drift hard. Nothing about the second race's setup differs
+from the first in a way that should matter -- same scenario, same map, same
+grid, only the driver and the run. This is exactly the kind of disagreement a
+sample of two exists to surface, not settle: `rollback_drift`'s mean is a
+coarse, race-shaped, single-driver-dependent number, and Phase A's actual
+cause needs the instrument that does not depend on it. **The memory-hash
+instrument (state just before a speculation, just after a restore, narrowed
+with the `.pdb`) stays next**, and now has a better reason to be next: an A/B
+race, even repeated, is not resolving this on its own.
+
+`rollback_cleancmds` stays on by default regardless (8.36's reasoning was the
+feel, never the drift).
