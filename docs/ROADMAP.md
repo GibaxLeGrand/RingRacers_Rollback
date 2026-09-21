@@ -77,19 +77,22 @@ launch is asked for first.**
      prediction did not: mean drift rose in every window regardless of the
      switch (0.268 -> 0.474 -> 0.683), on the same shape as an earlier race's
      pure time trend with no switch at all. **8.31 was right about the inputs,
-     wrong about the drift** -- see step 5. **Still to ask the driver: how did
-     the on window feel?** (8.33's risk, not yet answered.) The relabel split
-     (8.32) was also read from this race -- to fold in.
+     wrong about the drift** -- see step 5. ~~Still to ask the driver: how did
+     the on window feel?~~ Asked (8.36): no difference, "ça répondait tout de
+     suite dans les trois fenêtres" -- and why, read in the code: what renders
+     is the speculation above `neededtic`, which the switch never touches.
+     **8.33's risk is closed, nothing to trade off.** The relabel split (8.32)
+     was also read from this race -- to fold in.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
-5. **Now**, since the drift outcome is known (8.35): the next instrument
-   hashes the program's global memory (the exe's `.data`/`.bss`) just before a
-   speculation and just after the restore, narrows a difference down to an
-   address, and names it with the `.pdb` -- the blind spot every
-   archive-based check shares. `rollback_cleancmds` stays on the roadmap to
-   default-on regardless of this outcome: the design statement (section 1)
-   asks for the client to run the server's tics as sent, on its own terms, not
-   only as a drift fix.
+5. **`rollback_cleancmds` on by default** -- nothing left weighing against it
+   (8.36). Then the correction-rate sweep (`rollback_correct 8`, `16`, `35`)
+   owed since 2026-09-10, since it is a fair question again now the inputs are
+   clean. **In parallel**, since the drift outcome is known (8.35): the next
+   instrument hashes the program's global memory (the exe's `.data`/`.bss`)
+   just before a speculation and just after the restore, narrows a difference
+   down to an address, and names it with the `.pdb` -- the blind spot every
+   archive-based check shares.
 6. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---

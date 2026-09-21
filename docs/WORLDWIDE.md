@@ -49,11 +49,13 @@ Every piece is behind a switch that is off by default.
    scale: wrong-input tics fell from 64-81% to 0.1% for the local player, 23-80%
    to 0.09% for the field. Drift did not fall -- it rose in every window
    (0.268 -> 0.474 -> 0.683), on the same shape as an earlier race's pure
-   time trend with no switch at all. The fix stays (the design statement asks
-   for it on its own), but Phase A's cause is open again. **Next instrument**:
-   hash the program's global memory just before a speculation and just after
-   the restore, narrow a difference to an address with the `.pdb`. **Not yet
-   asked**: how the on window felt to drive.
+   time trend with no switch at all. **Nothing to trade off**: the fix only
+   touches tics the player never sees (8.36 -- what renders is the speculation
+   above `neededtic`, which always ran the current input regardless of the
+   switch), so "ça répondait tout de suite dans les trois fenêtres". Free to
+   default on. Phase A's cause is open again. **Next instrument**: hash the
+   program's global memory just before a speculation and just after the
+   restore, narrow a difference to an address with the `.pdb`.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
    The relink, half of a restore, is now indexed instead of quadratic (8.30,
    not measured).
@@ -99,7 +101,7 @@ repository's HEAD. **No launch without Gibax's explicit go-ahead, each time.**
 | 8.28 point 2 | the gap it describes is explained by 8.31 |
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
-| 8.33 | its inputs prediction is confirmed at race scale; its drift prediction is refuted -- fixing the inputs did not lower the drift (8.35) |
+| 8.33 | its inputs prediction is confirmed at race scale; its drift prediction is refuted -- fixing the inputs did not lower the drift (8.35). Its feel risk did not materialise either (8.36) |
 
 **Pushed on 2026-09-21, compiled by CI, none of it run:** roulette fields
 local-only (8.29), indexed relink (8.30), `rollback_cleancmds` (8.31), relabel
@@ -2170,3 +2172,33 @@ address with the `.pdb`.
 that, and 8.33 flagged it as the real risk of turning the fix on (speculating
 only 4 tics above a confirmed frontier that now runs 7 tics behind the local
 input).
+
+### 8.36 The on window's feel, asked and explained
+
+Gibax's answer, same race as 8.35: **"Ça répondait tout de suite dans les
+trois fenêtres"** -- no felt difference between the switch off and on. 8.33's
+risk (speculating only 4 tics above a frontier that now runs 7 tics behind the
+local input) did not show up.
+
+**Why, read in the code, not guessed:** `rollback_cleancmds` only changes
+`K_RollbackPredictInputs` for `tic < D_NeededTic()` -- tics the server has
+already sent. For every tic **at or above** `neededtic`, the genuinely
+speculative ones, the function always writes the local player's current input
+(`D_LocalTiccmd`), switch or not (`k_rollback.c`, the early return is gated on
+`g_cleancmds &&` the tic-below-`neededtic` check, nothing else touches the
+loop above it). And what the player sees is that speculation, not the
+confirmed world: `NetUpdate` rebuilds it from the confirmed frontier "every
+pass, unconditionally... so what the player sees and acts in is ahead of what
+the server has confirmed" (`d_clisrv.c:7474-7479`, the comment's own words).
+
+So the felt immediacy was never wired through the tics `rollback_cleancmds`
+touches. The switch fixes what the **confirmed** clock does with the local
+player's already-sent input -- a bookkeeping question the correction channel
+and the consistency check care about -- not what the player sees each frame,
+which comes from the speculation on top and was never broken this way. That
+also reads consistently with 8.35: a fix confined to a layer the eye never
+sampled was never going to move a drift measured from confirmed-world state
+corrections either.
+
+8.33's risk is closed: **nothing to trade off.** `rollback_cleancmds` is free
+to default on.

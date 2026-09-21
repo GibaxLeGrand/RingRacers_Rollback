@@ -268,15 +268,21 @@ itself.
 > here.
 
 ### `rollback_cleancmds [0|1]`
-**Client side, two-clock mode.** Off by default. When it is on, the
-speculation no longer touches tics the server has **already sent**.
+**Client side, two-clock mode. On by default** since 2026-09-21 (`WORLDWIDE.md`
+8.35, 8.36). When it is on, the speculation no longer touches tics the server
+has **already sent**.
 
 Without it, the `netticbuffer` reserve stops the confirmed loop one tic short
 of `neededtic`, and the speculation writes your input *of the moment* over the
 one the server had assigned to that tic. It also recomputes **every bot's**
 input on that tic from this machine's world, because a bot's ticcmd never
 carries `TICCMD_RECEIVED`. The tic is then played as confirmed with the wrong
-inputs: this is the best candidate for the drift (`WORLDWIDE.md` 8.31, 8.33).
+inputs (`WORLDWIDE.md` 8.31, 8.33) -- confirmed at race scale, but **not** the
+drift's source: mean drift rose in a driven race regardless of the switch
+(8.35). Kept on anyway: it is what the design statement asks for on its own,
+and costs nothing felt -- what renders is the speculation above `neededtic`,
+which the switch never touches, so a driver reported no difference between it
+off and on in the same race (8.36).
 
 - No argument: the state, and two counters that run **even when off** — how
   many local inputs were written over an already-received tic, and how many

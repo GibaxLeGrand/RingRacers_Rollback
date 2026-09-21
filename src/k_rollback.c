@@ -3143,7 +3143,13 @@ static dboolean g_nullspec;
 
 // The speculation starting on tics the server has already sent: see
 // K_RollbackPredictInputs. Counted whether or not the fix is on.
-static dboolean g_cleancmds;
+//
+// On by default (WORLDWIDE.md 8.35, 8.36): confirmed at race scale to close
+// the wrong-input mechanism (64-81% of confirmed tics down to under 0.1%),
+// and confirmed to cost nothing felt -- what renders is the speculation above
+// neededtic, which this switch never touches, so the driver reported no
+// difference between it off and on in the same race.
+static dboolean g_cleancmds = true;
 static uint32_t g_recvwrites;   // local slots of an already-received tic written over
 static uint32_t g_recvchanged;  // ... with an input that differed from the server's
 
