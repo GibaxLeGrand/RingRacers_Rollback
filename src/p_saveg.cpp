@@ -5261,7 +5261,7 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 	// declare this as a valid mobj as soon as possible.
 	mobj->thinker.function.acp1 = thinker;
 
-	mobj->z = z;
+	mobj->z = mobj->old_z = z;
 	mobj->floorz = floorz;
 	mobj->ceilingz = ceilingz;
 	mobj->floorrover = floorrover;
