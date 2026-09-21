@@ -4117,9 +4117,9 @@ static dboolean SV_AddWaitingPlayers(int8_t node, uint8_t *availabilities, playe
 
 				nobotoverwrite = newplayernum;
 
-				while (playeringame[nobotoverwrite]
-				&& players[nobotoverwrite].bot
-				&& nobotoverwrite < MAXPLAYERS)
+				while (nobotoverwrite < MAXPLAYERS
+				&& playeringame[nobotoverwrite]
+				&& players[nobotoverwrite].bot)
 				{
 					// Overwrite bots if there are NO other slots available.
 					nobotoverwrite++;
