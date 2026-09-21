@@ -918,6 +918,21 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEUINT32(save->p, players[i].itemRoulette.preexpdist);
 		WRITEUINT32(save->p, players[i].itemRoulette.dist);
 
+		// playing and exiting are read by K_GetItemRouletteDistance (item-odds
+		// distance calculation, k_kart.c) and were never archived at all, in
+		// either mode -- not a stock-grammar question, just missed when the
+		// other four roulette fields were added (WORLDWIDE.md 8.14). Found by
+		// rollback_leak (8.34): a restore left them holding whatever the extra
+		// pass's own tics had counted up to, not the snapshot's value.
+		//
+		// Local snapshots only, same reasoning as baseDist below: the netgame
+		// savegame has to keep stock grammar (8.28).
+		if (localsnapshot)
+		{
+			WRITEUINT8(save->p, players[i].itemRoulette.playing);
+			WRITEUINT8(save->p, players[i].itemRoulette.exiting);
+		}
+
 		// baseDist drives the roulette's own spin-speed calculation
 		// (K_RouletteTick, progress/frontRun) and secondToFirst decides
 		// whether an SPB is forced into the result (SPBFORCEDIST) -- both
@@ -1724,6 +1739,12 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 
 		players[i].itemRoulette.preexpdist = READUINT32(save->p);
 		players[i].itemRoulette.dist = READUINT32(save->p);
+
+		if (localrestore)
+		{
+			players[i].itemRoulette.playing = READUINT8(save->p);
+			players[i].itemRoulette.exiting = READUINT8(save->p);
+		}
 
 		if (localrestore)
 		{
