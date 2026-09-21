@@ -280,10 +280,8 @@ useful.
   bound is checked (`d_clisrv.c:4120`). Upstream code.
 - On Windows `latest-log.txt` ignores `-home`/`-logdir`, so two instances in one
   folder share a log (`ROLLBACK.md`, two-instance harness). Upstream code.
-- **Never sent upstream**: the `onconveyor` read order, the `followerskin` sign,
-  `MobjIsArchived`, the roulette list that shrinks on load (`ROLLBACK.md`,
-  wire-format audit), the unsynchronised die in `rotate3d` (`ROLLBACK.md`), and
-  the two items above.
+- **No upstream reporting** (Alex, 2026-09-21): bugs in upstream code are not
+  reported to Kart Krew. They are fixed here only when they hurt WORLDWIDE.
 - The harness is not versioned (see the ground rules).
 
 ---

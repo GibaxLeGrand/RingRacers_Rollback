@@ -71,6 +71,7 @@ Ordre de lecture :
 | **Pas de bibliothèque GGPO** : 4 joueurs max (contre 16), modèle P2P (contre client/serveur), 8 frames de prédiction (229 ms, trop court pour 250-300 ms). La technique est reprise, pas la bibliothèque. | 2026-09-08 | `ETAT_PROJET.md` §11 (local) |
 | **Ne pas prédire le résultat de la roulette d'objets** : la roue tourne visuellement pendant la spéculation, le résultat n'est validé que sur un tic confirmé. | 2026-09-10 | `WORLDWIDE.md` §4 |
 | Correction légère par kart (`PT_STATECORRECTION`) plutôt que streaming d'état complet façon Odamex. | 2026-09-10 | `WORLDWIDE.md` §5, §8.4 |
+| **Aucun signalement à Kart Krew.** Les bugs du jeu d'origine ne sont pas remontés ; on ne les corrige ici que s'ils gênent WORLDWIDE. Ne pas le reproposer. | 2026-09-21 | Alex |
 
 ---
 
