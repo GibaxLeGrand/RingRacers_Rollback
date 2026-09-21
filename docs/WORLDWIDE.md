@@ -37,8 +37,10 @@ Every piece is behind a switch that is off by default.
 
 **Open, in priority order.**
 
-1. **Vanilla compatibility** against the policy below: broken today by the
-   roulette fields added in 8.14 (8.28, point 1).
+1. **Vanilla compatibility** against the policy below. The savegame misread of
+   8.28 is fixed in code (8.29, not yet verified). Still missing: the refusal of
+   vanilla clients, the automatic mode switch, and a release-config build --
+   CI builds are `DEVELOP` and cannot see public servers at all (8.30).
 2. **The drift's cause** (Phase A). Excluded: the archive, the restore,
    determinism, the synchronised RNG, the damage path, the confirmed clock
    running on a guess, late resends. The live lead is the gap between 8.19 and
@@ -1752,8 +1754,8 @@ The smallest change that satisfies all three: write and read the four fields
 keeps what 8.14-8.15 measured, and the wire goes back to stock grammar in every
 mode. What it gives up is a joining client receiving those four values, which a
 stock client never received either. The clean refusal of vanilla clients by a
-WORLDWIDE server is separate work (`ROADMAP.md`, *Compatibility*). **Not done;
-waiting for a go-ahead.**
+WORLDWIDE server is separate work (`ROADMAP.md`, *Compatibility*). **Done in
+code on 2026-09-21, see 8.29.**
 
 `PT_STATECORRECTION` is not a problem: it is appended at the end of the packet
 enum (`d_clisrv.h:144`), so no stock packet number moved.
@@ -1787,3 +1789,64 @@ the path. It needs a build and one driven race -- a launch, so asked for first.
 in the bot-overwrite search (`d_clisrv.c:4120`, upstream); and the harness not
 being versioned, which blocks every measurement in this file on any machine
 other than the original one.
+
+### 8.29 The roulette fields go back to local snapshots only
+
+Code, not measured. Nothing launched.
+
+`baseDist`, `firstDist`, `secondDist` and `secondToFirst` are now written under
+`if (localsnapshot)` and read under `if (localrestore)` -- the same pair of flags
+that already gates `cmd`, `oldcmd`, the chain order and `floordrop`. Both flags
+are set before the players block is archived or unarchived (`P_SaveNetGame`,
+`P_LoadNetGame`), and the two player archivers have no other caller.
+
+Checked by reading the whole `p_saveg.cpp` diff against `05cca02c9`: every other
+read or write this branch adds is already gated the same way, and `tilt`,
+`rollangle` and `livestudioaudience_timer` are *skipped* locally but still
+written for the wire. So **the netgame savegame is stock grammar again**; what
+remains are the semantic differences listed in `ROLLBACK.md`'s wire-format audit
+(values, not layout). No packet layout changed either: `PT_STATECORRECTION` is
+appended, and the one removed header field (`SIGNGAMETRAFFIC`) was dead code,
+removed upstream (`26b114339`, Kart Krew).
+
+What this does not do: refuse a vanilla client on a WORLDWIDE server, or switch
+a client's mode automatically. Both stay in `ROADMAP.md`, *Compatibility*.
+
+**To verify, each a launch to be asked for:** `soak_leak.cfg` at 0 failures as
+in 8.15 (the four fields are still in every local snapshot, so the roulette leak
+must not come back); then a join in each direction against a stock build of the
+same base (see 8.30 for why it must be the same base).
+
+### 8.30 Four facts found while preparing the next proposals
+
+Read, not measured.
+
+1. **A CI build cannot see a public server.** The workflow builds with
+   `SRB2_CONFIG_DEV_BUILD=ON`, which defines `DEVELOP`, and under `DEVELOP`
+   `VERSION` and `SUBVERSION` stay 0 (`d_main.cpp:1487-1490`). The server
+   browser and the join both compare them (`d_clisrv.c:1684-1688`, `:4547`). So
+   a WORLDWIDE CI build and a v2.4 release server never see each other --
+   which is why 8.28's misread never bit anyone. The branch is also based on
+   `v2.4-106-g05cca02c9`, upstream's development line, not on a release tag.
+   The policy's "a WORLDWIDE client on a vanilla server" needs a release-config
+   build on the release base the public servers run.
+2. **8.19 is not an instrument that logs speculation.** `K_RollbackNoteInput`
+   is called only in the authoritative loop (`d_clisrv.c:7390`);
+   `K_RollbackSpeculate` drives `G_Ticker` directly (`k_rollback.c:4359`).
+3. **Nor is the client labelling its packets with a speculated tic.**
+   `K_RollbackUnspeculate` runs before `NetUpdate` (`d_clisrv.c:7179-7182`) and
+   the label is `lastconfirmedtic` (`:6686-6689`).
+4. **The speculation writes into `netcmds` and nothing undoes it.**
+   `K_RollbackPredictInputs` writes guesses -- and this machine's live input,
+   flagged `TICCMD_RECEIVED` -- into `netcmds[T]` for the speculated tics.
+   `K_RollbackUnspeculate` restores the world, but `netcmds` is not in the
+   archive. Every tic the confirmed loop runs should first be overwritten by
+   the server's copy (`d_clisrv.c:6006-6013`, all `numslots`), so on reading
+   this is harmless -- but it is the one piece of speculative state known to
+   outlive the speculation, and the offline leak check (8.10) cannot see it,
+   because it perturbs `players[].cmd`, not `netcmds`.
+
+And one for Phase B: **`P_RelinkPointers` is quadratic.** Every relinked pointer
+calls `P_FindNewPosition`, a linear scan of every mobj for a matching `mobjnum`
+(`p_saveg.cpp:5070-5088`). With about two thousand objects and several pointers
+each, that fits it being 4.7 ms of an 8.6 ms restore.

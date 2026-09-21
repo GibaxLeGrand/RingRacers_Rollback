@@ -37,10 +37,10 @@ it described an architecture where the authoritative clock ran ahead.
 
 ## Next, in order
 
-1. **Make the savegame vanilla again** (`WORLDWIDE.md` 8.28, point 1): the four
-   roulette fields added in 8.14 go into local snapshots only. Small, and it is
-   what the compatibility policy needs first. Checked by a soak that the leak
-   stays at 0 -- a launch, so asked for.
+1. **Make the savegame vanilla again** -- **done in code** (`WORLDWIDE.md`
+   8.29): the four roulette fields are in local snapshots only. Still to
+   verify, each a launch to be asked for: `soak_leak.cfg` stays at 0, then a
+   join in each direction against a stock build of the same base.
 2. **Close the gap between 8.19 and 8.20** (8.28, point 2): the one live lead on
    the drift. One instrument, three values per tic, one driven race.
 3. **Somebody hosts and judges.** The host's 170-200 ms delay was removed on
@@ -96,7 +96,12 @@ somebody driving -- 33% of a 28.6 ms tic**, already past the line below. The
 restore alone was 8.6 ms at sixteen karts late in a race. **Assume it does not
 fit, and measure.**
 
-**Two levers, in this order:**
+**A cheap lever first, found by reading** (`WORLDWIDE.md` 8.30):
+`P_RelinkPointers`, 4.7 ms of an 8.6 ms restore, resolves every pointer with a
+linear scan of all mobjs. An index from `mobjnum` to object makes it linear
+instead of quadratic, without changing what it computes.
+
+**Then two structural levers, in this order:**
 
 1. **Predict less.** Odamex restores one player and the moving sectors, not two
    thousand objects; Rocket League separates the car from the ball. The larger
@@ -156,15 +161,21 @@ This supersedes every earlier statement that stock compatibility was "abandoned"
   `0x10`), exchanged before any join; a vanilla server reports them unset.
 - `askinfo_pak.time` already measures the ping before joining.
 
-**Broken today:** the savegame. The roulette fields of 8.14 are written
-unconditionally and `PACKETVERSION` did not move, so a WORLDWIDE build and a
-stock one pass the version check and then misread each other's savegame by 16
-bytes a player (`WORLDWIDE.md` 8.28, point 1).
+**Fixed in code, not yet verified:** the savegame. The roulette fields of 8.14
+were written unconditionally, so a WORLDWIDE build and a stock one would pass
+the version check and then misread each other's savegame by 16 bytes a player
+(`WORLDWIDE.md` 8.28). They are now local-only, and the savegame is stock
+grammar again (8.29).
+
+**A prerequisite nobody had written down** (8.30): CI builds are `DEVELOP`, so
+their `VERSION`/`SUBVERSION` are 0 and they cannot see a public server at all;
+and the branch sits on upstream's development line (`v2.4-106`), not on a
+release tag. "A WORLDWIDE client on a vanilla server" needs a release-config
+build on the release base the public servers run.
 
 **The work, in order:**
 
-1. Roulette fields in local snapshots only -- the savegame is stock grammar
-   again in every mode.
+1. ~~Roulette fields in local snapshots only~~ -- done in code (8.29).
 2. **One server-side meaning of "WORLDWIDE mode".** Today it is two switches on
    two machines (`rollback_twoclock` on the client, `rollback_correct` on the
    server) and the host's delay exemption infers it from `g_correctrate`

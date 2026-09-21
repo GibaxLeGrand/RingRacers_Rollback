@@ -924,10 +924,17 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		// read every tic the roulette runs, neither archived until now, so a
 		// restore mid-roulette left them holding whatever the world last
 		// computed rather than what this snapshot actually had.
-		WRITEUINT32(save->p, players[i].itemRoulette.baseDist);
-		WRITEUINT32(save->p, players[i].itemRoulette.firstDist);
-		WRITEUINT32(save->p, players[i].itemRoulette.secondDist);
-		WRITEUINT32(save->p, players[i].itemRoulette.secondToFirst);
+		//
+		// Local snapshots only: the netgame savegame has to keep stock grammar,
+		// or a stock peer misreads everything after this by 16 bytes a player
+		// (WORLDWIDE.md 8.28).
+		if (localsnapshot)
+		{
+			WRITEUINT32(save->p, players[i].itemRoulette.baseDist);
+			WRITEUINT32(save->p, players[i].itemRoulette.firstDist);
+			WRITEUINT32(save->p, players[i].itemRoulette.secondDist);
+			WRITEUINT32(save->p, players[i].itemRoulette.secondToFirst);
+		}
 
 		WRITEUINT32(save->p, players[i].itemRoulette.index);
 		WRITEUINT8(save->p, players[i].itemRoulette.sound);
@@ -1718,10 +1725,13 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].itemRoulette.preexpdist = READUINT32(save->p);
 		players[i].itemRoulette.dist = READUINT32(save->p);
 
-		players[i].itemRoulette.baseDist = READUINT32(save->p);
-		players[i].itemRoulette.firstDist = READUINT32(save->p);
-		players[i].itemRoulette.secondDist = READUINT32(save->p);
-		players[i].itemRoulette.secondToFirst = READUINT32(save->p);
+		if (localrestore)
+		{
+			players[i].itemRoulette.baseDist = READUINT32(save->p);
+			players[i].itemRoulette.firstDist = READUINT32(save->p);
+			players[i].itemRoulette.secondDist = READUINT32(save->p);
+			players[i].itemRoulette.secondToFirst = READUINT32(save->p);
+		}
 
 		players[i].itemRoulette.index = (size_t)READUINT32(save->p);
 		players[i].itemRoulette.sound = READUINT8(save->p);
