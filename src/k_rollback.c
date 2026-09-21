@@ -3141,6 +3141,12 @@ static uint32_t g_specus;           // and running the speculation forward
 // nothing speculated indict the restore, and their absence clears it.
 static dboolean g_nullspec;
 
+// The speculation starting on tics the server has already sent: see
+// K_RollbackPredictInputs. Counted whether or not the fix is on.
+static dboolean g_cleancmds;
+static uint32_t g_recvwrites;   // local slots of an already-received tic written over
+static uint32_t g_recvchanged;  // ... with an input that differed from the server's
+
 // Messages a speculated tic tried to send. localtextcmd is netcode state, not
 // world state, so the archive does not carry it and a restore cannot take one
 // back -- the server would apply a message from a timeline that was discarded.
@@ -5087,9 +5093,54 @@ static void Command_RollbackTwoClock_f(void)
   * arrive -- it was guessed, and p_user reads that flag to decide how much to
   * trust the angle it came with.
   */
+static void K_RollbackCountReceivedWrites(tic_t tic)
+{
+	int32_t i;
+
+	for (i = 0; i <= (int32_t)splitscreen; i++)
+	{
+		const int32_t who = g_localplayers[i];
+		const ticcmd_t *mine, *server;
+
+		if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
+			continue;
+
+		mine = D_LocalTiccmd((uint8_t)i);
+		server = &netcmds[tic % BACKUPTICS][who];
+
+		g_recvwrites++;
+
+		if (mine->forwardmove != server->forwardmove
+			|| mine->turning != server->turning
+			|| mine->angle != server->angle
+			|| mine->throwdir != server->throwdir
+			|| mine->aiming != server->aiming
+			|| mine->buttons != server->buttons)
+		{
+			g_recvchanged++;
+		}
+	}
+}
+
 void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 {
 	int32_t i;
+
+	// A tic below neededtic has already arrived, with the server's input for
+	// every player in it. In two-clock mode the speculation starts on such tics:
+	// the netticbuffer reserve at the end of TryRunTics' loop only stands down for
+	// the old loop, so the confirmed loop stops short of neededtic. The local
+	// write below then replaced the server's input for this machine's own player
+	// with the one held *now*, and the next pass ran that tic as confirmed on it
+	// (WORLDWIDE.md 8.31). rollback_cleancmds leaves such tics exactly as they
+	// arrived.
+	if (tic < D_NeededTic())
+	{
+		K_RollbackCountReceivedWrites(tic);
+
+		if (g_cleancmds)
+			return;
+	}
 
 	// Counted, because "the loop is on" and "the loop is doing anything" are two
 	// different claims and only one of them was ever printed. A prediction that
@@ -5159,6 +5210,30 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 		*to = netcmds[(tic - 1) % BACKUPTICS][i];
 		to->flags &= ~TICCMD_RECEIVED;
 	}
+}
+
+/** Console command: rollback_cleancmds [0/1]
+  *
+  * Client side, two-clock mode. With it on, the speculation leaves tics the
+  * server has already sent exactly as they arrived. Off by default so one race
+  * can be read with it off, then on. The counts run either way and reset when
+  * the switch is set.
+  */
+static void Command_RollbackCleanCmds_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_cleancmds = (atoi(COM_Argv(1)) != 0);
+		g_recvwrites = g_recvchanged = 0;
+	}
+
+	CONS_Printf("rollback_cleancmds: %s\n",
+		(g_cleancmds
+			? "on -- the speculation does not touch tics the server has already sent"
+			: "off -- the speculation writes the local input over tics already received"));
+	CONS_Printf("rollback_cleancmds: %u local inputs %s over an already-received tic, "
+		"%u of them different from what the server sent\n",
+		g_recvwrites, (g_cleancmds ? "would have been written" : "written"), g_recvchanged);
 }
 
 /** True when the network has contradicted a tic that has already run.
@@ -5577,6 +5652,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
+	COM_AddDebugCommand("rollback_cleancmds", Command_RollbackCleanCmds_f);
 	COM_AddDebugCommand("rollback_blame", Command_RollbackBlame_f);
 	COM_AddDebugCommand("rollback_correct", Command_RollbackCorrect_f);
 	COM_AddDebugCommand("rollback_drift", Command_RollbackDrift_f);

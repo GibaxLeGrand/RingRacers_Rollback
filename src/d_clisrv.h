@@ -831,6 +831,10 @@ int16_t Consistancy(void);
   * replay, which advances tics without going through the tic loop that does it. */
 void D_RecordConsistancy(tic_t tic);
 
+/** The first tic the server has not sent yet: every tic below it holds the
+  * server's inputs for every player. */
+tic_t D_NeededTic(void);
+
 /** Console command: records what the consistency checksum was looking at, tic by
   * tic, so a synch failure can name a position, an item or an RNG seed instead of
   * being guessed at. */

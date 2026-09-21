@@ -6406,6 +6406,11 @@ void D_RecordConsistancy(tic_t tic)
 	consistancy[tic % BACKUPTICS] = Consistancy();
 }
 
+tic_t D_NeededTic(void)
+{
+	return neededtic;
+}
+
 // What Consistancy() was looking at, tic by tic.
 //
 // Three theories about this desync have been written and refuted -- speculative

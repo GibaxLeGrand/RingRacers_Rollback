@@ -1850,3 +1850,60 @@ And one for Phase B: **`P_RelinkPointers` is quadratic.** Every relinked pointer
 calls `P_FindNewPosition`, a linear scan of every mobj for a matching `mobjnum`
 (`p_saveg.cpp:5070-5088`). With about two thousand objects and several pointers
 each, that fits it being 4.7 ms of an 8.6 ms restore.
+
+### 8.31 The speculation overwrites the local input of tics already received
+
+Read, not measured. **The best candidate yet for the drift**, and it closes the
+gap of 8.28 point 2.
+
+8.30 point 4 said the speculation's writes into `netcmds` are harmless because
+every confirmed tic is first overwritten by the server's copy. That holds only
+if the speculation starts at `neededtic`. **It does not**:
+
+1. The netticbuffer reserve at the end of `TryRunTics`' loop breaks out when
+   `neededtic <= gametic + cv_netticbuffer.value`, gated on
+   `K_RollbackPredictAhead() == 0` (`d_clisrv.c`, "Leave a certain amount of
+   tics present in the net buffer"). Two-clock mode sets `g_loopahead` to 0, so
+   **the reserve is active under two-clock**: whenever a pass has two or more
+   tics to run, the confirmed loop stops one short (`netticbuffer` defaults
+   to 1), with that tic already received.
+2. `K_RollbackSpeculate` then starts from that frontier, and calls
+   `K_RollbackPredictInputs` on the received tic. Remote players and bots are
+   skipped when their slot carries `TICCMD_RECEIVED`, but **the local player's
+   slot is overwritten unconditionally** with `D_LocalTiccmd` -- what the
+   player holds *now*.
+3. `K_RollbackUnspeculate` restores the world, not `netcmds`. The packet for
+   that tic has already been processed and will not be copied again. So the
+   next pass runs that tic **as confirmed** on the client's current input,
+   while the server ran the input it had assigned to it.
+
+Every observation fits:
+
+- 8.19's input log: the client's confirmed tic "folded its own input the instant
+  it is made"; the server caught up tics later.
+- The local human's kart owns most spikes (8.8: 30 of 40 on p8). Other karts
+  drift only through contact.
+- Nobody driving means the current input equals the assigned one: no drift
+  (8.1 before correction, the undriven control races).
+- `nospec` never calls `K_RollbackPredictInputs`: 0.000 units (8.9).
+- The offline leak check perturbs `players[].cmd`, never `netcmds`, and runs no
+  reserve: it cannot see this (0/522).
+- 8.17's "the confirmed clock never runs on a guess" stays true -- it runs on
+  a real input, the wrong one for that tic.
+
+**Built, off by default:** `rollback_cleancmds 1` makes `K_RollbackPredictInputs`
+return untouched on any tic below `neededtic` (exposed as `D_NeededTic()`), so
+received tics stay exactly as the server sent them. Counted either way: how many
+local inputs were (or would have been) written over a received tic, and how many
+of them differed from the server's -- the second count is the size of the
+effect, and it should be 0 when nobody drives.
+
+**Prediction written before any run:** with `rollback_cleancmds 0` in a driven
+race, the changed count is non-zero and grows with steering; with it on, mean
+drift falls well below the 0.25-0.86 units measured so far, spikes on the local
+kart mostly disappear, and 8.19's input hashes agree. If drift does not move
+with the count non-zero, this reading is wrong.
+
+Another fix would be to stand the reserve down in two-clock mode as well, so the
+speculation always starts at `neededtic`. Not done: it changes the confirmed
+loop's pacing, which is a second variable.

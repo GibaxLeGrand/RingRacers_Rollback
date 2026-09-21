@@ -8,7 +8,7 @@ les taper. Contrairement à `ROLLBACK.md` (journal clos) et `WORLDWIDE.md`
 décrit ce que chaque commande fait, aujourd'hui, et se met à jour au fil de
 l'eau. Point d'entrée de toute la doc : [README.md](README.md).
 
-**À jour au 2026-09-21** — 21 commandes, vérifiées contre
+**À jour au 2026-09-21** — 22 commandes, vérifiées contre
 `K_RegisterRollbackStuff` dans `k_rollback.c`. Deux sont **obsolètes**
 (`rollback_loop`, `rollback_pace`) et restent seulement pour comparaison.
 
@@ -272,6 +272,23 @@ autoritaire elle-même.
 > précisément le bug que ce correctif referme). Si l'idée est de recycler le
 > slider `cv_mindelay` existant pour ça, c'est un nouveau développement, pas
 > une conséquence automatique de ce qui est corrigé ici.
+
+### `rollback_cleancmds [0|1]`
+**Côté client, mode deux horloges.** Coupé par défaut. Quand il est actif, la
+spéculation ne touche plus aux tics que le serveur a **déjà envoyés**.
+
+Sans lui, la réserve `netticbuffer` arrête la boucle confirmée un tic avant
+`neededtic`, et la spéculation écrit ton entrée *du moment* par-dessus celle que
+le serveur avait assignée à ce tic. Le tic est ensuite joué comme confirmé avec
+la mauvaise entrée : c'est la meilleure piste pour la dérive (`WORLDWIDE.md`
+8.31).
+
+- Sans argument : l'état, et deux compteurs qui tournent **même coupé** —
+  combien d'entrées locales ont été écrites par-dessus un tic déjà reçu, et
+  combien différaient de celle du serveur. Le second doit valoir 0 quand
+  personne ne pilote.
+- Changer la valeur remet les compteurs à zéro, pour lire une même course
+  coupé puis actif.
 
 ### `rollback_nullspec [0|1]`
 Sauvegarde et restaure la frontière à **chaque passe** sans rien spéculer.
