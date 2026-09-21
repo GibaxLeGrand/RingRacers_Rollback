@@ -1,8 +1,10 @@
 # Dr. Robotnik's Ring Racers
 
 > **This fork: Ring Racers Worldwide** (branch `rollback-netcode`) adds a
-> client-side prediction netcode to Ring Racers. Work in progress; its
-> development notes are kept separately. The rest of this file is the upstream
+> client-side prediction netcode to Ring Racers. Work in progress: the current
+> state and the measurement journal are in [docs/WORLDWIDE.md](docs/WORLDWIDE.md),
+> what is left in [docs/ROADMAP.md](docs/ROADMAP.md), and the console commands
+> in [docs/COMMANDS.md](docs/COMMANDS.md). The rest of this file is the upstream
 > README, unchanged.
 
 <p align="center">
