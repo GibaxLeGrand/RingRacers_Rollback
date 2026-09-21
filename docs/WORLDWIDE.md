@@ -44,17 +44,16 @@ Every piece is behind a switch that is off by default.
    8.28 is fixed in code (8.29, not yet verified). Still missing: the refusal of
    vanilla clients, the automatic mode switch, and a release-config build --
    CI builds are `DEVELOP` and cannot see public servers at all (8.30).
-2. **The drift's cause** (Phase A). **Best candidate, found by reading
-   (8.31):** the speculation writes the local player's *current* input over a
-   tic the server has already sent, and the next pass runs that tic as
-   confirmed on it. Fix built behind `rollback_cleancmds`, off by default, with
-   counters that run either way. **Seen in the 2026-09-20 logs (8.33):** the
-   client's kart ran 94% of its confirmed tics on the input the server filed
-   seven tics later, and half the bots' inputs were recomputed by the client on
-   the same received tic -- a second face the fix covers but its counters do
-   not count. **Not measured with the fix yet**: one driven race, switch off,
-   on, off, settles it. Risk written down before it: with the fix on, the feel
-   may lag, because four tics of speculation do not cover the seven-tic gap.
+2. **The drift's cause** (Phase A) -- **8.31 was right about the inputs, wrong
+   about the drift (8.35).** `rollback_cleancmds` closes the mechanism at race
+   scale: wrong-input tics fell from 64-81% to 0.1% for the local player, 23-80%
+   to 0.09% for the field. Drift did not fall -- it rose in every window
+   (0.268 -> 0.474 -> 0.683), on the same shape as an earlier race's pure
+   time trend with no switch at all. The fix stays (the design statement asks
+   for it on its own), but Phase A's cause is open again. **Next instrument**:
+   hash the program's global memory just before a speculation and just after
+   the restore, narrow a difference to an address with the `.pdb`. **Not yet
+   asked**: how the on window felt to drive.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
    The relink, half of a restore, is now indexed instead of quadratic (8.30,
    not measured).
@@ -100,6 +99,7 @@ repository's HEAD. **No launch without Gibax's explicit go-ahead, each time.**
 | 8.28 point 2 | the gap it describes is explained by 8.31 |
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
+| 8.33 | its inputs prediction is confirmed at race scale; its drift prediction is refuted -- fixing the inputs did not lower the drift (8.35) |
 
 **Pushed on 2026-09-21, compiled by CI, none of it run:** roulette fields
 local-only (8.29), indexed relink (8.30), `rollback_cleancmds` (8.31), relabel
@@ -2118,3 +2118,55 @@ is left, matching the reasoning above rather than contradicting it.
 
 The relink index (8.30) holds too: the restore profile from the same run again
 has no `relink pointers` line.
+
+### 8.35 The driven cleancmds race: the inputs prediction lands, the drift prediction does not
+
+Measured (binary `bee33d9`, sha verified, `playtest.sh correct`, driven by
+Gibax). Predictions were written in 8.33 before the run.
+
+**The inputs.** `cleancmds_report.py` compared what the client ran against
+what the server ran, tic by tic, per window:
+
+| window | switch | local: compared / differ | others: compared / differ | mean drift | worst |
+|---|---|---|---|---|---|
+| 0 | off | 994 / 638 (64%) | 7952 / 1823 (23%) | 0.268 | 32.5 (p8) |
+| 1 | **on** | 1000 / **1** (0.1%) | 8000 / **7** (0.09%) | 0.474 | 29.9 (p8) |
+| 2 | off | 1070 / 869 (81%) | 8560 / 6831 (80%) | 0.683 | 97.1 (p3) |
+
+**Exactly the predicted shape.** In both off windows, most of the local
+kart's confirmed tics and most of the field's ran on the wrong input; in the
+on window, essentially none did -- 1 tic out of 1000 for the local player, 7
+out of 8000 for everyone else (both plausibly the one or two tics either side
+of the switch itself, not the mechanism). 8.31/8.33's read of the code is
+confirmed at race scale, not just in an old log: the fix does what it was
+written to do.
+
+**The drift did not fall.** It rose in every window, on then off then on
+again: 0.268 -> 0.474 -> 0.683. 8.33 wrote this exact outcome down as the
+falsifying case: *"If the inputs agree in the on window and drift does not
+move, 8.31 is right about the inputs and wrong about the drift."* That is what
+happened.
+
+**Read against the only other race with a mid-race breakdown** (2026-09-20,
+no switch at all, three reports over one race): 0.152 -> 0.269 -> 0.334, ratios
+1.77 and 1.24. This race: ratios 1.77 and 1.44. The first ratio matches to
+three figures. The simplest reading is that drift grows with **how far into
+the race it is**, not with which tics ran the wrong input -- the on window
+does not interrupt the trend it sits in the middle of. One race each, so this
+is a shape match, not a proof; the next race that reads `rollback_drift`
+without cutting it into windows would settle whether the growth is really
+race-position and not, for instance, grid disorder that a longer scripted
+race would also produce with the switch on throughout.
+
+**8.31's mechanism is real and now closed, and it was not the drift's
+source.** `rollback_cleancmds 1` stays a fix -- the client runs the tics the
+server actually sent, which the design statement (section 1) asks for on its
+own -- but Phase A's open question is exactly where it was: the next
+instrument is the one 8.33/`ROADMAP.md` already named for this branch, memory
+hashed just before a speculation and just after the restore, narrowed to an
+address with the `.pdb`.
+
+**Not yet asked: how the on window felt to drive.** Only Gibax can answer
+that, and 8.33 flagged it as the real risk of turning the fix on (speculating
+only 4 tics above a confirmed frontier that now runs 7 tics behind the local
+input).

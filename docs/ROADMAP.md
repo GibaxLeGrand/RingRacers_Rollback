@@ -41,11 +41,13 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
 
 ## Next, in order
 
-State on 2026-09-21, evening: steps 1 to 4's first bullet are done.
-`soak.sh leak` broke its own prediction, found a genuine gap
-(`itemRoulette.playing`/`.exiting` never archived), and the fix is pushed,
-built (`3400299`, CI green, sha verified), and re-confirmed (8.34). **Every
-further launch is asked for first.**
+State on 2026-09-21, evening: steps 1 to 4's first two bullets are done.
+`soak.sh leak` broke its own prediction (roulette fields never archived,
+8.34), fixed and confirmed. The driven `correct` race then confirmed
+`rollback_cleancmds` fixes the inputs but not the drift (8.35) -- Phase A's
+cause is open again. **Still to ask: how did the on window feel to drive?**
+Then a host's-seat race, and step 5's memory-hash instrument. **Every further
+launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -69,30 +71,25 @@ further launch is asked for first.**
      `itemList.cap` case, not a regression. The relink index's price came back
      for free in both runs: the "relink pointers" restore-profile step no
      longer prints at all (under 100us, against 4.7 ms before).
-   - **One driven `playtest.sh correct` race**, read with
-     `cleancmds_report.py`. Written before the run (8.33): in the off windows
-     most of the local kart's inputs and about half the bots' differ from the
-     server's at the same tic; in the on window none do, and mean drift falls
-     well below the off windows'. **Ask the driver whether the middle window
-     felt different**: the fix may cost feel (8.33). The same race reads the
-     relabel split (8.32: `+2` should be "host, outside a race").
+   - ~~One driven `playtest.sh correct` race~~, read with `cleancmds_report.py`
+     (8.35). The inputs prediction landed: wrong-input tics fell from 64-81%
+     to 0.1% for the local player, 23-80% to 0.09% for the field. The drift
+     prediction did not: mean drift rose in every window regardless of the
+     switch (0.268 -> 0.474 -> 0.683), on the same shape as an earlier race's
+     pure time trend with no switch at all. **8.31 was right about the inputs,
+     wrong about the drift** -- see step 5. **Still to ask the driver: how did
+     the on window feel?** (8.33's risk, not yet answered.) The relabel split
+     (8.32) was also read from this race -- to fold in.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
-5. **Depending on 4:**
-   - the inputs agree and the drift falls, **and** the feel holds: turn
-     `rollback_cleancmds` on by default, then run the correction-rate sweep
-     (`rollback_correct 8`, `16`, `35`) owed since 2026-09-10 -- less drift
-     should mean far fewer corrections;
-   - the inputs agree and the drift falls, **but** the on window feels late:
-     keep the fix, and make the speculation carry the local input the server
-     has not played yet -- at least lag + 1 tics deep, replaying the local
-     input *history* tic by tic instead of the latest sample repeated (8.33);
-   - the inputs agree and the drift does not move: 8.31 was right about the
-     inputs and wrong about the drift. The next instrument hashes the
-     program's global memory (the exe's `.data`/`.bss`) just before a
-     speculation and just after the restore, narrows a difference down to an
-     address, and names it with the `.pdb` -- the blind spot every
-     archive-based check shares.
+5. **Now**, since the drift outcome is known (8.35): the next instrument
+   hashes the program's global memory (the exe's `.data`/`.bss`) just before a
+   speculation and just after the restore, narrows a difference down to an
+   address, and names it with the `.pdb` -- the blind spot every
+   archive-based check shares. `rollback_cleancmds` stays on the roadmap to
+   default-on regardless of this outcome: the design statement (section 1)
+   asks for the client to run the server's tics as sent, on its own terms, not
+   only as a drift fix.
 6. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---
@@ -111,18 +108,25 @@ roulette fix, 8.15); tic determinism (0/330 resim checks); the synchronised RNG
 hits, same hashes, 8.8); the confirmed clock running on a guess (8.9, 8.17,
 8.20); late resends (0 arrivals, 8.17).
 
-**Best candidate (8.31, read; seen in old logs, 8.33; not measured with the
-fix):** the speculation starts on a tic the server has already sent -- the
-netticbuffer reserve stops the confirmed loop one short -- and overwrites the
-local player's input in it with the current one, and every bot's input with
-one recomputed from the client's world; the next pass runs that tic as
-confirmed. The 2026-09-20 logs show it on 94% of the local kart's confirmed
-tics and on half the bots' inputs. It explains 8.19, the local kart owning most
-spikes, and `nospec` reading zero. Fix behind `rollback_cleancmds`.
+**Closed as a drift cause, fixed anyway (8.31, 8.33, 8.35):** the speculation
+started on a tic the server had already sent -- the netticbuffer reserve
+stopped the confirmed loop one short -- and overwrote the local player's input
+in it with the current one, and every bot's input with one recomputed from the
+client's world; the next pass ran that tic as confirmed. `rollback_cleancmds`
+fixed it: wrong-input tics fell from 64-81% to under 0.1% at race scale. Mean
+drift rose regardless, on the same shape as a race with no switch at all --
+this was not the drift's source. The fix stays (section 1 asks for it on its
+own); Phase A's cause is open again, next instrument below.
 
 **Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
-8.27). Hypothesis in 8.32: the host outside a race, harmless. The split that
-tests it is built.
+8.27). Hypothesis in 8.32: the host outside a race, harmless. The split was
+read in the same driven race as the cleancmds result (8.35) -- read it, not
+yet folded in here.
+
+**Next instrument:** hash the program's global memory (the exe's `.data`/
+`.bss`) just before a speculation and just after the restore, narrow a
+difference down to an address, name it with the `.pdb` -- the blind spot every
+archive-based check shares, since none of them look outside the archive.
 
 **Done when:** zero `Game state reloaded` with the resend **not** suppressed
 (`rollback_correct N 0`) over five unattended races and two driven ones -- or,
