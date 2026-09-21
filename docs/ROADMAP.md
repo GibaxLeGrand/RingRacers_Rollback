@@ -1,311 +1,247 @@
-# Phases to a playable alpha
+# Roadmap to a playable alpha
 
-Written 2026-09-10, after the two-clock pivot and after the desync was narrowed to
-one statement. `ROLLBACK.md` is the journal, `AUDIT_20260909.md` is the comparison
-with SRB2 NetPlus and Odamex. This file says what is left, in what order, and what
-each phase has to prove before the next one is worth starting.
+Rewritten 2026-09-21. It replaces the 2026-09-10 original and the three
+revision notes that had been stacked on top of it (2026-09-10, 2026-09-10
+evening, 2026-09-20). Nothing they said was dropped: their conclusions are
+folded into the phases below, and the order is brought up to date. The
+evidence for every line lives in `WORLDWIDE.md`; this file only says what is
+left, in what order, and what each step has to prove.
 
-The old phase numbering (1 to 7) is retired: it was written for an architecture
-where the authoritative clock ran ahead, and that is gone. These phases are the
-post-pivot ones.
+The old phase numbering (1 to 7, in `ROLLBACK.md`) was retired on 2026-09-10:
+it described an architecture where the authoritative clock ran ahead.
 
 ## Where this starts from
 
-**Solved and holding:** input lag. "Ça répond tout de suite", reported by a person
-on five races and again after the architecture changed underneath it.
+- **Solved, from the client's seat: input lag.** "Ça répond tout de suite", five
+  races, and again after the architecture changed underneath it.
+- **Architecture settled.** `gametic` runs only confirmed tics; the speculation
+  runs above it on a snapshot and is rebuilt every pass. A light correction
+  channel replaces the stock full-state resend: **0 resends a race**, against
+  7 to 9 without it.
+- **Unattended bench.** Six bots move the world without a driver, so a
+  measurement can be repeated instead of being n=1.
+- **Open:** the cause of the residual drift, the cost at sixteen karts, the
+  relabel histogram's `+2` cluster, and vanilla compatibility (see the dedicated
+  section).
 
-**The architecture is settled.** `gametic` runs only confirmed tics; the
-speculation lives above it on a snapshot and is rebuilt every pass. Costs
-**4.94 ms of a 28.6 ms tic** at two players, **8.33 ms** at eight.
+## Ground rules for every step
 
-**The bench is unattended.** Six bots move the world without a driver, so
-measurements can be repeated instead of being n=1. This is what makes the phases
-below plannable at all.
+- **No launch without Alex's explicit go-ahead, every time**: the game, a
+  `playtest.sh` scenario, a soak, the bench. Writing code and scenarios is
+  free; running them is asked for.
+- Measure on a binary verified by its sha. Write the prediction before the run.
+  Keep a control in the same session.
+- ⚠ The harness (`playtest.sh`, the `*.cfg` scenarios) lives only in the game
+  folder of the original machine and is not in this repository. Versioning it
+  is a prerequisite for measuring from anywhere else.
 
-**Open:** the desync, narrowed to a single statement -- *a speculated tic modifies
-state the archive does not carry, and that state reaches a bot's simulation.*
+## Next, in order
+
+1. **Make the savegame vanilla again** (`WORLDWIDE.md` 8.28, point 1): the four
+   roulette fields added in 8.14 go into local snapshots only. Small, and it is
+   what the compatibility policy needs first. Checked by a soak that the leak
+   stays at 0 -- a launch, so asked for.
+2. **Close the gap between 8.19 and 8.20** (8.28, point 2): the one live lead on
+   the drift. One instrument, three values per tic, one driven race.
+3. **Somebody hosts and judges.** The host's 170-200 ms delay was removed on
+   2026-09-20 (8.27) and nobody has played from the host's seat since. One race,
+   and only a person can do it.
+4. **Phase B's first measurement**: a pass at sixteen karts, late in a race.
+5. **Still owed from 2026-09-10**: four more unattended repeats of
+   `playtest.sh correct` (the driven repeat is done: 8.16, 8.18), and the
+   correction-rate sweep, `rollback_correct 8`, `16`, `35` -- at 0.25 units of
+   residual per four tics, one correction every four tics is probably more than
+   needed, and each halving is free bandwidth.
 
 ---
 
-> **Revised 2026-09-10 by `WORLDWIDE.md`.** The project is now Ring Racers
-> Worldwide -- client-side prediction with server reconciliation, named for what
-> it is. The phases below stand; `WORLDWIDE.md` sections 6 and 7 change Phase A's
-> next step, give Phase B a second reason, add an item-prediction policy to
-> Phase C, and add a client-local delay knob. Read that file first.
+## Phase A -- Understand the drift
 
-> **Revised again 2026-09-10, evening.** The light correction channel is built
-> and measured (`WORLDWIDE.md` sections 8.4 to 8.6): a race ran with **zero
-> full-state resends** and a residual position error of **0.25 units**. That
-> changes the order below. **Phase A no longer blocks the alpha** -- the channel
-> absorbs the divergence -- so it stops being the gate and becomes an
-> optimisation: every unit of residual drift it removes lets the correction rate
-> come down. What blocks the alpha now is Phase B, the cost at a full grid, which
-> the channel does not help with at all.
->
-> **The next four things, in order:**
->
-> 1. **Repeat `playtest.sh correct` driven.** One command, one race. The run that
->    produced nine resyncs and 330-unit gaps had a person in it; the clean one did
->    not. Until that is repeated driven, nothing above is proven.
-> 2. **Four more unattended repeats.** Every number in this project has been
->    n=1 once, and one of those was read as a fix when it was an artefact.
-> 3. **Find the correction rate that is actually needed.** `rollback_correct 8`,
->    `16`, `35`. At 0.25 units of residual per four tics, one every four tics is
->    probably far more than necessary, and each halving is free bandwidth.
-> 4. **Then Phase B**, which is now the gate: 9.5 ms a pass at nine karts is
->    already 33% of a tic, and a grid is sixteen.
+**No longer the gate for the alpha.** The correction channel absorbs the
+divergence (0 resends, mean residual 0.25-0.86 units, a kart being about 40
+wide). Phase A is now what lowers the correction rate and the residual, and
+what makes the stock consistency check agree again.
 
-> **Revised 2026-09-20 -- the host was never exempted, and now is.**
-> `WORLDWIDE.md` 8.23 to 8.27. Measured, not argued: on a listen server
-> `K_RollbackPays()` read false for a whole race, so the **host charged
-> himself 6-7 tics of gentleman's delay -- 170-200 ms** -- while the remote
-> client was charged none. `client` is `(!server)`, so the `client` gate
-> inside `K_RollbackTwoClock()` silences the exemption on the one machine
-> that has a person on node 0. Fixed and measured: `target_lag` now reaches 0
-> at race start and never moves, and the relabel histogram's `+6`/`+7` mass
-> moved to `+0`, which also identified those clusters as the host's.
->
-> **The structural finding is the one to carry forward: there is no single
-> "this machine is running Worldwide" state.** It is two switches on two
-> machines -- `rollback_twoclock` on the client, `rollback_correct` on the
-> server -- with nothing tying them together and neither able to see the
-> other. The first version of the fix was a no-op precisely because it asked
-> the host about the client's switch. Any future code that means "are we
-> running Worldwide" has to pick a side deliberately, and the delay policy
-> now leans on `g_correctrate` as a **proxy** until capability advertising
-> exists.
->
-> **Two things this adds to the list below**, both small and both real:
-> Phase D gains "somebody hosts and judges" (see there), and the capability
-> advertising item gains a second customer (see there).
->
-> **Still open, narrowed:** the relabel histogram's `+2` cluster, 2557 of
-> 6403, belongs to neither the host (exempting him cost it 778) nor
-> obviously the remote client (offset 2 needs `timegap < 2` under
-> `rollback_lag 6`). No hypothesis is recorded. The instrument that settles
-> it is logging `lagDelay` where it goes on the wire (`d_clisrv.c:6788`),
-> tagged by sender.
+**Excluded, each by measurement:** the restore (0 contamination over 1400 round
+trips, with and without bots); the archive (0/522 leak checks after the
+roulette fix, 8.15); tic determinism (0/330 resim checks); the synchronised RNG
+(identical until positions have already drifted, 8.2); the damage path (same
+hits, same hashes, 8.8); the confirmed clock running on a guess (8.9, 8.17,
+8.20); late resends (0 arrivals, 8.17).
 
-## Phase A -- Close the desync
+**Live lead:** 8.19 shows the client's confirmed world running different inputs
+than the server's for the human kart. 8.20 attributes it to the server's
+`faketic` relabelling, but relabelling alone should not make two confirmed
+worlds disagree (8.28, point 2). Settle that first.
 
-**Blocks everything.** A full state resend every fifteen seconds makes every other
-measurement unreadable, and no amount of tuning shows through it.
+**Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
+8.27). The instrument is named: log `lagDelay` where it goes on the wire
+(`netbuffer->u.clientpak.wantdelay = lagDelay` in `CL_SendClientCmd`), tagged
+by sender.
 
-What is already excluded, each measured under the same conditions: the restore
-(clean over 1400 round trips, with and without bots), the inputs (the server
-transmits bot ticcmds and the client copies them unconditionally), the
-synchronised RNG (`rngsum` identical on the failing tic), items (`itemtype`
-identical), and netxcmds (never once raised inside a speculation).
-
-**The work.** The memory comparison -- `K_NameMobjField` over 125 fields plus
-`P_NamePlayerField` -- walks *structures* rather than archives, which is the blind
-spot every other oracle here shares, and it is what found the interpolation family.
-Point it at the world just after `K_RollbackUnspeculate` against a copy taken just
-before `K_RollbackSpeculate`. Anything it names that is not presentation is the bug.
-
-⚠ Read its output knowing it has reported fifteen hundred to two thousand differing
-fields per check since the beginning, all filed as "presentation" **on the strength
-of their names**, never once checked against what the simulation actually reads.
-
-**Done when:** zero resyncs over **five** unattended bot races and **two** driven
-ones. Five because every number in this project so far has been n=1, and one of
-those n=1 readings was an undriven race that looked exactly like a fix.
+**Done when:** zero `Game state reloaded` with the resend **not** suppressed
+(`rollback_correct N 0`) over five unattended races and two driven ones -- or,
+failing that, the drift explained down to a mechanism and its residual stated.
 
 ---
 
 ## Phase B -- Make it fit at a real grid
 
-**Needs A.** Every cost figure so far is two or eight karts on one map, early in a
-race. A Ring Racers grid is sixteen, and a snapshot grows from 120 KiB at the start
-to 318 KiB three minutes in.
+**The gate for the alpha.** Every cost figure is two to nine karts, mostly early
+in a race. A Ring Racers grid is sixteen, and a snapshot grows from 120 KiB at
+the start to 318 KiB three minutes in.
 
-Measured so far: 4.94 ms a pass at two karts, 8.33 at eight. Straight-lining that
-to sixteen puts a pass near half a tic, and the restore was 8.6 ms alone at sixteen
-karts late in a race. **Assume it does not fit and measure rather than assuming it
-does.**
+Measured: 4.94 ms a pass at two karts, 8.33 at eight, **9.5 ms at nine with
+somebody driving -- 33% of a 28.6 ms tic**, already past the line below. The
+restore alone was 8.6 ms at sixteen karts late in a race. **Assume it does not
+fit, and measure.**
 
-**Two known levers, in this order:**
+**Two levers, in this order:**
 
 1. **Predict less.** Odamex restores one player and the moving sectors, not two
-   thousand objects; Rocket League says the same thing differently. This is the
-   larger win and it attacks the cost at its root rather than spreading it.
-2. **Amortise.** NetPlus re-simulates only every N live tics (`cv_siminaccuracy`),
-   which trades freshness for a smoother CPU profile.
+   thousand objects; Rocket League separates the car from the ball. The larger
+   win, and it also delivers partial correction, which the design asks for.
+2. **Amortise.** NetPlus re-simulates only every N live tics
+   (`cv_siminaccuracy`), trading freshness for a smoother CPU profile.
 
-**Done when:** a pass fits inside a stated budget -- **30% of a tic** is a
-defensible line -- at sixteen karts, late in a race, with the depth that Phase D
-turns out to need.
+**Done when:** a pass fits in **30% of a tic** at sixteen karts, late in a race,
+at the depth Phase D settles on.
 
 ---
 
 ## Phase C -- Breadth under prediction
 
-**Needs B**, because testing feel and correctness through a stutter tells you about
-the stutter.
+**Needs B**: testing feel and correctness through a stutter tells you about the
+stutter.
 
-Nothing in this list has ever run under prediction:
+Nothing here has run under prediction yet:
 
-- a full race start to finish -- grid, finish line, results screen
-- **Battle**, **Encore**, **Grand Prix** (its grid is hardcoded to eight and it
-  runs bots differently)
-- items and respawns used deliberately, since the soak replays frozen inputs and is
-  structurally blind to anything edge-triggered
-- three maps chosen for geometry the current one lacks: steep slopes, water, a big
-  drop
+- a full race, start to finish: grid, finish line, results screen;
+- **Battle**, **Encore**, **Grand Prix** (grid hardcoded to eight, bots run
+  differently);
+- items and respawns used on purpose -- the soak replays frozen inputs and is
+  blind to anything edge-triggered;
+- three maps with geometry the test maps lack: steep slopes, water, a big drop.
 
-**Done when:** each of those runs with no resyncs and no divergence that has not
-been read and understood. The soak becomes the regression net behind it rather than
-the front-line instrument.
+**Item policy:** do not predict the roulette's result. Let the reel spin under
+speculation and commit the pick on a confirmed tic (`WORLDWIDE.md` §4). Prove it
+with a deliberately driven item test, not with the soak.
 
----
-
-## Small, not yet scheduled -- a client-local input delay knob
-
-Named in `WORLDWIDE.md` section 7, deliberately not folded into a lettered
-phase: it is cheap, and orthogonal to the cost and correctness work above.
-
-**What it is.** A dial the *player* sets, kept entirely local: how many tics
-of buffer to hold between their real input and what gets simulated, even
-while `rollback_twoclock` is covering the round trip. GGPO calls this a local
-delay frame. The player on a bad line who would rather have a stable picture
-than shave off the last 60 ms gets to say so, instead of the choice being made
-for them.
-
-**What it must not become, because it already did once.** `cv_mindelay` --
-the profile's existing "Minimum Input Delay" slider -- used to be sent to the
-server as `wantdelay`, which asked the server to hold the client's *own*
-input, and could not be predicted because the server spent it on a tic the
-client never used it for. That bug (and its accidental second life once
-`rollback_twoclock` replaced `rollback_loop` without inheriting the fix) is
-closed by `K_RollbackPays()` in `k_rollback.c` -- see the 2026-09-14 entry
-under `rollback_twoclock` in `docs/COMMANDS.md`. A new local knob has to stay
-off the wire entirely, or it is the same bug again under a different name.
-Reusing the `cv_mindelay` slider itself for this is one option, not a
-foregone conclusion -- it would need to mean something different online than
-it does today.
-
-**Depends on:** nothing above except the two-clock pivot existing, which it
-already does. Does **not** need Phase A closed or Phase B's cost fixed first,
-which is why it is listed here rather than queued behind them.
-
-**Done when:** a player can set "hold N tics of my own buffer" and it holds
-under `rollback_twoclock` without ever appearing on the wire as `wantdelay` --
-checked by reading the packet, not just by reading the setting.
+**Done when:** each runs with no resends and no divergence that has not been
+read and understood.
 
 ---
 
-## Small, not yet scheduled -- server capability advertising, and a pre-join delay menu
+## Compatibility and capability advertising
 
-The long-term shape (Alex, 2026-09-14): WORLDWIDE stays wire-compatible with
-vanilla Ring Racers servers -- delay-based netcode, unchanged, when talking to
-one. Client-side prediction only turns on against a server that has opted in
-(`rollback_twoclock`/`rollback_correct` on), and a client that finds one
-*before joining* gets offered the client-local delay knob above, pre-filled
-with a value recommended from the server's own settings and the measured
-ping.
+**Policy, decided by Alex on 2026-09-21: the server decides.**
 
-**A second customer for this, found 2026-09-20 (`WORLDWIDE.md` 8.26):** the
-gentleman's-delay policy needs the same answer and cannot get it either. A
-host decides whether to charge himself a delay based on `g_correctrate` --
-*his own* correction-channel switch -- because the question he actually wants
-answered is **"are my clients predicting?"**, and nothing on the wire tells
-him. That is a proxy, it is named as one in `K_RollbackPays()`'s comment, and
-it is wrong in both directions: a host with the channel on but vanilla
-clients connected exempts himself and gains an edge; a host with it off but
-predicting clients keeps charging himself for nothing. **When the bit below
-exists, `K_RollbackPays()` should ask it and stop inferring.**
+- A server in **WORLDWIDE mode** runs client-side prediction and the correction
+  channel, and accepts **WORLDWIDE clients only**.
+- A **vanilla server** runs the stock delay-based netcode. A WORLDWIDE client may
+  join it and then behaves **exactly as a vanilla client**.
 
-**Already there, checked rather than assumed, 2026-09-14 -- this is the
-delivery mechanism for the item above, not new plumbing:**
+This supersedes every earlier statement that stock compatibility was "abandoned"
+(`WORLDWIDE.md` 8.4, 8.14) or "already satisfied" (this file before
+2026-09-21).
 
-- **Vanilla compatibility is a hard constraint this branch already
-  satisfies, not something left to build.** The server-browser check
-  (`d_clisrv.c:1681-1691`) drops a server from the list outright on any
-  mismatch of `packetversion`, `version`, `subversion` or `application`
-  (`"RingRacers"`, hardcoded). Nothing here touches those four today. As
-  long as that stays true, a WORLDWIDE client and a vanilla server keep
-  seeing and joining each other exactly as they do now -- this is a
-  guardrail to respect, not a feature to add.
-- **The detection hook already exists, at exactly the right moment.**
-  `serverinfo_pak` (`d_clisrv.h:326`) is exchanged via `PT_ASKINFO`/
-  `PT_SERVERINFO` -- the server-browser query, strictly before any join. Its
-  `kartvars` byte is already a flag bag (`SV_SPEEDMASK`, `SV_DEDICATED`,
-  `SV_VOICEENABLED`, `SV_LOTSOFADDONS`; one comment already reads
-  *"previously isdedicated, now appropriated for our own nefarious
-  purposes"*), with three bits still free (`0x04`, `0x08`, `0x10`). A vanilla
-  server reports them unset for free -- no version bump, no new packet type,
-  nothing to special-case on that side.
-- **The ping the recommendation would use is already measured pre-join.**
-  `askinfo_pak.time` (`d_clisrv.h:364`) already round-trips for the server
-  browser's ping column.
+**Already there, and to keep:**
 
-**The work, roughly, in order:**
+- `packetversion`, `version`, `subversion` and `application` are untouched, so
+  both kinds of server stay visible to both kinds of client in the browser
+  (`d_clisrv.c:1681-1691`). Keep it that way.
+- `PT_STATECORRECTION` is appended at the end of the packet enum
+  (`d_clisrv.h:144`), so no stock packet number moved.
+- `serverinfo_pak.kartvars` is a flag byte with three free bits (`0x04`, `0x08`,
+  `0x10`), exchanged before any join; a vanilla server reports them unset.
+- `askinfo_pak.time` already measures the ping before joining.
 
-1. A new `SV_PREDICTION` bit on `kartvars`, set server-side under some
-   condition still to decide (probably mirrors, server-side, what
-   `K_RollbackPays()` already asks client-side -- `K_RollbackTwoClock() > 0`
-   read from the server's own console rather than a connected client's).
-2. Optionally, a few bytes appended to `serverinfo_pak` carrying the
-   server's configured depth/correction rate, so the client computes a real
-   recommendation instead of a guess -- append-only, and read defensively:
-   checked against how many bytes the packet actually carried, so an older
-   peer missing the field reads as "not advertised", never as garbage from
-   unread memory.
-3. A join-time menu, gated on the bit from (1), offering the delay knob
-   pre-filled from ping + (2).
+**Broken today:** the savegame. The roulette fields of 8.14 are written
+unconditionally and `PACKETVERSION` did not move, so a WORLDWIDE build and a
+stock one pass the version check and then misread each other's savegame by 16
+bytes a player (`WORLDWIDE.md` 8.28, point 1).
 
-**What it must not do:** touch `packetversion`/`version`/`subversion`/
-`application`, or trust a new field's presence without checking the packet
-was actually long enough to carry it. Reading past what arrived is exactly
-the shape of bug this branch has already chased once (the `rollback_twoclock`
-mindelay fix, 2026-09-14, `docs/COMMANDS.md`) -- same lesson, now at the wire
-level instead of a local flag.
+**The work, in order:**
 
-**Depends on:** the client-local delay knob above -- this is what offers it
-to a player, not a substitute for building it.
+1. Roulette fields in local snapshots only -- the savegame is stock grammar
+   again in every mode.
+2. **One server-side meaning of "WORLDWIDE mode".** Today it is two switches on
+   two machines (`rollback_twoclock` on the client, `rollback_correct` on the
+   server) and the host's delay exemption infers it from `g_correctrate`
+   (8.26). Give the server one switch and derive the rest from it.
+3. **Advertise it**: an `SV_PREDICTION` bit in `kartvars`.
+4. **Refuse vanilla clients cleanly on a WORLDWIDE server.** The client has to
+   declare itself at join; a vanilla client, which cannot, gets a readable
+   refusal (`SV_SendRefuse`) instead of a broken session. How to declare without
+   upsetting a vanilla server that receives the same join is to be read in the
+   join path before anything is written.
+5. **Switch the client automatically**: two-clock and applied corrections on
+   against a server advertising the bit, everything off otherwise.
+6. `K_RollbackPays()` asks the bit instead of `g_correctrate`.
+7. Optionally, a few bytes appended to `serverinfo_pak` (depth, correction rate)
+   so the pre-join delay menu can recommend a value -- read against the length
+   that actually arrived, never past it.
 
-**Done when:** a WORLDWIDE client browsing a mixed list of vanilla and
-prediction-enabled servers joins both without incident, and joining the
-second kind offers the delay menu with a recommendation that is not a
-hardcoded default.
+**Must not:** touch the four version fields, or read an appended field without
+checking the packet was long enough to carry it.
+
+**Done when:** a WORLDWIDE client joins a vanilla server and plays delay-based
+without incident; joins a WORLDWIDE server and predicts; a vanilla client is
+refused by a WORLDWIDE server with a readable message; a WORLDWIDE build hosting
+in vanilla mode accepts vanilla clients.
+
+---
+
+## Client-local input delay knob (small, not scheduled)
+
+A dial the **player** sets, kept entirely local: how many tics of buffer to hold
+between their input and what gets simulated, even while two-clock covers the
+round trip. GGPO calls it a local delay frame; it is the honest option for a
+player on a bad line who prefers a stable picture to the last 60 ms.
+
+**It must never reach the wire as `wantdelay`.** That was the original
+`cv_mindelay` bug: the client asked the server to hold its own input, then could
+not predict it. Closed by `K_RollbackPays()` (client side 2026-09-14, host side
+2026-09-20 -- see `COMMANDS.md`, `rollback_twoclock`). Reusing the `cv_mindelay`
+slider is an option, not a given.
+
+**Depends on:** nothing but the two-clock pivot. **Done when:** a player can
+hold N tics of their own buffer under two-clock, and the packet -- not the
+setting -- shows no `wantdelay`.
+
+The pre-join menu that offers this knob with a recommended value is step 7 of
+the compatibility section.
 
 ---
 
 ## Phase D -- Feel
 
-**Needs C**, and it is the phase no log can finish.
+**Needs C**, and no log can finish it.
 
-- **Correction smoothing**: written, currently "maybe ça marche". Measure it against
-  a control in the same session, or drop it.
-- **Remote karts**: the speculation re-predicts them every pass. Whether that reads
-  as smooth or as jitter is a thing only eyes report. If it jitters, Odamex's
-  answer is position history and interpolation (`cv_netsteadyplayers`, `histx/y/z`)
-  and we have nothing equivalent.
-- **The depth**: what lead actually feels best, which then feeds back into B.
-- **Somebody hosts and judges** (added 2026-09-20). Every reactivity verdict
-  this project owns -- *"ça répond tout de suite"*, five races, then again
-  after the architecture changed underneath it -- was given **from the
-  client's seat**. Nobody has ever hosted a listen server and said whether it
-  felt responsive, and until 8.27 the honest expectation was that it did not:
-  the host was paying 170-200 ms that nobody was measuring. That delay is now
-  gone, and the only instrument that can confirm it is a person. ⚠ The
-  unattended bench **cannot** fake this one -- it has no opinion.
+- **Correction smoothing** (`rollback_smooth`): written, never measured ("maybe
+  ça marche"). Measure it against a control in the same session, or drop it.
+- **Remote karts**: re-predicted every pass. Smooth or jittery is for eyes to
+  say. If it jitters, Odamex's answer is position history and interpolation
+  (`cv_netsteadyplayers`, `histx/y/z`), which this branch does not have.
+- **The depth**: which lead feels best, which feeds back into B.
+- **Somebody hosts and judges.** Every reactivity verdict so far was given from
+  the client's seat, and the host was paying 170-200 ms until 2026-09-20. The
+  bench cannot stand in for this.
 
-**Done when:** a person prefers it to the control, on three races, at a latency
-that is stated rather than assumed -- **and at least one of those judgements is
-made while hosting.**
+**Done when:** a person prefers it to the control on three races, at a stated
+latency, **at least one of them while hosting**.
 
 ---
 
 ## Phase E -- Capability check
 
 **Needs B and D.** A short calibration run in the menus that measures restore and
-replay cost on the player's own machine and settings, and answers the only question
-a player has: can this computer run it without stuttering. It should propose a
-depth, not print microseconds.
+replay cost on the player's machine and answers the only question a player has:
+can this computer run it without stuttering. It proposes a depth; it does not
+print microseconds.
 
-**Done when:** "it stutters for me" arrives as a number and a recommended setting
-instead of a sentence.
+**Done when:** "it stutters for me" arrives as a number and a recommended
+setting.
 
 ---
 
@@ -313,40 +249,53 @@ instead of a sentence.
 
 **Needs all of the above.** What is missing is not code:
 
-- a build people can download (CI already produces one per commit)
-- a short list of what to report, in the language a player uses
-- a way to collect logs without asking for file paths
-- a statement of what is known broken, so reports are about the rest
+- a downloadable build (the CI already makes one per commit);
+- a short list of what to report, in a player's words;
+- a way to collect logs without asking for file paths;
+- a statement of what is known broken, so reports are about the rest.
 
 **Done when:** somebody who is not Gibax has played it and reported something
 useful.
 
 ---
 
+## Backlog -- latent defects, not blocking
+
+- `botvars.diffincrease` is `int16_t` but archived with `WRITEUINT8`/`READUINT8`
+  (`p_saveg.cpp:867`, `:1635`). Grand Prix only, between rounds.
+- `old_z` is never restored, and `K_HandleLapIncrement` reads `old_x`/`old_y` as
+  simulation after a restore (`WORLDWIDE.md` 8.3).
+- Out-of-bounds read in the bot-overwrite search: the array is indexed before the
+  bound is checked (`d_clisrv.c:4120`). Upstream code.
+- On Windows `latest-log.txt` ignores `-home`/`-logdir`, so two instances in one
+  folder share a log (`ROLLBACK.md`, two-instance harness). Upstream code.
+- **Never sent upstream**: the `onconveyor` read order, the `followerskin` sign,
+  `MobjIsArchived`, the roulette list that shrinks on load (`ROLLBACK.md`,
+  wire-format audit), the unsynchronised die in `rotate3d` (`ROLLBACK.md`), and
+  the two items above.
+- The harness is not versioned (see the ground rules).
+
+---
+
 ## Not on the path
 
-**The wire change.** Breaking compatibility was authorised, and it was going to buy
-labelled inputs plus a server-side input buffer -- the half NetPlus marks "not yet
-implemented". **The pivot already removed the problem it was for.** Self-
-misprediction, the depth setpoint, the offset histogram, detect and correct, the
-rate limiter that never deferred once: all of that existed because a prediction was
-carried forward and had to be right, and a speculation rebuilt every pass carries
-nothing.
+**Labelled inputs with a server-side input buffer.** Planned when the old loop
+carried its prediction forward; the two-clock pivot removed the problem it was
+for. Under the compatibility policy a WORLDWIDE server may change the wire
+between WORLDWIDE peers, so this is no longer a compatibility question -- it is
+a cost with nothing to buy. Reopen it only if Phase D shows remote karts need
+real state rather than prediction.
 
-Keep the card for one thing only: if Phase D shows remote karts need real state
-rather than prediction, that is a wire change and it is worth spending on. Decide
-it with eyes on a screen, not before.
+**State streaming à la Odamex.** A different netcode, not a bigger version of
+this one: per-entity deltas plus relevance, on the scale of everything done so
+far. Only worth revisiting if D fails in a way B cannot pay for.
 
-**State streaming à la Odamex.** A different netcode, not a bigger version of this
-one, and it gives up talking to stock servers. Only worth revisiting if D fails in
-a way B cannot pay for.
+## Risks
 
-## Risks, named
-
-- **Phase A may not be one field.** The statement it rests on is sound, but "state
-  the archive does not carry" is a family, not a name.
-- **Phase B may not have an answer at sixteen karts** on ordinary hardware. That is
-  what Phase E exists to say out loud rather than hide.
-- **Every measurement before today was n=1.** The unattended bench fixes that going
-  forward; it does not retroactively fix the numbers already in the journal.
-- **A person is still required for D**, and nothing about the bench changes that.
+- **Phase A may not be one field**: "state the archive does not carry" is a
+  family, and the live lead may be an instrument artefact.
+- **Phase B may have no answer at sixteen karts** on ordinary hardware. Phase E
+  exists to say so out loud.
+- **Most numbers in the journal are n=1.** The bench fixes that going forward, not
+  retroactively.
+- **A person is required for D**, and for every judgement of feel.

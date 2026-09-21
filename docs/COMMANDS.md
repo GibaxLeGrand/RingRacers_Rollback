@@ -3,9 +3,17 @@
 Liste stable des commandes console ajoutées par cette branche (`k_rollback.c`,
 sauf mention contraire). Toutes sont enregistrées comme **commandes de debug**
 (`COM_AddDebugCommand`), donc visibles dans le menu pause du jeu sans avoir à
-les taper. Contrairement à `ROLLBACK.md` (journal daté, chronologique) et
-`WORLDWIDE.md` (audit), ce fichier ne raconte pas d'histoire : il décrit ce que
-chaque commande fait, aujourd'hui, et se met à jour au fil de l'eau.
+les taper. Contrairement à `ROLLBACK.md` (journal clos) et `WORLDWIDE.md`
+(état courant + journal de mesures), ce fichier ne raconte pas d'histoire : il
+décrit ce que chaque commande fait, aujourd'hui, et se met à jour au fil de
+l'eau. Point d'entrée de toute la doc : [README.md](README.md).
+
+**À jour au 2026-09-21** — 21 commandes, vérifiées contre
+`K_RegisterRollbackStuff` dans `k_rollback.c`. Deux sont **obsolètes**
+(`rollback_loop`, `rollback_pace`) et restent seulement pour comparaison.
+
+⚠ Rappel : **aucune de ces commandes ne se lance dans une partie sans l'accord
+explicite du porteur du projet**, à chaque fois (voir `README.md`, règle 1).
 
 Deux familles bien distinctes :
 
@@ -120,6 +128,11 @@ exécuté, combien contredisaient ce qui avait été utilisé, combien sont
 arrivées trop tard pour l'anneau — et, s'il y en a, le plus vieux tic encore
 en attente d'un rejeu.
 
+⚠ Sous `rollback_twoclock`, l'horloge confirmée ne court jamais en avance :
+ce compteur ne peut alors voir que le **renvoi tardif** d'un tic déjà joué, et
+lit 0 par construction sur un lien propre (`WORLDWIDE.md` 8.17). Un 0 ne prouve
+rien dans ce mode.
+
 ### `rollback_inputlog [0|1]`
 **À lancer sur les deux machines.** Compte les ticcmds réellement consommés
 par un tic confirmé et en tient un hash cumulatif ; la commande seule affiche
@@ -166,7 +179,11 @@ ligne apparaît dans `latest-log.txt` de la machine concernée.
 
 ## Netcode en direct — changent le comportement réseau réel
 
-### `rollback_loop [tics]`
+### `rollback_loop [tics]` — ❌ OBSOLÈTE
+Remplacée par `rollback_twoclock` le 2026-09-10 ; gardée pour comparaison
+seulement. Elle avance l'horloge confirmée sur des suppositions, ce qui se bat
+avec le contrôle de cohérence du jeu (`AUDIT_20260909.md`).
+
 **L'ancienne boucle de prédiction** (avant le pivot two-clock). Coupée par
 défaut : une build qui l'embarque joue exactement comme une build stock tant
 que personne ne la demande. La valeur donnée est le nombre de tics que le
@@ -184,7 +201,9 @@ client peut courir en avance sur le serveur (plafonné par
 - Retire le délai d'entrée fixe (voir encadré sous `rollback_twoclock`) tant
   qu'il est actif — via `K_RollbackPays()`, commit `2026-09-14`.
 
-### `rollback_pace [0|1]`
+### `rollback_pace [0|1]` — ❌ OBSOLÈTE
+Ne sert qu'avec `rollback_loop`, elle-même obsolète.
+
 Limite la boucle (`rollback_loop`) à **un seul tic prédit par passe**, au lieu
 d'en prédire autant que la profondeur le permet. Coupé par défaut, et
 volontairement séparé de `rollback_loop` : les compteurs de `rollback_loop` se
@@ -225,19 +244,29 @@ autoritaire elle-même.
 > `d_clisrv.c` où le délai était calculé (branche serveur *et* branche
 > client de `UpdatePingTable`).
 >
+> **⚠ Complété le 2026-09-20 : côté hôte, ce correctif ne faisait rien.** Sur
+> un serveur d'écoute, `K_RollbackTwoClock()` renvoie 0 (`client` vaut
+> `!server`), et l'hôte n'active de toute façon jamais `rollback_twoclock`,
+> qui est un réglage client. L'hôte continuait donc à se facturer 6 à 7 tics,
+> soit 170-200 ms, sur sa propre entrée. `K_RollbackPays()` interroge
+> maintenant aussi `K_RollbackCorrectingHere()` (`rollback_correct` actif sur
+> cette machine) : c'est un **proxy**, en attendant que le serveur annonce son
+> mode WORLDWIDE (`ROADMAP.md`, section *Compatibility*). Mesuré : `target_lag`
+> de l'hôte reste à 0 toute la course (`WORLDWIDE.md` 8.24-8.27).
+>
 > **Conséquence concrète** : le réglage "Minimum Input Delay" du profil
 > joueur (`cv_mindelay`, menu accessibilité — jusqu'ici décrit comme
 > "Practice for online play!", donc pensé pour être calibré hors-ligne
 > puisqu'en ligne le délai réseau s'imposait de toute façon par-dessus)
 > **s'efface réellement en ligne dès que `rollback_twoclock` tourne** :
-> `target_lag` retombe à `0` des deux côtés au lieu de rester bloqué au
-> plancher `cv_mindelay.value`. Ce n'est **pas** un nouveau réglage qui
+> `target_lag` retombe à `0` côté client (et côté hôte depuis le complément
+> du 2026-09-20) au lieu de rester bloqué au plancher `cv_mindelay.value`. Ce n'est **pas** un nouveau réglage qui
 > apparaîtrait en ligne — c'est la suppression d'un double-comptage : avant
 > ce correctif, le délai fixe restait facturé par-dessus la spéculation,
 > annulant une partie du bénéfice que le pivot est censé apporter.
 >
-> Reste **hors scope de ce correctif**, noté par `WORLDWIDE.md` section 7
-> comme un item de la Phase C : un vrai bouton de délai *local* façon GGPO
+> Reste **hors scope de ce correctif**, noté dans `ROADMAP.md` (section
+> *Client-local input delay knob*) : un vrai bouton de délai *local* façon GGPO
 > (le joueur choisit de garder un peu de tampon même avec la prédiction
 > active, sans que ça ne redevienne un `wantdelay` envoyé au serveur — c'est
 > précisément le bug que ce correctif referme). Si l'idée est de recycler le
@@ -277,9 +306,18 @@ disparu (ça, seul un humain peut le dire).
 
 ### `rollback_correct [tics] [suppress]`
 **Côté serveur.** Demande au serveur d'envoyer à chaque client une correction
-d'état légère (38 octets par kart : position, vitesse, angle, hitlag,
-rings, item) toutes les `tics` tics. `0` coupe (comportement stock : seul le
+d'état légère toutes les `tics` tics. `0` coupe (comportement stock : seul le
 renvoi complet de partie corrige).
+
+Le paquet (`statekart_pak`, `d_clisrv.h`) fait **56 octets par kart**, soit
+896 pour une grille de 16 :
+- **38 octets appliqués** : position, vitesse, angle, hitlag, rings, objet ;
+- **18 octets de diagnostic**, mesurés et affichés mais **jamais appliqués** :
+  `spinouttimer`, `nocontrol`, `flashing`, `spinouttype`, `tumbleBounces`,
+  `wipeoutslow`, `justbumped`, `offroad`, `speed` (`WORLDWIDE.md` 8.7).
+
+Sur un serveur d'écoute, activer cette commande exempte aussi l'hôte du délai
+galant (voir l'encadré sous `rollback_twoclock`).
 
 - 2ᵉ argument (`suppress`, défaut `1` si `tics` est donné) : distingue
   **mesurer** de **remplacer**.
@@ -287,8 +325,9 @@ renvoi complet de partie corrige).
     complet stock. C'est le témoin : le nombre de resyncs reste comparable à
     tout ce qui a été mesuré avant l'existence du canal.
   - `rollback_correct N` (ou `N 1`) — les corrections **remplacent** le
-    renvoi complet. C'est le changement réel, et le point où la
-    compatibilité avec un serveur stock est abandonnée.
+    renvoi complet. C'est le changement réel : c'est ce que fait un serveur
+    en mode WORLDWIDE. Côté compatibilité, **c'est le serveur qui décide**
+    (décision du 2026-09-21, `ROADMAP.md`, section *Compatibility*).
 
 ### `rollback_drift [0|1]`
 **Côté client.** Rapporte l'écart mesuré entre le monde confirmé de ce
@@ -312,6 +351,17 @@ lancer ces deux commandes d'abord si rien n'a encore été mesuré.
 
 ## Pense-bête d'usage
 
+- **Réglage d'une partie WORLDWIDE** (tel que les scénarios `correct` de
+  `playtest.sh` le font, `WORLDWIDE.md` 8.4) :
+  - serveur : `rollback_correct 4` ;
+  - client : `rollback_twoclock 4` et `rollback_drift 1` (c'est ce `1` qui
+    applique les corrections ; sans lui, le client les mesure seulement) ;
+  - pour simuler 171 ms de latence en local : `rollback_lag 6` côté client.
+  
+  Le témoin se lance avec `rollback_correct 4 0` côté serveur (le renvoi
+  complet reste actif). Aujourd'hui, ces réglages se font à la main sur chaque
+  machine : le passage automatique du client en mode WORLDWIDE selon le
+  serveur est à construire (`ROADMAP.md`, section *Compatibility*).
 - Pour un diagnostic solo sans réseau : `rollback_test`, puis `rollback_resim`,
   puis si les deux sont propres mais qu'une vraie partie dérive quand même,
   `rollback_leak` (voir aussi `soak_leak.cfg`, qui lance `rollback_soak
@@ -323,5 +373,5 @@ lancer ces deux commandes d'abord si rien n'a encore été mesuré.
   scénario de mesure change la partie qui suit (effet de bord mesuré). Garder
   les scénarios de mesure et les commandes de diagnostic séparés.
 - `rollback_loop` et `rollback_twoclock` ne tournent jamais ensemble ; le
-  second a remplacé le premier (voir `ROLLBACK.md`, section two-clock) mais
-  la commande existe encore pour comparaison.
+  second a remplacé le premier (voir la fin de `ROLLBACK.md`, *The pivot
+  landed*) et `rollback_loop` est obsolète.

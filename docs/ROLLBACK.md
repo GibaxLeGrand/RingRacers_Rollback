@@ -1,11 +1,19 @@
 # Rollback netcode — state, measurements and plan
 
-> ⚠ **This file is a journal, and its early sections are out of date on
-> purpose. For the current state, read `WORLDWIDE.md` first** — it carries
-> everything from the two-clock pivot onward, and its last section is the
-> newest thing in the project. Then `ROADMAP.md` for what is left,
-> `COMMANDS.md` for what each console command does, and `AUDIT_20260909.md`
-> for the comparison with SRB2 NetPlus and Odamex.
+> ❌ **CLOSED JOURNAL -- obsolete as a description of the project.** It covers
+> 2026-09-08 to 2026-09-10: the snapshot ring, determinism, and the old
+> prediction loop (`rollback_loop`), which the two-clock pivot replaced. It is
+> no longer updated. Its phases 1 to 7 are retired, and its "where this
+> stands" sections describe a project that no longer exists.
+>
+> **Start at `README.md`**, then the *Current state* block of `WORLDWIDE.md`
+> (everything from the pivot onward), `ROADMAP.md` for what is left,
+> `COMMANDS.md` for each console command, and `AUDIT_20260909.md` for the
+> comparison with SRB2 NetPlus and Odamex.
+>
+> What still holds here: the **traps** section, the determinism fixes and the
+> measurements, each valid for the build and configuration it names.
+> Obsolete sections are marked ⚠ at their heading.
 >
 > Kept unedited below the line, because a journal that gets rewritten to match
 > today's understanding stops being evidence of how the understanding was
@@ -36,6 +44,9 @@ What exists:
   "Changes to shared code" below.
 
 ## The tools
+
+> ⚠ **Obsolete: five commands out of today's 21.** Current reference:
+> `COMMANDS.md`.
 
 All are debug commands, so they also appear in the pause menu's command list.
 
@@ -355,6 +366,9 @@ Three techniques worth keeping:
 
 ## Traps that have cost time
 
+> ✅ **Still valid** as of 2026-09-21: none of these has been contradicted
+> since. Worth reading before any run.
+
 - `map <name>` **forces a Grand Prix**, whose grid is hardcoded to eight karts.
   A Match Race needs `map <name> -match`, and `maxplayers` only means anything
   in the latter.
@@ -388,6 +402,13 @@ Three techniques worth keeping:
 
 ## Changes to shared code
 
+> ⚠ **Obsolete.** This lists the shared-code changes as of 2026-09-09. Since
+> then the two-clock loop, the correction channel and the delay policy have
+> changed `d_clisrv.c` far more, and the closing claim -- "the archive format
+> does not change" -- stopped being true with the roulette fields of
+> `WORLDWIDE.md` 8.14 (see 8.28). Authoritative list:
+> `git diff --stat 05cca02c9..HEAD -- src/`.
+
 Everything else is in `k_rollback.c/h`, which nothing calls unless a command is
 typed.
 
@@ -403,6 +424,9 @@ The archive format does not change, only which diff bits are set, so a build
 with these changes stays compatible with a stock client or server.
 
 ## Plan
+
+> ⚠ **Retired on 2026-09-10.** Phases 1 to 7 assumed an authoritative clock
+> running ahead. Replaced by phases A to F in `ROADMAP.md`.
 
 **1. Finish the restore breakdown.** `P_RelinkPointers` is 3.7 ms of 5.6.
 Find out what it spends it on before deciding whether to optimise it.
@@ -440,6 +464,10 @@ commit; what is missing is a short list of what to report and a way to collect
 logs.
 
 ## Where to pick this up
+
+> ⚠ **Obsolete as a resume point**: it describes 2026-09-09. Resume from
+> `README.md`. The binary-verification recipe under *Resuming this,
+> mechanically* still holds and is repeated in `README.md`.
 
 Measured on one configuration -- RR_NorthernDistrict, Match Race, sixteen karts,
 one human and fifteen bots. **Idle: 2 failures in 500. Driving: 2 in 500.** Both

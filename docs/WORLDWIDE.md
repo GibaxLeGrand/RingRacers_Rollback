@@ -5,9 +5,77 @@ this branch and against stock Ring Racers. Everything below is either read from
 source (with a `file:line`) or measured (labelled as such). Where the statement
 and the code disagree, the code is quoted.
 
-Companion documents: `ROLLBACK.md` is the journal, `AUDIT_20260909.md` is the
-comparison with SRB2 NetPlus and Odamex, `ROADMAP.md` is the phase list this file
-revises.
+Companion documents: `README.md` is the entry point (working rules, decisions,
+environment), `ROADMAP.md` is what is left, `COMMANDS.md` is the command
+reference, `ROLLBACK.md` is the closed journal from before the pivot, and
+`AUDIT_20260909.md` is the comparison with SRB2 NetPlus and Odamex.
+
+## Current state (2026-09-21) -- read this first
+
+This block is the only part of this file that is rewritten to stay current.
+Everything after it is a dated journal: when a later section overturns an
+earlier one, the earlier one gets a ⚠ pointing forward, and is not rewritten.
+
+**Architecture.** Client-side prediction with server reconciliation -- not GGPO
+rollback. Two clocks: `gametic` runs only the tics the server has confirmed, in
+unmodified lockstep; the speculation runs `rollback_twoclock N` tics above it
+from a snapshot and is rebuilt every pass. A light correction channel
+(`PT_STATECORRECTION`, server to client every `rollback_correct N` tics) puts
+each kart back where the server has it, in place of the stock full-state resend.
+Every piece is behind a switch that is off by default.
+
+**Measured and holding.**
+
+| | |
+|---|---|
+| input lag, client's seat | gone -- "ça répond tout de suite", five races, and again after the pivot |
+| snapshot determinism | 12/12 replays byte-identical; 0/522 leak checks (8.15); 0/330 resim checks (8.9) |
+| full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
+| residual drift | mean 0.25 to 0.86 units, worst 36 to 59 -- a kart is about 40 wide |
+| cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
+| listen-server host's input delay | 170-200 ms, now **0** (8.27) |
+
+**Open, in priority order.**
+
+1. **Vanilla compatibility** against the policy below: broken today by the
+   roulette fields added in 8.14 (8.28, point 1).
+2. **The drift's cause** (Phase A). Excluded: the archive, the restore,
+   determinism, the synchronised RNG, the damage path, the confirmed clock
+   running on a guess, late resends. The live lead is the gap between 8.19 and
+   8.20 (8.28, point 2).
+3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
+4. **The relabel histogram's `+2` cluster** (8.27).
+5. **Never run under prediction:** a person playing on the host; a full race;
+   Battle, Grand Prix, Encore; anything longer than a scripted race.
+
+**Compatibility policy, decided by Alex on 2026-09-21: the server decides.** A
+server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
+clients only. A vanilla server runs the stock delay-based netcode, and a
+WORLDWIDE client that joins it behaves exactly as a vanilla client. This
+supersedes 8.4 and 8.14 wherever they say stock compatibility is "given up" or
+"abandoned".
+
+⚠ **The test harness is not in this repository.** `playtest.sh` and the `*.cfg`
+scenarios every measurement below relies on live in the game folder of the
+original machine (8.21). **No launch without Alex's explicit go-ahead, each
+time.**
+
+**Which sections below still hold.**
+
+| section | status |
+|---|---|
+| §0, §2, §3, §4 | valid as analysis |
+| §1 | the table is as of 2026-09-10: the server broadcast is now built and measured (8.4-8.6); the client-local delay knob is still missing |
+| §5 | superseded the same day by the light correction channel (marked inline) |
+| §6 | the "bots only" reading is overturned by 8.1 |
+| §7 | superseded by `ROADMAP.md`, rewritten on 2026-09-21 |
+| 8.4 | the packet is now 56 bytes a kart: 38 applied, 18 diagnostic (8.7) |
+| 8.8 | its mechanism ("the confirmed clock runs a guessed tic") is refuted in 8.9 and 8.17 |
+| 8.14 | "vanilla compatibility already abandoned" is superseded by the policy; see 8.28 |
+| 8.18 | its candidate (the server guessing a remote client's input) is refuted in 8.20 |
+| 8.19 | "this is the mechanism" is withdrawn by 8.20, and 8.20 has a gap (8.28) |
+| 8.23 | its reading of the client exemption is retracted in 8.25 (marked inline) |
+| 8.25 | its fix was a no-op, explained in 8.26 and replaced in 8.26-8.27 |
 
 ## 0. The rename, and what it actually commits to
 
@@ -26,6 +94,10 @@ instead of running it. **Any redesign that starts reimplementing the simulation
 loses that, and it is not recoverable cheaply.**
 
 ## 1. The design statement, claim by claim
+
+> ⚠ **Status as of 2026-09-10.** Since then the server broadcast has been
+> built *and measured* (8.4-8.6), and the "correct the client" row is covered
+> by the correction channel. The client-local delay knob is still missing.
 
 | the statement says | the code says | verdict |
 |---|---|---|
@@ -213,6 +285,9 @@ are still a project and still unbuilt.
 
 ## 6. What this reading changes about the desync
 
+> ⚠ **Overturned by 8.1.** A driven race showed the human diverging too:
+> "bots" was never the category. The exclusions below still stand.
+
 The open statement is: *a speculated tic modifies state the archive does not
 carry, and that state reaches a bot's simulation.* Evidence: at tic 1908 only
 `p2` and `p4` -- both bots -- differ, by 16 and 1052 units in x and y, while both
@@ -293,6 +368,9 @@ instruments have all come back clean.** So the second half was enumerated today
 rather than instrumented again.
 
 ## 7. Phases to alpha, revised for Worldwide
+
+> ⚠ **Superseded by `ROADMAP.md`**, rewritten on 2026-09-21, which folds in
+> everything below and the later revisions.
 
 `ROADMAP.md` holds the phases with their exit criteria. This statement changes
 three of them and adds one.
@@ -385,6 +463,12 @@ still open, and the next instrument is in 8.4 rather than in another field
 comparison.**
 
 ### 8.4 The light correction channel, as built
+
+> ⚠ **Two things have moved since.** The packet now carries nine diagnostic
+> fields on top of the kinematics (8.7): **56 bytes a kart**, 896 for a grid,
+> of which only the first 38 are applied. And the "stock-server compatibility
+> is given up" wording below is superseded by the server-decides policy (see
+> *Current state* and 8.28).
 
 `PT_STATECORRECTION`, server to client, unreliable, sent every N tics:
 
@@ -623,6 +707,10 @@ error. **It is a phase difference: the same trajectory, sampled at different
 times.** Sub-unit drift cannot move a collision by six tics -- at eight units a
 tic that is fifty units of travel -- but a phase offset of the lag does it
 exactly.
+
+> ⚠ **Refuted in 8.9 and again in 8.17**: in two-clock mode the confirmed
+> clock never runs a guessed tic (`rollback_loop`: 6280 predicted tics = 1570
+> passes x 4, all speculative). Kept as the reasoning that was tested.
 
 **The mechanism, read out of the code rather than guessed:**
 
@@ -900,6 +988,11 @@ immediately after `dist`. Additive and symmetric -- vanilla wire compatibility
 was already abandoned for this branch, and both ends of every test run the
 same CI build, so there is no version-skew risk to weigh.
 
+> ⚠ **Superseded by the compatibility policy of 2026-09-21** (the server
+> decides). Written unconditionally, these four fields make this build misread
+> a vanilla server's savegame, and a vanilla client misread ours. See 8.28,
+> point 1: they belong in local snapshots only.
+
 Two separate things remain open after this: whether `turbineheight`'s
 divergence is a second real leak or the same family of gap under a different
 name, and whether fixing the roulette archive gap alone drops the leak-check's
@@ -1076,6 +1169,9 @@ shows (the server's number is whatever last arrived, always a little behind
 the client's live count) rather than a second, separate effect -- the offset
 reasoning already established for the damage tally applies here too.
 
+> ⚠ **Refuted in 8.20**: in two-clock mode `runto` stays at `neededtic` on
+> both machines, so the server never guesses a remote client's input.
+
 **A candidate mechanism, found by reading the guard that stops the client
 from predicting.** `d_clisrv.c`'s `netticbuffer` reserve -- the thing that
 holds `gametic` below `neededtic` so the client's confirmed clock never
@@ -1162,6 +1258,10 @@ has already moved on again (tic 2328). **The server is not disagreeing about
 what was pressed; it is running behind on finding out**, and repeating the
 last known input in the meantime.
 
+> ⚠ **The conclusion of this paragraph is withdrawn by 8.20** (the lead it
+> rests on is refuted there). The input log above stands as data: it is the
+> live lead for Phase A, and 8.28 point 2 explains why 8.20 does not close it.
+
 **Read together with 8.18's `client &&`-gated netticbuffer finding, this is
 the mechanism, not a guess about it anymore.** The client never predicts its
 own confirmed clock (proven three times over). Nothing stops the SERVER doing
@@ -1241,6 +1341,12 @@ repeated value would mean the two clocks simply count from different zeroes
 -- harmless. A spread means the label itself moves from packet to packet,
 which is the discriminator this was built to measure. Added to
 `playserver_correct.cfg`'s end-of-race report. Not yet run.
+
+> ⚠ **A gap in this reasoning, found on 2026-09-21 (8.28, point 2).**
+> Relabelling decides which tic the server files an input under, but the
+> client's confirmed clock runs the server's filing, not its own. It may
+> explain the histogram of 8.22-8.27; on its own it does not explain two
+> confirmed worlds running different inputs on the same tic.
 
 ### 8.21 A harness bug: the server's closing report was scheduled to never run
 
@@ -1475,6 +1581,10 @@ something this instrument structurally cannot say, because both end at 0.
 Filed with the project's other instrument-misreadings: an oracle whose two
 outcomes are the same value distinguishes nothing.
 
+> ⚠ **This first version of the fix was a no-op** -- the host never sets
+> `rollback_twoclock`. Explained in 8.26, replaced by
+> `K_RollbackCorrectingHere()`, measured working in 8.27.
+
 **The fix, in `K_RollbackPays()`.** The predicate asked
 `K_RollbackTwoClock() > 0`, which is gated on `client` and so answers *"is
 speculation running here"*. The delay policy needs *"is this machine running
@@ -1613,3 +1723,67 @@ responsive. Every reactivity judgement in this document -- *"ça répond tout
 de suite"*, five races, twice -- was made from the client's seat. **This one
 needs somebody at the controls, on the host, and it is the first entry in
 "What needs somebody at the controls" that the bench cannot fake.**
+
+### 8.28 Audit, 2026-09-21: two gaps found by reading the code against this file
+
+Read, not measured. Nothing was launched.
+
+**1. The roulette fields of 8.14 break the compatibility policy.** `baseDist`,
+`firstDist`, `secondDist` and `secondToFirst` are written and read
+unconditionally in `P_NetArchivePlayers`/`P_NetUnArchivePlayers`
+(`p_saveg.cpp:927-930` and `:1721-1724`). So they are part of the netgame
+savegame a server sends to a joining client, not only of local snapshots.
+`PACKETVERSION` is unchanged (`d_clisrv.h:39`), so the version checks
+(`d_clisrv.c:1681`, `:4547`) still pass between this build and a stock one --
+and then the savegame is misread by 16 bytes a player, for every player, from
+the roulette onward.
+
+Against the policy decided the same day (the server decides):
+
+- a WORLDWIDE client joining a vanilla server reads 16 bytes a player that are
+  not there -- **the case the policy promises works**;
+- a vanilla client joining a WORLDWIDE server reads a stream 16 bytes a player
+  too long, where the policy wants it refused cleanly;
+- a WORLDWIDE build hosting in vanilla mode sends the longer stream to vanilla
+  clients.
+
+The smallest change that satisfies all three: write and read the four fields
+**only in a local snapshot**, gated like `tilt` and `rollangle`. The rollback
+keeps what 8.14-8.15 measured, and the wire goes back to stock grammar in every
+mode. What it gives up is a joining client receiving those four values, which a
+stock client never received either. The clean refusal of vanilla clients by a
+WORLDWIDE server is separate work (`ROADMAP.md`, *Compatibility*). **Not done;
+waiting for a go-ahead.**
+
+`PT_STATECORRECTION` is not a problem: it is appended at the end of the packet
+enum (`d_clisrv.h:144`), so no stock packet number moved.
+
+**2. A gap between 8.19 and 8.20.** 8.19's input log shows the client's
+confirmed world running a different `turning` than the server's for the human
+kart, on the same tic (tic 2309: `0` against `-800`). 8.20 attributes that to
+the server relabelling an arriving ticcmd from `realstart` to `faketic`.
+
+But relabelling decides which tic the *server* files an input under, and the
+client does not keep its own filing. Every tic the client's confirmed clock runs
+was first overwritten with the server's ticcmds for every slot:
+`D_Clearticcmd(i)` then `G_ScpyTiccmd` over `numslots` (`d_clisrv.c:6006-6013`),
+and `neededtic` only advances through that branch. Both confirmed clocks should
+therefore run the server's filing, relabelled or not, and fold the same tic
+number into the hash.
+
+So either the two logs are not measuring the same thing, or an input reaches a
+confirmed tic on the client by a path this file has not found. Relabelling may
+still explain the `+N` histogram; on this reading it does not explain two
+confirmed worlds disagreeing. **This is the live lead for Phase A.**
+
+The instrument that settles it records three values per tic for the human
+kart: on the client, `netcmds[T][slot]` when the `PT_SERVERTICS` copy writes
+it, and again immediately before `G_Ticker` reads it; on the server, the same
+slot when tic T is packed for sending. The first of the three to disagree names
+the path. It needs a build and one driven race -- a launch, so asked for first.
+
+**Also found while reading, and moved to `ROADMAP.md` (backlog):**
+`botvars.diffincrease` archived as a byte (found in §6, still open); the out-of-bounds read
+in the bot-overwrite search (`d_clisrv.c:4120`, upstream); and the harness not
+being versioned, which blocks every measurement in this file on any machine
+other than the original one.

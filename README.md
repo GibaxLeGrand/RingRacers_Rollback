@@ -1,5 +1,10 @@
 # Dr. Robotnik's Ring Racers
 
+> **This fork: Ring Racers Worldwide** (branch `rollback-netcode`) adds a
+> client-side prediction netcode to Ring Racers. Its documentation starts at
+> [docs/README.md](docs/README.md). The rest of this file is the upstream
+> README, unchanged.
+
 <p align="center">
   <a href="https://www.kartkrew.org">
     <img src="docs/logo.png" width="404" style="image-rendering:pixelated" alt="Dr. Robotnik's Ring Racers logo">
