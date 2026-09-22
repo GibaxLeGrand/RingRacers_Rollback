@@ -12,7 +12,7 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-21** — 22 commands, checked against
+**Up to date as of 2026-09-22** — 23 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`. Two are **obsolete**
 (`rollback_loop`, `rollback_pace`) and are kept only for comparison.
 
@@ -277,12 +277,14 @@ of `neededtic`, and the speculation writes your input *of the moment* over the
 one the server had assigned to that tic. It also recomputes **every bot's**
 input on that tic from this machine's world, because a bot's ticcmd never
 carries `TICCMD_RECEIVED`. The tic is then played as confirmed with the wrong
-inputs (`WORLDWIDE.md` 8.31, 8.33) -- confirmed at race scale, but **not** the
-drift's source: mean drift rose in a driven race regardless of the switch
-(8.35). Kept on anyway: it is what the design statement asks for on its own,
-and costs nothing felt -- what renders is the speculation above `neededtic`,
-which the switch never touches, so a driver reported no difference between it
-off and on in the same race (8.36).
+inputs (`WORLDWIDE.md` 8.31, 8.33) -- confirmed at race scale: 64-85% of the
+local kart's confirmed tics without the switch, 0-0.1% with it (8.35, 8.37).
+Whether it is the drift's source is **not settled**: the two races read
+opposite ways, and their off/on/off protocol cannot tell, because an on window
+inherits what the off window before it put out of step (8.38). The race that
+can is one with the switch on throughout. Costs nothing felt -- what renders is
+the speculation above `neededtic`, which the switch never touches, so a driver
+reported no difference between it off and on (8.36).
 
 - No argument: the state, and two counters that run **even when off** — how
   many local inputs were written over an already-received tic, and how many
@@ -294,6 +296,27 @@ off and on in the same race (8.36).
   harness has a script for this).
 - Changing the value resets the counters, so the same race can be read off
   then on.
+
+### `rollback_history [maxdepth]`
+**Client side, two-clock mode. Off by default** (`0`). With a depth above 0,
+the speculation replays **your own inputs still in flight** -- sent, but not
+yet applied by the server -- one per tic, in the order you made them, instead
+of repeating your newest input over every speculated tic (`WORLDWIDE.md` 8.39).
+It finds which input the server applied on the newest tic it has sent by the
+leveltime stamp every ticcmd carries, and replays everything you sent after
+it. The speculation then goes as deep as your newest input needs -- never
+below `rollback_twoclock`, never above `maxdepth` (capped at 34).
+
+- Changes only what is **drawn**, never the confirmed world: the drift and the
+  correction channel should not move.
+- About doubles the speculation's cost at 171 ms (4 tics become about 8).
+- Needs `rollback_cleancmds` on (the default); with it off, it does nothing
+  and says so.
+- No argument: the state, the share of passes that found the applied input,
+  the inputs in flight on average (the round trip, in tics), and the average
+  depth, with how often the cap cut it short.
+- Setting it resets those counts, so the same race can be read off then on.
+- Suggested value: `12`.
 
 ### `rollback_nullspec [0|1]`
 Saves and restores the frontier on **every pass** without speculating
@@ -373,8 +396,16 @@ nothing has been measured yet.
   `playtest.sh` do, `WORLDWIDE.md` 8.4):
   - server: `rollback_correct 4`;
   - client: `rollback_twoclock 4` and `rollback_drift 1` (it is that `1` that
-    applies the corrections; without it, the client only measures them);
+    applies the corrections; without it, the client only measures them).
+    `rollback_cleancmds` is already on by default. Optionally
+    `rollback_history 12`, to draw your inputs still in flight (not yet judged
+    in a race);
   - to simulate 171 ms of latency locally: `rollback_lag 6` on the client.
+- **Measuring the switches**: an off/on/off race cannot measure a switch that
+  changes the confirmed world, since an on window inherits what the off window
+  put out of step (`WORLDWIDE.md` 8.38) -- give each setting its own race. It
+  is fine for a switch that only changes what is drawn, like
+  `rollback_history`.
 
   The control is run with `rollback_correct 4 0` on the server (the full
   resend stays active). Today these settings are made by hand on each

@@ -13,7 +13,7 @@ rest lives in the private notes only -- `README.md`, the entry point (working
 rules, decisions, environment); `ROLLBACK.md`, the closed journal from before
 the pivot; and `AUDIT_20260909.md`, the comparison with SRB2 NetPlus and Odamex.
 
-## Current state (2026-09-21) -- read this first
+## Current state (2026-09-22) -- read this first
 
 This block is the only part of this file that is rewritten to stay current.
 Everything after it is a dated journal: when a later section overturns an
@@ -25,52 +25,54 @@ unmodified lockstep; the speculation runs `rollback_twoclock N` tics above it
 from a snapshot and is rebuilt every pass. A light correction channel
 (`PT_STATECORRECTION`, server to client every `rollback_correct N` tics) puts
 each kart back where the server has it, in place of the stock full-state resend.
-Every piece is behind a switch that is off by default.
+Every piece is behind a switch that is off by default, except
+`rollback_cleancmds`, on by default since 2026-09-21 (8.36).
 
 **Measured and holding.**
 
 | | |
 |---|---|
-| input lag, client's seat | gone -- "ça répond tout de suite", five races, and again after the pivot |
-| snapshot determinism | 12/12 replays byte-identical; 0/522 leak checks (8.15); 0/330 resim checks (8.9); `itemRoulette.playing`/`.exiting` fixed 2026-09-21 (8.34), 259/261 → **1/260**, the survivor named as the expected `itemList.cap` case |
+| input lag, client's seat | gone -- "ça répond tout de suite", seven races, both cleancmds races included (8.36) |
+| snapshot determinism | 12/12 replays byte-identical; 0/330 resim checks (8.9); leak soak 1/260 after the `playing`/`exiting` fix (8.34), the one failure being `itemList.cap`, known and harmless |
+| confirmed-tic inputs | with `rollback_cleancmds`, 0 to 0.1% of confirmed tics run an input the server did not, against 64-85% (local kart) and 23-80% (bots) without it -- two driven races (8.35, 8.37) |
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
-| residual drift | mean 0.25 to 0.86 units, worst 36 to 59 -- a kart is about 40 wide |
+| residual drift | mean 0.13 to 0.86 units, worst 30 to 97 -- a kart is about 40 wide. **Never yet measured over a race with `rollback_cleancmds` on throughout** (8.38) |
 | cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
+| restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
 | listen-server host's input delay | 170-200 ms, now **0** (8.27) |
 
 **Open, in priority order.**
 
-1. **Vanilla compatibility** against the policy below. The savegame misread of
-   8.28 is fixed in code (8.29, not yet verified). Still missing: the refusal of
-   vanilla clients, the automatic mode switch, and a release-config build --
-   CI builds are `DEVELOP` and cannot see public servers at all (8.30).
-2. **The drift's cause** (Phase A) -- **8.31 confirmed on the inputs, unsettled
-   on the drift (8.35, 8.37).** `rollback_cleancmds` closes the mechanism at
-   race scale, twice: wrong-input tics fell from 64-85%/23-74% off to 0-0.1%
-   on, in two separate races. **Drift disagreed between the two**: the first
-   showed no effect beyond the race's own time trend (on window landed on the
-   straight line between its neighbours, within 0.002); the second showed a
-   large one (0.358 units below that line). Two races, two shapes -- an A/B
-   race is not resolving this on its own. **Nothing to trade off either way**:
-   the fix only touches tics the player never sees (8.36 -- what renders is
-   the speculation above `neededtic`, which always ran the current input
-   regardless of the switch), so "ça répondait tout de suite dans les trois
-   fenêtres", twice. Free to default on, and now does. Phase A's cause needs
-   the next instrument to settle rather than another A/B race: hash the
-   program's global memory just before a speculation and just after the
-   restore, narrow a difference to an address with the `.pdb`.
-3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha.
-   The relink, half of a restore, is now indexed instead of quadratic (8.30,
-   not measured).
-4. **The relabel histogram's `+2` cluster** (8.27). Hypothesis: the host
-   outside a race, which would make it harmless. `rollback_relabel` now splits
-   by sender and race state to test it (8.32).
-5. **Never run under prediction:** a person playing on the host; a full race;
+1. **The drift's cause (Phase A) -- probably found, one race from knowing
+   (8.38).** The two cleancmds races did not really disagree about the
+   switch: their off/on/off protocol cannot measure it. Only kart kinematics
+   are corrected, so whatever an off window put out of step -- the
+   synchronised RNG, objects, any kart state the channel does not carry --
+   stays out of step through the on window that follows, by an amount that
+   depends on the race. Next: one driven race with `rollback_cleancmds` on from
+   start to finish (`playtest.sh correct_on`), to compare with `nospec`'s
+   0.000 units (8.9). Prediction written in 8.38.
+2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39 --
+   built, off by default, not yet run). Instead of repeating the newest input
+   over a 4-tic speculation, the speculation replays every input sent but not
+   yet applied, in the order it was made, and goes as deep as the newest one
+   needs (about 8 tics at 171 ms). What is drawn then matches what the server
+   will do with the player's hands. It costs about twice the speculation.
+   Test: `playtest.sh history`, judged by the driver.
+3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
+   and heavier if `rollback_history` stays on.
+4. **Vanilla compatibility** against the policy below. The savegame misread of
+   8.28 is fixed in code (8.29), never checked against a stock build. Still
+   missing: the refusal of vanilla clients, the automatic mode switch, and a
+   release base -- CI builds a release-config exe, but the branch still sits on
+   upstream's development line (8.30).
+5. **The relabel histogram's `+2` cluster** (8.27). Hypothesis: the host outside
+   a race, which would make it harmless (8.32). The split was read in the first
+   cleancmds race but never recorded, and the second race overwrote those logs
+   (8.38). To read again in the next race; the harness now keeps every race's
+   logs.
+6. **Never run under prediction:** a person playing on the host; a full race;
    Battle, Grand Prix, Encore; anything longer than a scripted race.
-6. ~~`soak_leak.cfg` broke its own prediction~~ (8.34): `itemRoulette.playing`/
-   `.exiting` were never archived at all. **Fixed and confirmed**: 259/261 →
-   1/260, the survivor is the already-understood `itemList.cap` case, not a
-   regression.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -81,9 +83,10 @@ supersedes 8.4 and 8.14 wherever they say stock compatibility is "given up" or
 
 **The test harness is versioned in the private notes repository** (`harnais/`,
 since 2026-09-21), never in the public one: it carries local paths. The
-scripts run the scenarios from there and take the game folder from an
-environment variable, and they print whether the installed exe is the code
-repository's HEAD. **No launch without Gibax's explicit go-ahead, each time.**
+scripts run the scenarios from there, take the game folder from an environment
+variable, print whether the installed exe is the code repository's HEAD, and
+keep every run's logs under a name dated and tagged with the exe's sha. **No
+launch without Gibax's explicit go-ahead, each time.**
 
 **Which sections below still hold.**
 
@@ -104,13 +107,8 @@ repository's HEAD. **No launch without Gibax's explicit go-ahead, each time.**
 | 8.28 point 2 | the gap it describes is explained by 8.31 |
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
-| 8.33 | its inputs prediction is confirmed at race scale, twice; its drift prediction held in neither race the same way -- 8.35 refuted it, 8.37 confirmed it, the two disagree. Its feel risk did not materialise (8.36) |
-| 8.35 | "drift did not fall" does not generalise -- a second race found the opposite (8.37) |
-
-**Pushed on 2026-09-21, compiled by CI, none of it run:** roulette fields
-local-only (8.29), indexed relink (8.30), `rollback_cleancmds` (8.31), relabel
-split (8.32), the bot-overwrite bound check, `old_z` restored on load, and a
-release-config Windows exe in CI (`ringracers-win64-release-<sha>`).
+| 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
+| 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
 ## 0. The rename, and what it actually commits to
 
@@ -2127,6 +2125,10 @@ has no `relink pointers` line.
 
 ### 8.35 The driven cleancmds race: the inputs prediction lands, the drift prediction does not
 
+> ⚠ **The drift half is confounded (8.38).** The on window inherits whatever the
+> off window before it put out of step, and the correction channel repairs only
+> kart kinematics. The inputs half stands.
+
 Measured (binary `bee33d9`, sha verified, `playtest.sh correct`, driven by
 Gibax). Predictions were written in 8.33 before the run.
 
@@ -2209,6 +2211,10 @@ to default on.
 
 ### 8.37 A second cleancmds race contradicts the first, on drift, not on inputs
 
+> ⚠ **Both drift readings are confounded, this one and 8.35's (8.38)**: an off
+> window's divergence carries into the on window. The test that can settle it
+> is a race with the switch on throughout. The inputs result stands.
+
 Measured (binary `89e5d30`, sha verified, same scenario as 8.35, a second
 driven `playtest.sh correct` race, run right after flipping the default in
 8.36 -- the three windows still set the switch explicitly, so the flip did not
@@ -2246,3 +2252,128 @@ race, even repeated, is not resolving this on its own.
 
 `rollback_cleancmds` stays on by default regardless (8.36's reasoning was the
 feel, never the drift).
+
+### 8.38 Audit, 2026-09-22: the off/on/off race cannot measure the drift, and what can
+
+Read, not measured. Nothing launched.
+
+**The correction channel repairs only kart kinematics.** Each
+`PT_STATECORRECTION` puts position, momentum, angle, hitlag, rings and item back
+(38 bytes, 8.4). The 18 bytes of kart state beside them are measured and never
+applied (8.7), and nothing else in the world is carried at all -- the
+synchronised RNG, thrown items, hazards, item boxes. With `rollback_correct N`
+the full resend is suppressed, so nothing repairs those either.
+
+**So an off window's divergence outlives it.** In the off windows of 8.35 and
+8.37, 64-85% of the local kart's confirmed tics and up to 80% of the bots' ran
+an input the server did not. By 8.2 the synchronised RNG follows positions
+apart, and items thrown, boxes taken and hits landed differ with them. The on
+window then runs identical inputs on deterministic tics (0 of 1000 and 0 of 8000
+mismatched, 8.37) -- from a world already different in every way the channel
+does not correct. Its drift measures what the off window left behind, not what
+the switch does, and how much was left depends on the race: what was thrown,
+who hit whom. That is enough for one race to show no effect and the other a
+large one, without either being wrong about the switch. The third window
+controls the race-position trend, not this inheritance.
+
+**What does measure it: a race with the switch on from start to finish.** The
+only other configuration in which the confirmed world never runs a wrong input
+is `nospec`, and it read 0.000 units over 3357 kart samples (8.9). If 8.31's
+mechanism was the drift's source, a race that never runs it should read like
+`nospec`. Built as `playtest.sh correct_on` in the private notes' harness: the
+same race and server, three windows kept for reading by race position,
+`rollback_cleancmds 1` throughout, `rollback_history 0`.
+
+**Prediction, written before the run:** mean drift under 0.05 units in every
+window, no worst sample above a few units, the blame lines' `rngsum` identical
+on both machines at every refusal, and every input identical tic by tic. If the
+drift reads like 8.35/8.37 instead, there is a second leak, and the memory-hash
+instrument (`ROADMAP.md`, step 5) is next.
+
+**Checkable without a launch**, on the measuring machine: the second cleancmds
+race's `rollback_blame` lines carry `rngsum` for both machines at every
+refusal. If they part in window 0 and never agree again, the inheritance is
+seen directly. The first race's logs are gone -- the second overwrote them --
+so the harness now also keeps a copy of every run's logs named by date and exe
+sha.
+
+**Also found:**
+
+- The relabel split (8.32) was read in the first cleancmds race and recorded
+  nowhere; its logs are the overwritten ones. To read again in the next race.
+- The leak soak can no longer read 0: `itemList.cap` fails about 0.4% of checks,
+  for a reason 8.34 shows to be harmless. A regression net that always shows a
+  failure teaches its reader to ignore failures. Excluding `cap` from the
+  comparison is a small change, not made yet.
+- The display, not the drift: the speculation repeats the newest input over
+  tics on which the server will apply older inputs still in flight. See 8.39.
+
+### 8.39 `rollback_history`: the speculation replays the inputs still in flight
+
+Built, off by default, not run.
+
+**The gap.** At 171 ms the server applies each input this machine sends about
+seven tics after it was made (8.33). Those seven are in flight: sent, not yet in
+any tic the server has sent back, so the confirmed world has not run them. The
+speculation drew the world 4 tics above the confirmed frontier by repeating the
+*newest* input on each of them. So the drawn kart:
+
+- stops short of where the server will put it: seven tics of inputs happen on
+  the server's timeline before the newest one applies, and the speculation shows
+  four;
+- and draws the recent past wrong: a turn released three tics ago is drawn as
+  already over, while the server will still apply those turning inputs. The
+  confirmed world catches up a round trip later and the kart turns a little
+  more -- a small, late correction on every release.
+
+It does not show as lag -- the newest input is always on screen at once, which
+is why every race "répondait tout de suite" -- but it is what 8.33's feel risk
+described, and it shows on quick flicks and releases.
+
+**The fix is Quake 3's:** replay every command not yet acknowledged, in order,
+from the last acknowledged state. The pieces were already there:
+
+- `localcmds[p][0..34]` (`d_clisrv.c`) keeps this machine's last 35 inputs,
+  newest first, one built and sent per pass.
+- `G_BuildTiccmd` stamps each with the leveltime it was built at
+  (`cmd->latency`, `g_build_ticcmd.cpp:171`), and the server copies ticcmds
+  verbatim into `netcmds` and back. So the newest tic the server has sent,
+  `neededtic - 1`, names the input it applied there, by its stamp.
+- `K_RollbackMapHistory` finds that input in the local history -- stamp,
+  forward, turn and buttons; not the angle, which `D_ResetTiccmdAngle` rewrites
+  across the history. Every input younger than it is in flight. Newest match
+  wins, so a run of identical inputs is undercounted, never overcounted.
+- `K_RollbackPredictInputs` gives the local slot of speculated tic
+  `neededtic + j` the j-th input in flight, oldest first, and the newest once
+  they run out. The speculation goes as deep as that needs -- from the frontier
+  to `neededtic`, plus one tic per input in flight -- never below
+  `rollback_twoclock`, never above `rollback_history N`.
+
+No wire change: stock servers already send the stamp back. It needs
+`rollback_cleancmds` (on by default): without it, the tic the applied input is
+read from may hold this machine's own overwrite.
+
+**What it does not touch:** the confirmed world. It only changes what is
+drawn, so the drift and the correction channel should not move.
+
+**What it costs:** the speculation grows from 4 tics to about 8 at 171 ms, so a
+pass roughly doubles its replay cost -- an estimated 14 to 16 ms at nine karts,
+against 9.5 measured at depth 4. It works against Phase B, and it scales with
+latency. That is why it is a switch.
+
+**Remote karts:** unchanged in kind, still predicted by repeating their last
+input -- but now over twice as many tics, so a remote kart that changes what it
+is doing is mispredicted further ahead. The next pass redraws it, as today;
+whether that reads as jitter is for eyes to say.
+
+**Prediction, written before the run** (`playtest.sh history`:
+`rollback_cleancmds` on throughout, `rollback_history` 0, then 12, then 0):
+
+- `rollback_history` finds the applied input on over 95% of passes, with about
+  7 inputs in flight on average and a speculation about 8 tics deep, never cut
+  short at 12.
+- The on window's cost per pass is 1.6 to 2 times the off windows'.
+- Drift does not change between windows beyond the race-position trend.
+- The driver: in the on window the kart goes where the hands say on quick
+  flicks and releases, with no small late turn afterwards. If it feels worse
+  -- remote karts jumping, the frame rate dropping -- that is the finding.
