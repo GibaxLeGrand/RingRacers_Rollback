@@ -8,11 +8,21 @@ name: Build
 # here is only "does it build, and can I play it".
 
 on:
+  # A push or pull request that touches only docs and Markdown files builds
+  # nothing new, so it does not run. The harness accepts the last build as long
+  # as nothing but those paths changed since its commit -- the same rule. Run by
+  # hand from the Actions tab when a build is wanted anyway.
   push:
     branches:
       - master
       - rollback-netcode
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 jobs:

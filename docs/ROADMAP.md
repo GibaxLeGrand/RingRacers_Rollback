@@ -67,8 +67,11 @@ and harness, **nothing run**. **Every launch is asked for first.**
    - read `rngsum` in the second cleancmds race's `rollback_blame` lines, both
      machines, at every refusal. Parting in window 0 and never agreeing again
      would show the inheritance of 8.38 directly;
-   - take the dev artifact of the latest commit (`rollback_history` is in
-     `src/`) and check its sha.
+   - take the dev artifact of the latest commit CI built (the newest green run
+     in the Actions tab; `rollback_history` compiled green on 2026-09-22) and
+     check its sha. Since 2026-09-22, pushes that touch only docs are not
+     built, and the harness accepts an exe whose commit differs from `HEAD`
+     only by docs.
 6. **The next test session, one launch at a time, each asked for:**
    - `playtest.sh correct_on`, driven -- `rollback_cleancmds` on from start to
      finish. Prediction in 8.38: mean drift under 0.05 units in every window,
