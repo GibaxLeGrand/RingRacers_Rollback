@@ -3153,6 +3153,18 @@ static dboolean g_cleancmds = true;
 static uint32_t g_recvwrites;   // local slots of an already-received tic written over
 static uint32_t g_recvchanged;  // ... with an input that differed from the server's
 
+// Replaying this machine's own sent-but-not-yet-applied inputs across the
+// speculation, instead of repeating the newest one (rollback_history,
+// WORLDWIDE.md 8.39). Off by default: its feel is for a driver to judge.
+static int32_t g_histmax;       // 0 = off; else the deepest speculation it may ask for
+static tic_t g_histbase;        // the first tic the server has not sent: replay starts there
+static int32_t g_histunacked[MAXSPLITSCREENPLAYERS]; // inputs sent after the one last applied; -1 = no match
+static uint32_t g_histpasses;   // passes that looked for the applied input
+static uint32_t g_histmatched;  // ... and found it, for the first local player
+static uint32_t g_histcapped;   // passes whose replay was cut short by the depth cap
+static uint64_t g_histunackedsum;
+static uint64_t g_histdepthsum;
+
 // Messages a speculated tic tried to send. localtextcmd is netcode state, not
 // world state, so the archive does not carry it and a restore cannot take one
 // back -- the server would apply a message from a timeline that was discarded.
@@ -4346,9 +4358,83 @@ void K_RollbackUnspeculate(void)
 	g_unspecus += K_PreciseToMicros(I_GetPreciseTime() - started);
 }
 
+/** Which of this machine's own inputs are sent but not yet applied.
+  *
+  * The server files every input this machine sends under a tic of its own
+  * choosing, about a round trip after it was made, and the confirmed world has
+  * run none of the ones still in flight. Repeating the newest input across the
+  * speculation replaces all of them with it: a turn released a few tics ago is
+  * shown as already over, and the kart stops short of where the server will put
+  * it (WORLDWIDE.md 8.39).
+  *
+  * The newest tic the server has sent carries the input it applied there, and
+  * that input still holds the leveltime stamp G_BuildTiccmd gave it -- the
+  * server copies it untouched. Finding that sample in the local history says
+  * which inputs came after it: those are the ones still to be applied, oldest
+  * first. Newest match wins, so a run of identical samples is undercounted, not
+  * overcounted.
+  */
+static void K_RollbackMapHistory(void)
+{
+	const tic_t base = D_NeededTic();
+	int32_t i;
+
+	g_histbase = base;
+
+	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
+		g_histunacked[i] = -1;
+
+	if (base == 0)
+		return;
+
+	for (i = 0; i <= (int32_t)splitscreen; i++)
+	{
+		const int32_t who = g_localplayers[i];
+		const ticcmd_t *applied;
+		int32_t age;
+
+		if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
+			continue;
+
+		applied = &netcmds[(base - 1) % BACKUPTICS][who];
+
+		// Not the angle: D_ResetTiccmdAngle rewrites it across the whole history.
+		for (age = 0; age < MAXGENTLEMENDELAY; age++)
+		{
+			const ticcmd_t *sent = D_LocalTiccmdAge((uint8_t)i, age);
+
+			if (sent->latency == applied->latency
+				&& sent->forwardmove == applied->forwardmove
+				&& sent->turning == applied->turning
+				&& sent->buttons == applied->buttons)
+			{
+				g_histunacked[i] = age;
+				break;
+			}
+		}
+	}
+}
+
+/** The input a local player's slot gets on a speculated tic: the next sent-but-
+  * unapplied one while any are left, then the newest. Without rollback_history,
+  * always the newest, as before. */
+static const ticcmd_t *K_RollbackLocalCmdFor(uint8_t ss, tic_t tic)
+{
+	const int32_t unacked = g_histunacked[ss];
+	int32_t age = 0;
+
+	if (g_speculating && g_histmax > 0 && unacked > 0 && tic >= g_histbase
+		&& tic - g_histbase < (tic_t)unacked)
+	{
+		age = unacked - 1 - (int32_t)(tic - g_histbase);
+	}
+
+	return D_LocalTiccmdAge(ss, age);
+}
+
 void K_RollbackSpeculate(void)
 {
-	const int32_t ahead = g_nullspec ? 0 : K_RollbackTwoClock();
+	int32_t ahead = g_nullspec ? 0 : K_RollbackTwoClock();
 	precise_t started;
 	int32_t i;
 
@@ -4364,6 +4450,54 @@ void K_RollbackSpeculate(void)
 	{
 		g_specnosave++;
 		return;
+	}
+
+	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
+		g_histunacked[i] = -1;
+
+	// Replaying the inputs still in flight needs the speculation to reach the
+	// tic the newest one will land on: from the frontier to the first tic the
+	// server has not sent, then one tic per input. rollback_twoclock stays the
+	// floor, rollback_history the ceiling. Needs rollback_cleancmds: without it
+	// the tic the applied input is read from may hold this machine's own
+	// overwrite instead of the server's.
+	if (ahead > 0 && g_histmax > 0 && g_cleancmds)
+	{
+		const int32_t cap = (g_histmax > ahead) ? g_histmax : ahead;
+		int32_t most = 0, need;
+
+		K_RollbackMapHistory();
+
+		for (i = 0; i <= (int32_t)splitscreen; i++)
+		{
+			if (g_histunacked[i] > most)
+				most = g_histunacked[i];
+		}
+
+		g_histpasses++;
+
+		if (g_histunacked[0] >= 0)
+		{
+			g_histmatched++;
+			g_histunackedsum += (uint64_t)g_histunacked[0];
+		}
+
+		need = (int32_t)(g_histbase - gametic) + most;
+
+		if (need > ahead)
+		{
+			if (need > cap)
+			{
+				ahead = cap;
+				g_histcapped++;
+			}
+			else
+			{
+				ahead = need;
+			}
+		}
+
+		g_histdepthsum += (uint64_t)ahead;
 	}
 
 	started = I_GetPreciseTime();
@@ -5224,7 +5358,7 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 		if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
 			continue;
 
-		netcmds[tic % BACKUPTICS][who] = *D_LocalTiccmd((uint8_t)i);
+		netcmds[tic % BACKUPTICS][who] = *K_RollbackLocalCmdFor((uint8_t)i, tic);
 		netcmds[tic % BACKUPTICS][who].flags |= TICCMD_RECEIVED;
 
 		// Kept so that when the server sends this same input back, the arrival
@@ -5290,6 +5424,65 @@ static void Command_RollbackCleanCmds_f(void)
 	CONS_Printf("rollback_cleancmds: %u local inputs %s over an already-received tic, "
 		"%u of them different from what the server sent\n",
 		g_recvwrites, (g_cleancmds ? "would have been written" : "written"), g_recvchanged);
+}
+
+/** Console command: rollback_history [maxdepth]
+  *
+  * Client side, two-clock mode. With a depth above 0, the speculation replays
+  * this machine's own inputs that are sent but not yet applied by the server,
+  * one per tic in the order they were made, and reaches as deep as the newest
+  * one needs -- up to maxdepth, never below rollback_twoclock. 0 (the default)
+  * repeats the newest input over the speculation, as before. Needs
+  * rollback_cleancmds on. Setting it resets the counts, so one race can be read
+  * off, then on.
+  */
+static void Command_RollbackHistory_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		const int32_t want = atoi(COM_Argv(1));
+
+		g_histmax = (want <= 0) ? 0 : ((want > MAXGENTLEMENDELAY - 1) ? MAXGENTLEMENDELAY - 1 : want);
+		g_histpasses = g_histmatched = g_histcapped = 0;
+		g_histunackedsum = g_histdepthsum = 0;
+	}
+
+	if (g_histmax <= 0)
+	{
+		CONS_Printf("rollback_history: off -- the speculation repeats the newest input\n");
+	}
+	else
+	{
+		CONS_Printf("rollback_history: on -- the speculation replays the inputs still in "
+			"flight, up to %d tics deep%s\n", g_histmax,
+			(g_cleancmds ? "" : " -- but rollback_cleancmds is OFF, so it does nothing"));
+	}
+
+	if (g_histpasses == 0)
+	{
+		CONS_Printf("rollback_history: no speculation has looked for the applied input yet\n");
+		return;
+	}
+
+	CONS_Printf("rollback_history: %u passes, the applied input found in %u (%u%%)\n",
+		g_histpasses, g_histmatched,
+		(uint32_t)((uint64_t)g_histmatched * 100 / g_histpasses));
+
+	if (g_histmatched > 0)
+	{
+		const uint64_t in100 = g_histunackedsum * 100 / g_histmatched;
+
+		CONS_Printf("rollback_history: %u.%02u inputs in flight on average -- the round "
+			"trip, in tics\n", (uint32_t)(in100 / 100), (uint32_t)(in100 % 100));
+	}
+
+	{
+		const uint64_t d100 = g_histdepthsum * 100 / g_histpasses;
+
+		CONS_Printf("rollback_history: speculation %u.%02u tics deep on average, "
+			"cut short by the cap on %u passes\n",
+			(uint32_t)(d100 / 100), (uint32_t)(d100 % 100), g_histcapped);
+	}
 }
 
 /** True when the network has contradicted a tic that has already run.
@@ -5709,6 +5902,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
 	COM_AddDebugCommand("rollback_cleancmds", Command_RollbackCleanCmds_f);
+	COM_AddDebugCommand("rollback_history", Command_RollbackHistory_f);
 	COM_AddDebugCommand("rollback_blame", Command_RollbackBlame_f);
 	COM_AddDebugCommand("rollback_correct", Command_RollbackCorrect_f);
 	COM_AddDebugCommand("rollback_drift", Command_RollbackDrift_f);

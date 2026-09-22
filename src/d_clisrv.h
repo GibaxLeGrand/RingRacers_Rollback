@@ -822,6 +822,11 @@ void D_ResetTiccmds(void);
 void D_ResetTiccmdAngle(uint8_t ss, angle_t angle);
 ticcmd_t *D_LocalTiccmd(uint8_t ss);
 
+/** The local input built `age` samples ago (0 is the newest, the one
+  * D_LocalTiccmd returns), or NULL past the MAXGENTLEMENDELAY kept. One sample
+  * is built and sent per pass, so this is also the send order. */
+ticcmd_t *D_LocalTiccmdAge(uint8_t ss, int32_t age);
+
 /* Hash of the parts of the game state the netcode compares between
    machines. Exposed for the rollback netcode, which uses it to check a
    restored state against the one it was taken from. */

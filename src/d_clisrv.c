@@ -644,6 +644,14 @@ ticcmd_t *D_LocalTiccmd(uint8_t ss)
 	return &localcmds[ss][0];
 }
 
+ticcmd_t *D_LocalTiccmdAge(uint8_t ss, int32_t age)
+{
+	if (age < 0 || age >= MAXGENTLEMENDELAY)
+		return NULL;
+
+	return &localcmds[ss][age];
+}
+
 void SendKick(uint8_t playernum, uint8_t msg)
 {
 	uint8_t buf[2];
