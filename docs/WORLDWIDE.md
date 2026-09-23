@@ -54,9 +54,11 @@ Every piece is behind a switch that is off by default, except
    off window to the end of the race, the on window included; `nospec`'s
    refused none (8.42). Next: one driven race with `rollback_cleancmds` on from
    start to finish (`playtest.sh correct_on`), to compare with `nospec`'s
-   0.000 units and 0 refusals. Prediction in 8.38, plus 0 refusals (8.42); its
-   `rngsum` clause cannot be read, because no blame line prints while the
-   correction channel suppresses resends (8.42).
+   0.000 units and 0 refusals. Prediction in 8.38, plus 0 refusals (8.42). No
+   blame line printed while the correction channel suppressed resends (8.42);
+   **built on 2026-09-23, not run (8.43):** both machines now print one every
+   second, so the race can say whether the seeds or a position part first.
+   `correct_on` needs that build.
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39 --
    built, off by default, not yet run). Instead of repeating the newest input
    over a 4-tic speculation, the speculation replays every input sent but not
@@ -123,7 +125,8 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
 | 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
 | 8.39 | its adaptive depth made the drawn tic follow the server's filing jitter (8.40); replaced by a held lead over the clock (8.41), so its depth figures no longer apply |
-| 8.38 | its `rngsum` clause cannot be read: no blame line prints with the correction channel on (8.42); the refusal count stands in for it |
+| 8.38 | its `rngsum` clause could not be read: no blame line printed with the correction channel on (8.42). Readable from a build with 8.43's once-a-second lines |
+| 8.42 | its proposed server line in the suppressed branch was left out of 8.43 |
 | 8.40 point 1 | its map figures hold on the measuring machine's install (8.42) |
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
 | 8.40 point 3 | `rngsum` is not in the logs to be read (8.42) |
@@ -2621,3 +2624,53 @@ called), and the server also prints its own line in the suppressed branch.
 The two logs then hold lines for the same tics once a second, refusal or not,
 and the first tic at which `rngsum` parts can be told apart from the first
 tic at which a position does. About 200 bytes a second a machine.
+
+> ⚠ **Built the same day (8.43)**, without the server's line in the suppressed
+> branch: the client has no line for the same tic to set beside it. About 300
+> bytes a second, not 200, at nine karts.
+
+### 8.43 `rollback_blame` prints once a second, refused or not
+
+Built on 2026-09-23 from 8.42's proposal, **not run**. Code: `src/d_clisrv.c`,
+`Consistancy_Describe`.
+
+**What it prints.** With `rollback_blame` on, both machines print
+`rollback_blame: SAMPLE tic N: p0(x,y,iT) ... rngsum=S` for every confirmed
+tic N that is a multiple of 35, in a level: the line the ring already kept,
+made of exactly the fields `Consistancy()` hashes. It is printed where the tic
+loop records it, the ring's only writer, so a speculated tic never prints. One
+line a second, about 300 bytes at nine karts. The `SERVER` and `CLIENT` prints
+on the way to a resend are unchanged.
+
+**Left out of 8.42's proposal:** the server's line for the tic it refuses, in
+the suppressed branch. Nothing tells the client which tic was refused, so it
+has no line for the same tic, and a line alone compares with nothing -- the
+seed sum changes every tic.
+
+**How it is read.** `cleancmds_report.py` sets the two logs' SAMPLE lines side
+by side, per window, before the first window, and over the whole log: how many
+sampled tics differ in `rngsum`, in a player's position, in a player's item,
+and the first tic of each. Tested on made-up logs, and on the second cleancmds
+race's, which have none and say so.
+
+Syntax checked with MSYS2 `gcc -fsyntax-only -Wall -Wextra` on `d_clisrv.c`,
+with stub headers for opus and renamenoise: no diagnostic on the changed
+lines. Not compiled -- CI is the only build.
+
+**What it can tell, in `correct_on`:**
+
+- 0 refusals and SAMPLE lines identical on every sampled tic: 8.38's
+  prediction holds, Phase A closes.
+- 0 refusals but SAMPLE lines that differ: the instrument is wrong, since the
+  lines carry exactly what the checksum hashes. To be fixed before anything is
+  read from it.
+- Refusals: the first sampled tic at which `rngsum` parts, against the first
+  at which a position does. Seeds first: something the channel does not carry
+  parts first (8.38's list: RNG, objects, kart state beyond kinematics).
+  Positions first with the seeds still equal: the kart's own simulation parts,
+  and the next instrument is the memory hash.
+
+The prediction for `correct_on` is unchanged (8.38, plus 8.42's 0 refusals),
+with its `rngsum` clause now readable: **`rngsum` and every position equal on
+every sampled tic, in every window.** `history` changes only what is drawn,
+so its SAMPLE lines should read the same way.

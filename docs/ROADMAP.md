@@ -48,7 +48,8 @@ and built `rollback_history` for the feel (8.39). The audit of 2026-09-23 found
 that every driven race ran on one plain map, made the harness run any map, and
 found that `rollback_history` as built probably judders (8.40). On the
 measuring machine, the same day, the steps that need no launch are done, and
-found that the blame lines never print with the correction channel on (8.42).
+found that the blame lines never print with the correction channel on (8.42);
+they now print once a second on both machines (8.43, built, not run).
 **Nothing run** since 2026-09-21. **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
@@ -79,11 +80,12 @@ found that the blame lines never print with the correction channel on (8.42).
    - `playtest.sh correct_on`, driven -- `rollback_cleancmds` on from start to
      finish. Prediction in 8.38, plus a clause written in 8.42: mean drift
      under 0.05 units in every window, and **0 checksum refusals**, as
-     `nospec`. Read with `cleancmds_report.py playlog_correct_on.txt
-     srvlog_correct_on.txt`, which now counts the refusals per window. Its
-     `rngsum` clause needs `rollback_blame` to print without a resend first
-     (proposed in 8.42, touches `src/`). Read the relabel split too, and write
-     it down this time (8.32).
+     `nospec`, and `rngsum` and every position equal on every sampled tic
+     (8.43). Read with `cleancmds_report.py playlog_correct_on.txt
+     srvlog_correct_on.txt`, which counts the refusals and compares the blame
+     samples per window. **Needs the build with 8.43's once-a-second blame
+     lines** -- take its artifact and check its sha first. Read the relabel
+     split too, and write it down this time (8.32).
    - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
      in 8.41 (it replaces 8.39's). Ask the driver which window felt closest
      to their hands. Needs the build with the held lead (8.41): the first
