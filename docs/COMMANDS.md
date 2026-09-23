@@ -320,9 +320,11 @@ in the last second, raises it at once, and lowers it by one tic a second at
 most. The picture then advances one tic per tic instead of jumping with every
 jitter (`WORLDWIDE.md` 8.40, 8.41).
 
-- Changes only what is **drawn**, never the confirmed world: the drift and the
-  correction channel should not move.
-- About doubles the speculation's cost at 171 ms (4 tics become about 9 to 10).
+- Meant to change only what is **drawn**, never the confirmed world. ⚠ In its
+  first run the confirmed world parted inside the window where it was on,
+  not yet explained (`WORLDWIDE.md` 8.46): **leave it off** outside a test.
+- About doubles the speculation's cost at 171 ms: measured 1.6 to 1.9 times,
+  at 8 tics deep on average (8.46).
 - Needs `rollback_cleancmds` on (the default); with it off, it does nothing
   and says so.
 - No argument: the state; how often the drawn world moved against the

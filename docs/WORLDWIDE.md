@@ -55,18 +55,19 @@ Every piece is behind a switch that is off by default, except
    was 8.31's mechanism -- the speculation writing the local input over tics
    already received -- and what it left behind (8.38). Still owed: the other
    maps (item 6).
-2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39 --
-   built, off by default, not yet run). Instead of repeating the newest input
-   over a 4-tic speculation, the speculation replays every input sent but not
-   yet applied, in the order it was made, and goes as deep as the newest one
-   needs (about 8 tics at 171 ms). What is drawn then matches what the server
-   will do with the player's hands. It costs about twice the speculation.
-   As first built it would have juddered (8.40): its depth made the drawn
-   tic follow the delay the server files this machine's inputs with, which
-   jitters by a tic or two. **Fixed in code on 2026-09-23 (8.41), not run:**
-   it now holds the drawn tic's lead over the clock, and counts the drawn
-   world's jumps -- with the switch off too, as a control. Test:
-   `playtest.sh history`, judged by the driver.
+2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39,
+   8.41 -- off by default). Instead of repeating the newest input over a 4-tic
+   speculation, the speculation replays every input sent but not yet applied,
+   in the order it was made, and goes as deep as the newest one needs. **Run
+   once on 2026-09-23 (8.46):** it works as designed on the display side --
+   the applied input found on every pass, 7 inputs in flight, no more jumps of
+   the drawn world than with it off -- at 1.6 to 1.9 times the cost. **But the
+   confirmed world parted inside its window**, for the first time in a race
+   with `rollback_cleancmds` on throughout: a refusal at tic 4101, two bots
+   out by 15 and 22 units, one bump on the server and not on the client. Not
+   a mechanism yet; one event. Next: `soak.sh leak12`, the leak soak at its
+   depth, prediction in 8.46. It stays off by default until this is
+   understood.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
    and heavier if `rollback_history` stays on.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
@@ -127,6 +128,7 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.42 | its proposed server line in the suppressed branch was left out of 8.43 |
 | 8.40 point 1 | its map figures hold on the measuring machine's install (8.42) |
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
+| 8.39, 8.41 | "it only changes what is drawn" and "drift unchanged between windows" fail in the first run: the confirmed world parted inside the history window (8.46). Its display-side predictions mostly hold; its depth and cost figures do not |
 | 8.40 point 3 | `rngsum` is not in the logs to be read (8.42) |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
@@ -2386,6 +2388,9 @@ read from may hold this machine's own overwrite.
 **What it does not touch:** the confirmed world. It only changes what is
 drawn, so the drift and the correction channel should not move.
 
+> ⚠ **2026-09-23 (8.46): in its first run, the confirmed world parted inside
+> the history window.** Not yet explained.
+
 **What it costs:** the speculation grows from 4 tics to about 8 at 171 ms, so a
 pass roughly doubles its replay cost -- an estimated 14 to 16 ms at nine karts,
 against 9.5 measured at depth 4. It works against Phase B, and it scales with
@@ -2549,6 +2554,10 @@ build:
 - drift unchanged between windows beyond the race-position trend;
 - the driver: no hitch in the on window that the off windows do not have, and
   quick flicks and releases drawn where the hands put them.
+
+> ⚠ **Run on 2026-09-23 (8.46):** the display-side figures mostly hold, the
+> depth (8.03) and the cap (4 passes cut) do not, and the drift clause fails:
+> the confirmed world parted inside the on window.
 
 ### 8.42 The measuring machine, before any launch: the maps agree, and the blame lines were never printed
 
@@ -2824,4 +2833,85 @@ the same tics before `rollback_correct`. Remote, in a race: `+1`/`+2` ×1598,
 `+7`/`+8` ×1300, the rest ×8. It is the same shape, and it fits the same
 arithmetic.
 
-**Not yet asked:** how either race felt to drive.
+**How they felt, asked after both:** Gibax, "pas vraiment senti une grosse
+diff sur les sessions" -- no real difference, between the races or between
+`correct`'s windows. It is what 8.36 explains: what is drawn comes from the
+speculation, which `rollback_cleancmds` does not touch.
+
+### 8.46 `history`: the confirmed world parts inside the history window
+
+Measured: same build and session as 8.44-8.45 (`a1df8bb85`, sha checked by the
+harness), `playtest.sh history` -- `rollback_cleancmds` on throughout,
+`rollback_history` 0 / 12 / 0 -- driven by Gibax, `RR_SkyscraperLeaps`, nine
+karts, `rollback_lag 6`. Prediction written in 8.41 (and 8.39 for what it
+does not touch), before the run. Logs kept as
+`*_history_20260923-134133_a1df8bb.txt`.
+
+| window | history | kart samples | mean / worst drift | refusals | blame samples differing: seeds / a position | cost of a pass | drawn world moved |
+|---|---|---|---|---|---|---|---|
+| 0 | off | 2241 | 0.000 / 0.000 | 0 | 0 / 0 of 28 | 6.1 ms | 6 of 999 |
+| 1 | **12** | 2223 (1 stepped over) | 0.017 / **22.5** (`p6`, tic 4104) | **1**, tic 4101 | 2 / 1 of 29, from tic 4130 | 11.6 ms | 5 of 999 |
+| 2 | off | 2250 | 0.005 / 0.19 | **6** | **30 / 28 of 30** | 7.5 ms | 0 of 999 |
+
+Confirmed inputs identical on every tic of every window, local and bots (0 of
+27 576). No reload.
+
+**What the history window did as designed** (8.41's prediction):
+
+- The applied input was found on 1000 of 1000 passes (predicted over 95%),
+  with 7.07 inputs in flight on average (predicted about 7).
+- The drawn world moved against the clock on 5 of 999 passes, against 6 and 0
+  in the off windows (predicted within 2 points).
+- The held lead was raised 0 times and lowered 0 times (predicted under 20
+  each). It never moved at all after its first pass, which this report cannot
+  tell from a lead set high once and held.
+
+**What it did not:**
+
+- The depth averaged 8.03 tics, not the 9 to 10 predicted, and the cap of 12
+  cut 4 passes short, where "never" was predicted.
+- The cost was 1.92 times window 0's and 1.55 times window 2's; 1.8 to 2.3 was
+  predicted.
+- **The confirmed world parted.** 8.39 said `rollback_history` "only changes
+  what is drawn, so the drift and the correction channel should not move", and
+  8.41 predicted the drift unchanged between windows. The blame samples agree
+  through tic 4095. The server refuses the checksum of tic 4101. At tic 4104,
+  the correction finds two bots out of place, `p6` by 22.5 units and `p7` by
+  15.2, with the diagnostic fields reading `bumped 0/3` for both (client /
+  server: the server's two bots have just bumped, the client's have not) and
+  `flash 15/0` for `p7` (flashing on the client only). The damage logs agree:
+  the one event near it, `p3` hit at tic 4101, is on both machines with the
+  same hash. From tic 4130 the seed sum differs, and window 2, with the switch
+  off again, inherits it: every sample and a refusal every five seconds, as in
+  8.45's on window.
+
+This is also the first correction ever stepped over (8.5 recorded "it never
+does"): a pass whose loop ran two tics. The code drops such a correction
+without applying it (`K_RollbackApplyServerState`), so on reading it cannot
+move the confirmed world. Noted, not blamed.
+
+**Reading, and its limits.** The confirmed inputs were the server's on every
+tic, so the difference came through state, not input. The state the checksum
+and the blame samples see -- positions, items, seeds -- was equal until the
+sample before, so it started in something they do not see (`flashing` or
+`justbumped` among them), and surfaced in a bump one machine had and the
+other did not. The history window's speculation ran twice as deep as every
+window that has held (8039 speculated tics against 4000). A leak that only a
+deeper speculation reaches fits that. So would a rare leak that 4000 tics at
+depth 4 happened not to hit: this is one event in one window. **Not a
+mechanism, and no fix is proposed from it.**
+
+**What tells them apart, without guessing:**
+
+1. `soak.sh leak12` (new, `harnais/soak_leak12.cfg`): the leak soak with a
+   12-tic speculation instead of 4, unattended, one instance. **Prediction:**
+   it fails beyond `itemList.cap`, and `P_LocateSnapshotBlock` names a player
+   field -- a leak through the archive that only a deeper speculation
+   reaches. If it reads like `soak_leak`'s 1/260, the leak is outside the
+   archive (the memory-hash instrument, Phase A) or not about depth.
+2. Then a driven race with plain speculation at 12 tics (`rollback_twoclock
+   12`, history off) against `history`: depth, or the replay of inputs in
+   flight.
+
+**Until then, `rollback_history` stays off by default.** Asked of the driver:
+did the history window feel closer to the hands?

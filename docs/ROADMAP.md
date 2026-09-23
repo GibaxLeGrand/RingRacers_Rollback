@@ -55,7 +55,8 @@ found that the blame lines never print with the correction channel on (8.42);
 they now print once a second on both machines (8.43). Then the first launches
 since 2026-09-21: `correct_on`, which read like `nospec` on every count
 (8.44), and its same-session control `correct`, which diverged as predicted
-(8.45). **Every launch is asked for first.**
+(8.45). Then `history`, whose confirmed world parted inside its window
+(8.46). **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -92,11 +93,15 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
      window 0 to the end, 77-84% wrong local inputs in the off windows, blame
      samples that part and never agree again -- every clause of the
      prediction. The driven kart parts first, then a bot, then the seeds.
-   - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
-     in 8.41 (it replaces 8.39's). Ask the driver which window felt closest
-     to their hands. Needs the build with the held lead (8.41): the first
-     build's depth followed the server's filing jitter, and the drawn world
-     would have juddered (8.40).
+   - ~~`playtest.sh history`, driven.~~ Run on 2026-09-23 (8.46): the display
+     side works as designed, but **the confirmed world parted inside the
+     history window** -- one refusal, two bots out by 15 and 22 units, a bump
+     on the server and not on the client -- and window 2 inherited it. Not
+     yet explained.
+   - **`soak.sh leak12`, unattended: the leak soak at history's depth** (12
+     tics instead of 4). Prediction in 8.46. Then, depending on it, a driven
+     race with plain speculation at 12 tics against `history`: depth, or the
+     replay of inputs in flight.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
    - **Other maps** (8.40), map by map from its shortlist: `soak.sh leak
@@ -116,8 +121,9 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
      instrument below is next.
    - A map breaks the leak soak or drifts where Skyscraper Leaps does not: the
      block `P_LocateSnapshotBlock` names is the second leak.
-   - `history` feels better: turn it on by default, and fold its cost into
-     Phase B.
+   - `history` feels better **and the leak of 8.46 is found and fixed**: turn
+     it on by default, and fold its cost into Phase B. Until then it stays
+     off.
 8. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---
