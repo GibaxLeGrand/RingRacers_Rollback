@@ -6434,6 +6434,9 @@ tic_t D_NeededTic(void)
 //
 // Both ends keep the same ring, so the client's line for tic N and the server's
 // line for tic N can be read side by side out of two logs on one machine.
+//
+// Called by the tic loop only, once per confirmed tic, so the once-a-second
+// print at the end sees each tic once and never a speculated one.
 static void Consistancy_Describe(tic_t tic)
 {
 	char *out = blameline[tic % BACKUPTICS];
@@ -6466,13 +6469,24 @@ static void Consistancy_Describe(tic_t tic)
 	}
 
 	snprintf(out + n, BLAMELINE - n, " rngsum=%u", rngsum);
+
+	// The two prints of this ring both sit on the way to a full-state resend,
+	// and with the correction channel on the resend is suppressed first -- so
+	// no race with the channel on has ever printed a line (WORLDWIDE.md 8.42).
+	// Printing the same tics on both machines, refused or not, lets the two
+	// logs be read side by side: the first tic whose seeds part, against the
+	// first whose positions do. One line a second, about 300 bytes.
+	if (gamestate == GS_LEVEL && tic % TICRATE == 0)
+		CONS_Printf("rollback_blame: SAMPLE %s\n", out);
 }
 
 /** Console command: rollback_blame [0/1]
   *
   * Turns the per-tic record on. Run it on both windows: the server prints its own
   * line for the tic it refused, and the client prints the lines it sent around
-  * the same time, so the two can be compared by tic number.
+  * the same time, so the two can be compared by tic number. Both also print
+  * the line of every 35th tic, which is all that prints while the correction
+  * channel suppresses resends.
   */
 void Command_RollbackBlame_f(void)
 {
@@ -6481,7 +6495,8 @@ void Command_RollbackBlame_f(void)
 
 	CONS_Printf("rollback_blame: %s\n",
 		(g_blame
-			? "on -- what the checksum was looking at is recorded every tic"
+			? "on -- what the checksum was looking at is recorded every tic,"
+			  " and printed once a second"
 			: "off"));
 }
 
