@@ -65,9 +65,12 @@ Every piece is behind a switch that is off by default, except
    confirmed world parted inside its window**, for the first time in a race
    with `rollback_cleancmds` on throughout: a refusal at tic 4101, two bots
    out by 15 and 22 units, one bump on the server and not on the client. Not
-   a mechanism yet; one event. Next: `soak.sh leak12`, the leak soak at its
-   depth, prediction in 8.46. It stays off by default until this is
-   understood.
+   a mechanism yet; one event. The leak soak at its depth (12 tics) finds no
+   leak through the archive (8.47). Next: `playtest.sh depth12` -- plain
+   speculation at 12 tics, history off, can run without a driver -- to tell
+   depth from the replay of inputs in flight (prediction in 8.47). The driver
+   felt the history window "mieux". It stays off by default until the
+   divergence is understood.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
    and heavier if `rollback_history` stays on.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
@@ -2913,5 +2916,59 @@ mechanism, and no fix is proposed from it.**
    12`, history off) against `history`: depth, or the replay of inputs in
    flight.
 
-**Until then, `rollback_history` stays off by default.** Asked of the driver:
-did the history window feel closer to the hands?
+**Until then, `rollback_history` stays off by default.** Asked of the driver
+whether the history window felt closer to the hands: "ça allait, j'ai
+l'impression que ça allait mieux" -- better, by impression, with no hitch
+reported. One race, one driver, told which window was which beforehand: a
+lead worth following, not a result.
+
+### 8.47 The leak soak at 12 tics: no leak through the archive
+
+Measured: same build (`a1df8bb85`), `soak.sh leak12` (new,
+`harnais/soak_leak12.cfg`), unattended, one instance, `RR_SkyscraperLeaps`,
+eight karts: `rollback_soak 20 12 1`, a leak check every 20 tics on a 12-tic
+speculation instead of `soak_leak`'s 4. Prediction written in 8.46. Log kept
+as `soaklog_leak12_20260923-135203_a1df8bb.txt`.
+
+**264 checks, 2 failures, both `itemList.cap`.** Each is one byte in the
+players block of the archive, `0x00` became `0x20`, and the struct walker puts
+it at 672 bytes into `player_t` for the same player (`p7`, then `p4`):
+`itemRoulette.itemList.cap`, the known and harmless case of 8.34. No other
+archived byte differs. 0 of 1347 and 0 of 1310 objects differ. The
+non-archived bytes the walker also lists (240, 292/296, 1828/1832 into
+`player_t`) are the ones every leak soak has printed since 8.11-8.12: HUD
+counters (`karthud`) and `roundconditions`.
+
+**The prediction was wrong.** No field of the archive leaks through a 12-tic
+speculation that does not leak through a 4-tic one: 2 of 264 against 1 of
+260, both `cap`. So 8.46's divergence did not come through the archive. It
+came from state outside it, or from something a solo soak does not do (a
+netgame, a second machine, the correction channel), or it was not about depth.
+
+**Harness defect, found in this run and fixed.** The race check that
+`map_override.sh` added on 2026-09-23 looked for `Map is now "<map>`, which
+only a netgame prints. It called this soak's map "never loaded" and made the
+script exit 1. It said the same of every earlier soak log, in a dry run. A
+local session is now recognised by the rollback command's own opening line
+(`rollback_soak: RR_SKYSCRAPERLEAPS, 8 racers ...`), and a later map by a
+second "Speeding off to level...". Checked on the three soak logs, the two
+history logs, and a wrong map name.
+
+**Next: depth, or history's replay?** `playtest.sh depth12` (new,
+`playclient_depth12.cfg`, same server as `history`): the history race's
+layout -- `rollback_cleancmds` on throughout, three windows of 1000 tics --
+with the middle window at plain `rollback_twoclock 12` and `rollback_history`
+0. It can run without a driver: it was two bots that parted in 8.46, and bots
+are what a deep speculation mispredicts.
+
+**Prediction, written before it runs:**
+
+- the middle window parts: a refusal, a drift spike, blame samples that
+  differ from some tic on, while the first window reads 0 as in 8.44. Plain
+  12 is deeper than history's 8 on average, and mispredicts the bots as far;
+- its passes cost about three times window 0's (12 tics against 4), near 20
+  ms at nine karts, and more of them step over a correction;
+- if it holds instead, the divergence belongs to history's replay of the
+  inputs in flight -- or to an event too rare for one window. One event in
+  1000 tics (8.46) is not a rate, so **a clean window would not clear depth**;
+  a second `history` race would be the check.
