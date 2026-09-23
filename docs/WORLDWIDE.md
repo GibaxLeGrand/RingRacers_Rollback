@@ -66,11 +66,11 @@ Every piece is behind a switch that is off by default, except
    with `rollback_cleancmds` on throughout: a refusal at tic 4101, two bots
    out by 15 and 22 units, one bump on the server and not on the client. Not
    a mechanism yet; one event. The leak soak at its depth (12 tics) finds no
-   leak through the archive (8.47). Next: `playtest.sh depth12` -- plain
-   speculation at 12 tics, history off, can run without a driver -- to tell
-   depth from the replay of inputs in flight (prediction in 8.47). The driver
-   felt the history window "mieux". It stays off by default until the
-   divergence is understood.
+   leak through the archive (8.47), and plain speculation at 12 tics holds
+   for 1000 tics -- but without a driver (8.48). Next: `history` again,
+   driven, as the reproducibility check; if it parts again, `depth12`
+   driven. The driver felt the history window "mieux". It stays off by
+   default until the divergence is understood.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
    and heavier if `rollback_history` stays on.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
@@ -2972,3 +2972,53 @@ are what a deep speculation mispredicts.
   inputs in flight -- or to an event too rare for one window. One event in
   1000 tics (8.46) is not a rate, so **a clean window would not clear depth**;
   a second `history` race would be the check.
+
+### 8.48 `depth12`: plain speculation at 12 tics holds, without a driver
+
+Measured: same build (`a1df8bb85`), `playtest.sh depth12`, **no driver** (the
+local kart sat at the start), `RR_SkyscraperLeaps`, nine karts, `rollback_lag
+6`. Prediction written in 8.47. Logs kept as
+`*_depth12_20260923-231351_a1df8bb.txt`.
+
+| window | speculation | kart samples | mean / worst drift | refusals | blame samples differing | cost of a pass |
+|---|---|---|---|---|---|---|
+| 0 | 4 tics | 2241 | 0.000 / 0.000 | 0 | 0 of 29 | 7.5 ms |
+| 1 | **12 tics** | 2241 (2 stepped over) | 0.000 / 0.000 | 0 | 0 of 28 | **17.9 ms** |
+| 2 | 4 tics | 2250 | 0.000 / 0.000 | 0 | 0 of 31 | 9.4 ms |
+
+Confirmed inputs identical on every tic, no spike, no reload.
+
+**The prediction was wrong again.** The 12-tic window did not part. Its cost,
+17.9 ms a pass, 2.4 times window 0's, is near the "about three times, near 20
+ms" written. The two corrections it stepped over did nothing, as the code
+says: that clears 8.46's stepped-over correction too.
+
+**What it does and does not say.** Plain speculation at 12 tics, for 1000
+tics, with the bots racing and nobody driving, leaves the confirmed world
+untouched. It does not separate depth from history's replay, because it
+changed a second thing: **no driver**. In 8.46 a person was driving, and the
+two karts that parted were bots bumping each other, near or not near the
+driven kart -- the log does not say. With nobody at the wheel, the local
+kart's inputs never change, so the speculation never mispredicts it, and a
+bot never meets it somewhere it will not be. So the question stands:
+
+- history's replay of the inputs in flight;
+- deep speculation *with a driver* (plain 12 was never driven);
+- or a rare event: one in 1000 history tics, none in 1000 plain-12 tics nor in
+  about 7000 tics at 4, driven or not, since 8.44.
+
+Read in the code while the race ran, and ruled out by reading only: every
+`botvars` field is archived (`p_saveg.cpp`), so the bot prediction
+`K_BuildBotTiccmd` runs during the speculation cannot leave bot state behind
+through a missing field; and bots' confirmed inputs come from the server
+(`d_clisrv.c`, `SV_Maketic`), so none is recomputed on the client.
+
+**Next, one driven race, each asked for:** `history` again, driven, as the
+reproducibility check. If it parts again, `depth12` driven separates depth
+from the replay. If it holds, the event is rare, and it needs a longer on
+window rather than a second guess.
+
+**Scenario defect, noted:** `playclient_depth12.cfg` never sets
+`rollback_history`, so its drawn-world count is not reset between windows and
+reads cumulatively (6, 11, 12 over 999, 1999, 2999 passes: 6, 5 and 1 a
+window). Harmless here, and fixed in the scenario.

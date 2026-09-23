@@ -56,8 +56,9 @@ they now print once a second on both machines (8.43). Then the first launches
 since 2026-09-21: `correct_on`, which read like `nospec` on every count
 (8.44), and its same-session control `correct`, which diverged as predicted
 (8.45). Then `history`, whose confirmed world parted inside its window
-(8.46), and the leak soak at its depth, which found no archive leak (8.47).
-**Every launch is asked for first.**
+(8.46), the leak soak at its depth, which found no archive leak (8.47), and
+plain speculation at 12 tics without a driver, which held (8.48). **Every
+launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -102,10 +103,12 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
    - ~~`soak.sh leak12`, unattended.~~ Done on 2026-09-23 (8.47): 2 failures
      in 264, both the harmless `itemList.cap` -- no leak through the archive
      at 12 tics.
-   - **`playtest.sh depth12`, can run without a driver**: plain speculation at
-     12 tics, history off, in the middle window. Prediction in 8.47. It parts:
-     depth. It holds: history's replay, or too rare an event for one window,
-     and a second `history` race is the check.
+   - ~~`playtest.sh depth12`, without a driver.~~ Done on 2026-09-23 (8.48):
+     the 12-tic window holds -- 0 refusals, 0.000 units. But with nobody
+     driving, it does not separate depth from history's replay.
+   - **`playtest.sh history` again, driven**: the reproducibility check. It
+     parts again: `playtest.sh depth12`, driven, separates depth from the
+     replay. It holds: a rare event, which needs a longer on window.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
    - **Other maps** (8.40), map by map from its shortlist: `soak.sh leak
