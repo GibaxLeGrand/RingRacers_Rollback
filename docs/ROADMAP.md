@@ -24,9 +24,11 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
   7 to 9 without it.
 - **Unattended bench.** Six bots move the world without a driver, so a
   measurement can be repeated instead of being n=1.
-- **Open:** the cause of the residual drift, the cost at sixteen karts, the
-  relabel histogram's `+2` cluster, and vanilla compatibility (see the dedicated
-  section).
+- **Found on one map: the drift's cause.** With `rollback_cleancmds` on
+  throughout, a driven race reads 0.000 units and 0 checksum refusals, like
+  `nospec` (8.44). A same-session control and the other maps are owed.
+- **Open:** the cost at sixteen karts, and vanilla compatibility (see the
+  dedicated section).
 
 ## Ground rules for every step
 
@@ -49,8 +51,9 @@ that every driven race ran on one plain map, made the harness run any map, and
 found that `rollback_history` as built probably judders (8.40). On the
 measuring machine, the same day, the steps that need no launch are done, and
 found that the blame lines never print with the correction channel on (8.42);
-they now print once a second on both machines (8.43, built, not run).
-**Nothing run** since 2026-09-21. **Every launch is asked for first.**
+they now print once a second on both machines (8.43). Then the first launch
+since 2026-09-21: `correct_on`, which read like `nospec` on every count
+(8.44). **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -77,15 +80,15 @@ they now print once a second on both machines (8.43, built, not run).
      server refused the client's checksum at every five-second sample from
      window 0 to the end, the on window included; `nospec` refused none.
 6. **The next test session, one launch at a time, each asked for:**
-   - `playtest.sh correct_on`, driven -- `rollback_cleancmds` on from start to
-     finish. Prediction in 8.38, plus a clause written in 8.42: mean drift
-     under 0.05 units in every window, and **0 checksum refusals**, as
-     `nospec`, and `rngsum` and every position equal on every sampled tic
-     (8.43). Read with `cleancmds_report.py playlog_correct_on.txt
-     srvlog_correct_on.txt`, which counts the refusals and compares the blame
-     samples per window. **Needs the build with 8.43's once-a-second blame
-     lines** -- take its artifact and check its sha first. Read the relabel
-     split too, and write it down this time (8.32).
+   - ~~`playtest.sh correct_on`, driven.~~ Done on 2026-09-23 (8.44), on
+     `a1df8bb85`: 0.000 units on 6741 kart samples, 0 refusals, 87 of 87
+     blame samples identical, 0 wrong inputs -- every clause of the
+     prediction. The relabel split is written down: its `+2` falls before
+     the measurement windows.
+   - **`playtest.sh correct`, driven, on the same build: the same-session
+     control** for `correct_on`. Its off windows must show refusals, drift
+     and blame samples that part, or the instruments on this build are blind.
+     Prediction in 8.44, including which parts first, the seeds or a position.
    - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
      in 8.41 (it replaces 8.39's). Ask the driver which window felt closest
      to their hands. Needs the build with the held lead (8.41): the first
@@ -99,9 +102,10 @@ they now print once a second on both machines (8.43, built, not run).
      map=<lump>` as its control. Northern District first, then the maps
      with water, executors, polyobjects and ACS.
 7. **Depending on 6:**
-   - `correct_on` reads like `nospec`: Phase A is closed. Then the
-     correction-rate sweep (`rollback_correct 8`, `16`, `35`), owed since
-     2026-09-10 -- less drift should mean far fewer corrections.
+   - `correct_on` reads like `nospec` (it did, 8.44) and the control shows
+     the instruments see a divergence: Phase A is closed on Skyscraper Leaps.
+     Then the correction-rate sweep (`rollback_correct 8`, `16`, `35`), owed
+     since 2026-09-10 -- with no drift, far fewer corrections should do.
    - `correct_on` still drifts: there is a second leak, and the memory-hash
      instrument below is next.
    - A map breaks the leak soak or drifts where Skyscraper Leaps does not: the

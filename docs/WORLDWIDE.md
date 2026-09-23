@@ -36,29 +36,24 @@ Every piece is behind a switch that is off by default, except
 | snapshot determinism | 12/12 replays byte-identical; 0/330 resim checks (8.9); leak soak 1/260 after the `playing`/`exiting` fix (8.34), the one failure being `itemList.cap`, known and harmless |
 | confirmed-tic inputs | with `rollback_cleancmds`, 0 to 0.1% of confirmed tics run an input the server did not, against 64-85% (local kart) and 23-80% (bots) without it -- two driven races (8.35, 8.37) |
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
-| residual drift | mean 0.13 to 0.86 units, worst 30 to 97 -- a kart is about 40 wide. **Never yet measured over a race with `rollback_cleancmds` on throughout** (8.38) |
+| residual drift | **0.000 units on 6741 kart samples, 0 checksum refusals, 87 of 87 blame samples identical** with `rollback_cleancmds` on throughout -- one driven race, Skyscraper Leaps (8.44). The 0.13 to 0.86 units (worst 30 to 97) of earlier races came from off windows and what they left behind (8.38) |
 | cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
 | restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
 | listen-server host's input delay | 170-200 ms, now **0** (8.27) |
 
 **Open, in priority order.**
 
-1. **The drift's cause (Phase A) -- probably found, one race from knowing
-   (8.38).** The two cleancmds races did not really disagree about the
-   switch: their off/on/off protocol cannot measure it. Only kart kinematics
-   are corrected, so whatever an off window put out of step -- the
-   synchronised RNG, objects, any kart state the channel does not carry --
-   stays out of step through the on window that follows, by an amount that
-   depends on the race. The second cleancmds race's server refused the
-   client's checksum at every five-second sample from 39 tics into its first
-   off window to the end of the race, the on window included; `nospec`'s
-   refused none (8.42). Next: one driven race with `rollback_cleancmds` on from
-   start to finish (`playtest.sh correct_on`), to compare with `nospec`'s
-   0.000 units and 0 refusals. Prediction in 8.38, plus 0 refusals (8.42). No
-   blame line printed while the correction channel suppressed resends (8.42);
-   **built on 2026-09-23, not run (8.43):** both machines now print one every
-   second, so the race can say whether the seeds or a position part first.
-   `correct_on` needs that build.
+1. **The drift's cause (Phase A) -- found on one map, control owed (8.44).**
+   With `rollback_cleancmds` on from the first tic, the driven `correct_on`
+   race read like `nospec`: 0.000 units on 6741 kart samples, 0 checksum
+   refusals, the once-a-second blame samples (8.43) identical on both
+   machines, 0 wrong inputs, every clause of 8.38's prediction. The drift was
+   8.31's mechanism -- the speculation writing the local input over tics
+   already received -- plus what an off window leaves behind for the next
+   (8.38, 8.42). Owed before Phase A closes: **the same-session control** --
+   `playtest.sh correct` on the same build, whose off windows must show the
+   instruments still see a divergence (prediction in 8.44) -- then the other
+   maps (item 6).
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39 --
    built, off by default, not yet run). Instead of repeating the newest input
    over a 4-tic speculation, the speculation replays every input sent but not
@@ -78,11 +73,12 @@ Every piece is behind a switch that is off by default, except
    missing: the refusal of vanilla clients, the automatic mode switch, and a
    release base -- CI builds a release-config exe, but the branch still sits on
    upstream's development line (8.30).
-5. **The relabel histogram's `+2` cluster** (8.27). Hypothesis: the host outside
-   a race, which would make it harmless (8.32). The split was read in the first
-   cleancmds race but never recorded, and the second race overwrote those logs
-   (8.38). To read again in the next race; the harness now keeps every race's
-   logs.
+5. **The relabel histogram's `+2` cluster** (8.27) -- **read in `correct_on`,
+   probably harmless (8.44).** 8.32's prediction fails on its label: the
+   waiting map `RR_TESTRUN` counts as a race. On the counts, every `+2` falls
+   before the first measurement window: the host's before `rollback_correct`
+   is set, the client's before its `rollback_lag 6`. A split by "before or
+   after the scenario's settings" would prove it.
 6. **Never run under prediction:** a person playing on the host; a full race;
    Battle, Grand Prix, Encore; anything longer than a scripted race; **any map
    but one**. Every driven race ran on `RR_SkyscraperLeaps`, one of the 30
@@ -125,7 +121,8 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
 | 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
 | 8.39 | its adaptive depth made the drawn tic follow the server's filing jitter (8.40); replaced by a held lead over the clock (8.41), so its depth figures no longer apply |
-| 8.38 | its `rngsum` clause could not be read: no blame line printed with the correction channel on (8.42). Readable from a build with 8.43's once-a-second lines |
+| 8.32 | its prediction fails on its label -- `RR_TESTRUN` counts as a race -- and the cluster falls before every measurement window, on the counts (8.44) |
+| 8.38 | its `rngsum` clause could not be read: no blame line printed with the correction channel on (8.42). Readable from a build with 8.43's once-a-second lines. Its prediction holds on every clause (8.44), same-session control owed |
 | 8.42 | its proposed server line in the suppressed branch was left out of 8.43 |
 | 8.40 point 1 | its map figures hold on the measuring machine's install (8.42) |
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
@@ -1986,6 +1983,10 @@ host or remote, in a race or not (`node == servernode`,
 `gamestate == GS_LEVEL`). Prediction: `+2` sits almost entirely in "host,
 outside a race". If it sits in "remote, in a race", this reading is wrong.
 
+> ⚠ **2026-09-23 (8.44): it sits in "host, in a race" and "remote, in a
+> race"**, because the waiting map `RR_TESTRUN` is a level. On the counts, it
+> is the tics before the scenarios' settings, not a race being delayed.
+
 ### 8.33 The 2026-09-20 logs already show 8.31, at full scale and on the bots too
 
 Read from logs already on disk, and from the code. No new run.
@@ -2674,3 +2675,86 @@ The prediction for `correct_on` is unchanged (8.38, plus 8.42's 0 refusals),
 with its `rngsum` clause now readable: **`rngsum` and every position equal on
 every sampled tic, in every window.** `history` changes only what is drawn,
 so its SAMPLE lines should read the same way.
+
+### 8.44 `correct_on`: every clause holds -- the confirmed world never parts
+
+Measured: binary `a1df8bb85` (sha checked by the harness), `playtest.sh
+correct_on`, driven by Gibax, `RR_SkyscraperLeaps`, nine karts, `rollback_lag
+6`. The predictions were written in 8.38, 8.42 and 8.43, before the run. Logs
+kept as `*_correct_on_20260923-132623_a1df8bb.txt`.
+
+| window | tics | kart samples | mean / worst drift | refusals | blame samples differing | inputs differing, local / others | cost of a pass |
+|---|---|---|---|---|---|---|---|
+| 0 | 2140-3133 | 2241 | **0.000 / 0.000** | **0** | **0** of 28 | 0 of 994 / 0 of 7952 | 7.1 ms |
+| 1 | 3134-4133 | 2250 | **0.000 / 0.000** | **0** | **0** of 29 | 0 of 1000 / 0 of 8000 | 8.6 ms |
+| 2 | 4134-5203 | 2250 | **0.000 / 0.000** | **0** | **0** of 30 | 0 of 1070 / 0 of 8560 | 9.5 ms |
+
+Also: no `rollback_drift: SPIKE` line (the second cleancmds race had 79), no
+reload, damage events 8 on both machines with the same hash. The speculation
+ran all along: 1000 passes and 4000 speculated tics a window.
+
+**Every clause holds, and harder than written.** Under 0.05 units was
+predicted; 0.000 was measured on 6741 kart samples -- the reading of `nospec`
+(8.9: 0.000 on 3357). The 87 blame samples are not agreeing on empty lines:
+each carries nine players, and the seed sum is different at every sample, and
+identical on both machines.
+
+**Reading.** 8.31's mechanism -- the speculation writing the local input over
+tics the server had already sent -- was the whole of the confirmed world's
+divergence on this map. With it gone from the first tic, the client's
+confirmed world is the server's on everything the checksum hashes, at every
+sample, for three thousand tics, with the speculation running on top. The
+drift of 8.5 to 8.37 was that mechanism and what its off windows left behind
+(8.38).
+
+**Limits, said now.** One race, one map, and that map has no water, no
+polyobject, no executor and no ACS (8.40). And **no control in this session
+yet**: `nospec` ran on 2026-09-14 and the cleancmds races on 2026-09-21, on
+other builds. On this build, only the `correct` race's off windows can show
+that the same instruments still see a divergence when there is one.
+
+**Prediction for that control**, written before it runs (`playtest.sh
+correct` on `a1df8bb85`, windows off / on / off):
+
+- refusals from early in window 0 to the end of the race, the on window
+  included, as in 8.42;
+- in the off windows, most of the local kart's confirmed inputs wrong (64-85%
+  in 8.35 and 8.37), and a mean drift above 0.1 units;
+- blame samples that differ from window 0 on and never all agree again. The
+  first difference is a position, with the seed sum parting at the same
+  sample or a later one: by 8.2 the synchronised RNG follows positions. A seed
+  sum that parts while every position still agrees would mean RNG drawn by
+  something other than the karts' motion.
+
+**Also read from this race:**
+
+- **The drawn world against the clock** (8.41's baseline, `rollback_history`
+  off): it moved on 6 of 999 passes in window 0, and on 0 and 0 in windows 1
+  and 2. 8.41 predicted under 5% for off windows.
+- **The relabel split, written down this time (8.32).** The server printed it
+  once, at tic 3500; the later prints fell after the harness closed the server,
+  when the client quit. 6456 packets. Host, in a race: `+0` ×2034, `+2` ×1464.
+  Remote, in a race: `+0` ×2, `+1` ×579, `+2` ×1019, `+3` to `+6` ×7, `+7` ×149,
+  `+8` ×1202. Nothing was labelled "outside a race".
+  8.32's prediction -- `+2` almost entirely "host, outside a race" -- **fails
+  on its label**: the waiting map before the race, `RR_TESTRUN`, is a level,
+  so `gamestate == GS_LEVEL` calls it a race. The counts fit a plainer cause,
+  on arithmetic only:
+  - the host's 1464 `+2` are the tics before the server scenario sets
+    `rollback_correct` (the exemption of 8.27 depends on it), about 1500;
+  - the client's `+1`/`+2`, about 1600, are its tics from joining (about
+    tic 540) to the `rollback_lag 6` its scenario sets at tic 2140;
+  - its `+7`/`+8`, about 1350, are the tics from 2140 to 3500.
+
+  All of the `+2` comes before the first measurement window; within the
+  windows it is harmless. A split by "before or after the scenario's settings"
+  would prove it, where `GS_LEVEL` cannot.
+
+**Harness defect, found reading this race and fixed.** `cleancmds_report.py`
+kept the last report of each kind in a window. `correct_on` and `history`
+reset their counters before echoing the next window's marker, so in windows 0
+and 1 the reset's all-zero print won: "0 corrections received" and "0 us a
+pass". The report now skips an all-zero print when the window already has a
+report. It also counted the local player among the others in window 0, since
+the grid line comes at that window's end; it now reads the grid line first.
+The table above is the fixed report's, checked against the raw lines.
