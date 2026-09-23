@@ -26,7 +26,8 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
   measurement can be repeated instead of being n=1.
 - **Found on one map: the drift's cause.** With `rollback_cleancmds` on
   throughout, a driven race reads 0.000 units and 0 checksum refusals, like
-  `nospec` (8.44). A same-session control and the other maps are owed.
+  `nospec` (8.44), and its same-session control diverges as predicted
+  (8.45). The other maps are owed.
 - **Open:** the cost at sixteen karts, and vanilla compatibility (see the
   dedicated section).
 
@@ -51,9 +52,10 @@ that every driven race ran on one plain map, made the harness run any map, and
 found that `rollback_history` as built probably judders (8.40). On the
 measuring machine, the same day, the steps that need no launch are done, and
 found that the blame lines never print with the correction channel on (8.42);
-they now print once a second on both machines (8.43). Then the first launch
+they now print once a second on both machines (8.43). Then the first launches
 since 2026-09-21: `correct_on`, which read like `nospec` on every count
-(8.44). **Every launch is asked for first.**
+(8.44), and its same-session control `correct`, which diverged as predicted
+(8.45). **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -85,10 +87,11 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
      blame samples identical, 0 wrong inputs -- every clause of the
      prediction. The relabel split is written down: its `+2` falls before
      the measurement windows.
-   - **`playtest.sh correct`, driven, on the same build: the same-session
-     control** for `correct_on`. Its off windows must show refusals, drift
-     and blame samples that part, or the instruments on this build are blind.
-     Prediction in 8.44, including which parts first, the seeds or a position.
+   - ~~**`playtest.sh correct`, driven, on the same build: the same-session
+     control.**~~ Done on 2026-09-23 (8.45): refusals from 12 tics into
+     window 0 to the end, 77-84% wrong local inputs in the off windows, blame
+     samples that part and never agree again -- every clause of the
+     prediction. The driven kart parts first, then a bot, then the seeds.
    - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
      in 8.41 (it replaces 8.39's). Ask the driver which window felt closest
      to their hands. Needs the build with the held lead (8.41): the first
@@ -103,9 +106,12 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
      with water, executors, polyobjects and ACS.
 7. **Depending on 6:**
    - `correct_on` reads like `nospec` (it did, 8.44) and the control shows
-     the instruments see a divergence: Phase A is closed on Skyscraper Leaps.
-     Then the correction-rate sweep (`rollback_correct 8`, `16`, `35`), owed
-     since 2026-09-10 -- with no drift, far fewer corrections should do.
+     the instruments see a divergence (it did, 8.45): **Phase A's mechanism
+     is found on Skyscraper Leaps**, which meets the second half of its
+     *Done when*. The first half -- zero reloads with the resend not
+     suppressed -- is not yet run (see Phase A). Then the correction-rate
+     sweep (`rollback_correct 8`, `16`, `35`), owed since 2026-09-10 -- with
+     no drift, far fewer corrections should do.
    - `correct_on` still drifts: there is a second leak, and the memory-hash
      instrument below is next.
    - A map breaks the leak soak or drifts where Skyscraper Leaps does not: the
@@ -119,9 +125,11 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
 ## Phase A -- Understand the drift
 
 **No longer the gate for the alpha.** The correction channel absorbs the
-divergence (0 resends, mean residual 0.13-0.86 units, a kart being about 40
-wide). Phase A is now what lowers the correction rate and the residual, and
-what makes the stock consistency check agree again.
+divergence (0 resends, mean residual 0.13-0.86 units in the off/on/off
+races, a kart being about 40 wide). Phase A is now what lowers the correction
+rate and the residual, and what makes the stock consistency check agree
+again. **On Skyscraper Leaps it does both: 0.000 units and 0 refusals with
+`rollback_cleancmds` on throughout (8.44, 8.45).**
 
 **Excluded, each by measurement:** the restore (0 contamination over 1400 round
 trips, with and without bots); the archive (0/522 leak checks after the
@@ -130,37 +138,45 @@ resim checks); the synchronised RNG as a cause (it parts only after positions
 have, 8.2); the damage path (same hits, same hashes, 8.8); the confirmed clock
 running on a guess (8.9, 8.17, 8.20); late resends (0 arrivals, 8.17).
 
-**Fixed, and probably the source (8.31, 8.33, 8.35-8.38):** the speculation
-started on a tic the server had already sent -- the netticbuffer reserve
-stopped the confirmed loop one short -- and overwrote the local player's input
-in it with the current one, and every bot's input with one recomputed from the
-client's world; the next pass ran that tic as confirmed. `rollback_cleancmds`
-fixes it at race scale (64-85% wrong-input tics down to 0-0.1%), and is on by
-default. The two races' drift readings disagreed, but their protocol cannot
-measure it: an on window inherits whatever the off window before it put out of
-step, and only kart kinematics are corrected (8.38). The race that can --
-`correct_on`, the switch on throughout, against `nospec`'s 0.000 units -- is
-next.
+**Fixed, and the source on Skyscraper Leaps (8.31, 8.33, 8.35-8.38, 8.44,
+8.45):** the speculation started on a tic the server had already sent -- the
+netticbuffer reserve stopped the confirmed loop one short -- and overwrote the
+local player's input in it with the current one, and every bot's input with
+one recomputed from the client's world; the next pass ran that tic as
+confirmed. `rollback_cleancmds` fixes it (64-85% wrong-input tics down to
+0-0.1%), and is on by default. With it on from the first tic, a driven race
+reads 0.000 units, 0 refusals, and blame samples identical on both machines
+(8.44). The same-session control shows the order in which the worlds part
+without it: the driven kart first, by thousandths of a unit, then a bot, then
+the seed sum, which the channel never repairs (8.45). The off/on/off races
+could not measure it, as 8.38 said: their on windows inherited the off
+windows' divergence.
 
 **Measured on one map only** (8.40): every driven race ran on
 `RR_SkyscraperLeaps`, which has no water, no polyobject, no linedef executor
 and no ACS. The exclusions above hold there. The other maps are in *Next, in
 order*.
 
-**Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
-8.27). Hypothesis in 8.32: the host outside a race, harmless. The split was
-read in the first cleancmds race but never recorded, and that race's logs were
-overwritten by the second (8.38). To read again.
+**The relabel histogram's `+2` cluster** (8.27), read in both races of
+2026-09-23: it falls before the measurement windows -- the host's before
+`rollback_correct` is set, the client's before its `rollback_lag 6` --
+harmless on the counts. 8.32's split mislabels it, because the waiting map
+`RR_TESTRUN` is a level (8.44, 8.45).
 
-**If `correct_on` still drifts, the next instrument:** hash the program's
-global memory (the exe's `.data`/`.bss`) just before a speculation and just
-after the restore, narrow a difference down to an address, name it with the
-`.pdb` -- the blind spot every archive-based check shares, since none of them
-look outside the archive.
+**If another map drifts where Skyscraper Leaps does not, the next
+instrument:** hash the program's global memory (the exe's `.data`/`.bss`)
+just before a speculation and just after the restore, narrow a difference down
+to an address, name it with the `.pdb` -- the blind spot every archive-based
+check shares, since none of them look outside the archive.
 
 **Done when:** zero `Game state reloaded` with the resend **not** suppressed
 (`rollback_correct N 0`) over five unattended races and two driven ones -- or,
 failing that, the drift explained down to a mechanism and its residual stated.
+**Status on 2026-09-23:** the second is met on Skyscraper Leaps (mechanism
+8.31, residual 0.000, 8.44-8.45). The first has not been run. It is now
+expected to pass -- a race whose checksum never disagrees never fires a
+resend -- which makes it a cheap confirmation, and the form the other maps'
+check could take.
 
 ---
 

@@ -36,23 +36,24 @@ Every piece is behind a switch that is off by default, except
 | snapshot determinism | 12/12 replays byte-identical; 0/330 resim checks (8.9); leak soak 1/260 after the `playing`/`exiting` fix (8.34), the one failure being `itemList.cap`, known and harmless |
 | confirmed-tic inputs | with `rollback_cleancmds`, 0 to 0.1% of confirmed tics run an input the server did not, against 64-85% (local kart) and 23-80% (bots) without it -- two driven races (8.35, 8.37) |
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
-| residual drift | **0.000 units on 6741 kart samples, 0 checksum refusals, 87 of 87 blame samples identical** with `rollback_cleancmds` on throughout -- one driven race, Skyscraper Leaps (8.44). The 0.13 to 0.86 units (worst 30 to 97) of earlier races came from off windows and what they left behind (8.38) |
+| residual drift | **0.000 units on 6741 kart samples, 0 checksum refusals, 87 of 87 blame samples identical** with `rollback_cleancmds` on throughout -- one driven race, Skyscraper Leaps (8.44), with a same-session control that does diverge (8.45). The 0.12 to 0.86 units (worst 13 to 97) of the off/on/off races come from off windows and what they leave behind (8.38, 8.45) |
 | cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
 | restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
 | listen-server host's input delay | 170-200 ms, now **0** (8.27) |
 
 **Open, in priority order.**
 
-1. **The drift's cause (Phase A) -- found on one map, control owed (8.44).**
-   With `rollback_cleancmds` on from the first tic, the driven `correct_on`
-   race read like `nospec`: 0.000 units on 6741 kart samples, 0 checksum
-   refusals, the once-a-second blame samples (8.43) identical on both
-   machines, 0 wrong inputs, every clause of 8.38's prediction. The drift was
-   8.31's mechanism -- the speculation writing the local input over tics
-   already received -- plus what an off window leaves behind for the next
-   (8.38, 8.42). Owed before Phase A closes: **the same-session control** --
-   `playtest.sh correct` on the same build, whose off windows must show the
-   instruments still see a divergence (prediction in 8.44) -- then the other
+1. **The drift's cause (Phase A) -- answered on Skyscraper Leaps (8.44,
+   8.45).** With `rollback_cleancmds` on from the first tic, the driven
+   `correct_on` race read like `nospec`: 0.000 units on 6741 kart samples, 0
+   checksum refusals, the once-a-second blame samples (8.43) identical on both
+   machines, 0 wrong inputs. The same-session control (`correct`, same build)
+   shows the same instruments see a divergence when there is one: refusals
+   from 12 tics into its first off window, and blame samples that part and
+   never agree again. The driven kart parts first by thousandths of a unit,
+   then a bot, then the seed sum, which the channel never repairs. The drift
+   was 8.31's mechanism -- the speculation writing the local input over tics
+   already received -- and what it left behind (8.38). Still owed: the other
    maps (item 6).
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39 --
    built, off by default, not yet run). Instead of repeating the newest input
@@ -122,7 +123,7 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
 | 8.39 | its adaptive depth made the drawn tic follow the server's filing jitter (8.40); replaced by a held lead over the clock (8.41), so its depth figures no longer apply |
 | 8.32 | its prediction fails on its label -- `RR_TESTRUN` counts as a race -- and the cluster falls before every measurement window, on the counts (8.44) |
-| 8.38 | its `rngsum` clause could not be read: no blame line printed with the correction channel on (8.42). Readable from a build with 8.43's once-a-second lines. Its prediction holds on every clause (8.44), same-session control owed |
+| 8.38 | its `rngsum` clause could not be read: no blame line printed with the correction channel on (8.42). Readable from a build with 8.43's once-a-second lines. Its prediction holds on every clause (8.44), and its inheritance is seen directly in the same-session control (8.45) |
 | 8.42 | its proposed server line in the suppressed branch was left out of 8.43 |
 | 8.40 point 1 | its map figures hold on the measuring machine's install (8.42) |
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
@@ -2758,3 +2759,69 @@ pass". The report now skips an all-zero print when the window already has a
 report. It also counted the local player among the others in window 0, since
 the grid line comes at that window's end; it now reads the grid line first.
 The table above is the fixed report's, checked against the raw lines.
+
+### 8.45 The same-session control: the instruments see the divergence, and positions part before the seeds
+
+Measured: same build as 8.44 (`a1df8bb85`, sha checked by the harness), same
+session, `playtest.sh correct` -- `rollback_cleancmds` off / on / off --
+driven by Gibax, `RR_SkyscraperLeaps`, nine karts, `rollback_lag 6`.
+Prediction written in 8.44 before the run. Logs kept as
+`*_correct_20260923-133445_a1df8bb.txt`; the second cleancmds race's logs,
+which this run would have overwritten, were first saved as
+`*_correct_20260921-235500_89e5d30.txt`.
+
+| window | switch | local inputs wrong | others wrong | mean / worst drift | refusals | blame samples differing: seeds / a position |
+|---|---|---|---|---|---|---|
+| 0 | off | 766 of 994 (77%) | 2552 of 7952 | 0.297 / 42.2 | 6, from tic 2203 | 26 / 27 of 28 |
+| 1 | **on** | 1 of 1000 | 4 of 8000 | 0.116 / 13.5 | **6** | **29 / 29 of 29** |
+| 2 | off | 899 of 1070 (84%) | 6286 of 8560 | 0.603 / 57.4 | 6, last at 5181 | 31 / 31 of 31 |
+
+The five wrong inputs of the on window all sit on its first tic, 3185, the
+switch itself -- as in 8.35.
+
+**Every clause of the prediction holds.**
+
+- Refusals from 12 tics into window 0 to the end of the race, the on window
+  included: 18, six a window, one per five-second throttle.
+- Off windows: 77% and 84% of the local kart's confirmed inputs wrong, and a
+  mean drift of 0.297 and 0.603 units.
+- Blame samples differ from window 0 on and never all agree again: over the
+  race, the seeds differ on 86 of 88 samples and a position on 87.
+
+So on this build, in this session, the same instruments that read 0 in 8.44
+see a divergence as soon as there is one. **8.44's zeros are not blind
+instruments.**
+
+**What parts first, sample by sample, from the first shared sample:**
+
+| tic | seed sum | positions that differ |
+|---|---|---|
+| 2205 | equal | `p8` (the driven kart), by 0.002 units |
+| 2240 | equal | `p2` (a bot), by 0.001 units |
+| 2275 | **differs** | none -- all nine equal |
+| 2310 | differs | `p2`, under 0.001 |
+| 2345 | differs | `p2`, and `p8` by 0.24 |
+| 2380 | differs | `p2`, `p3`, `p6`, and `p8` by 1.54 |
+
+The driven kart parts first, by a few thousandths of a unit, three tics after
+the first wrong input (tic 2202, `p8`, turn 800 against 696). A bot follows. The
+seed sum parts two samples later, at a sample where the correction channel had
+just put every kart back. It never agrees again: the channel repairs positions
+and never the seeds. This is 8.38's inheritance, seen directly. In the on
+window every input is right and every sample still differs, in the seeds and
+in the positions, for all of its 29 samples.
+
+**Phase A's question is answered on this map.** The drift was the speculation
+overwriting the local input of tics already received (8.31). That put the
+confirmed kart a fraction of a unit off, then the bots through contact and
+the synchronised RNG, which nothing repairs. With `rollback_cleancmds` on
+from the first tic, none of it happens (8.44). Still owed: the other maps
+(8.40), and any mode other than a scripted race.
+
+**The relabel split again**, as a check on 8.44's reading. Host, in a race:
+`+0` ×2034, `+2` ×1464, identical to `correct_on` -- the same server scenario,
+the same tics before `rollback_correct`. Remote, in a race: `+1`/`+2` ×1598,
+`+7`/`+8` ×1300, the rest ×8. It is the same shape, and it fits the same
+arithmetic.
+
+**Not yet asked:** how either race felt to drive.
