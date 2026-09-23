@@ -103,6 +103,11 @@ RNG seeds — in one text line kept for the last 512 tics.
 - **Run on both machines** (client and server). When the server refuses a tic,
   it prints its own line; the client prints its around the same moment. The
   two are compared tic by tic.
+- **Prints nothing while `rollback_correct` is on at the server.** The lines
+  are printed only on the way to a full-state resend, and the correction
+  channel suppresses the resend first; the server then prints only its
+  "consistency mismatch ... resend suppressed" notice, which
+  `cleancmds_report.py` counts per window (`WORLDWIDE.md` 8.42).
 - Used to decide between three hypotheses in a single line of text: position
   diverges, an item diverges, or the RNG seed diverges.
 

@@ -49,9 +49,14 @@ Every piece is behind a switch that is off by default, except
    are corrected, so whatever an off window put out of step -- the
    synchronised RNG, objects, any kart state the channel does not carry --
    stays out of step through the on window that follows, by an amount that
-   depends on the race. Next: one driven race with `rollback_cleancmds` on from
+   depends on the race. The second cleancmds race's server refused the
+   client's checksum at every five-second sample from 39 tics into its first
+   off window to the end of the race, the on window included; `nospec`'s
+   refused none (8.42). Next: one driven race with `rollback_cleancmds` on from
    start to finish (`playtest.sh correct_on`), to compare with `nospec`'s
-   0.000 units (8.9). Prediction written in 8.38.
+   0.000 units and 0 refusals. Prediction in 8.38, plus 0 refusals (8.42); its
+   `rngsum` clause cannot be read, because no blame line prints while the
+   correction channel suppresses resends (8.42).
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39 --
    built, off by default, not yet run). Instead of repeating the newest input
    over a 4-tic speculation, the speculation replays every input sent but not
@@ -118,7 +123,10 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
 | 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
 | 8.39 | its adaptive depth made the drawn tic follow the server's filing jitter (8.40); replaced by a held lead over the clock (8.41), so its depth figures no longer apply |
+| 8.38 | its `rngsum` clause cannot be read: no blame line prints with the correction channel on (8.42); the refusal count stands in for it |
+| 8.40 point 1 | its map figures hold on the measuring machine's install (8.42) |
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
+| 8.40 point 3 | `rngsum` is not in the logs to be read (8.42) |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
 ## 0. The rename, and what it actually commits to
@@ -2308,6 +2316,12 @@ seen directly. The first race's logs are gone -- the second overwrote them --
 so the harness now also keeps a copy of every run's logs named by date and exe
 sha.
 
+> ⚠ **2026-09-23 (8.42): there are no such lines.** With the correction
+> channel on, a refused checksum prints the "resend suppressed" notice and
+> stops before the blame line, on both machines. The `rngsum` clause of the
+> prediction above cannot be read as the harness stands; the count of
+> refusals can, and `nospec`'s is 0.
+
 **Also found:**
 
 - The relabel split (8.32) was read in the first cleancmds race and recorded
@@ -2530,3 +2544,80 @@ build:
 - drift unchanged between windows beyond the race-position trend;
 - the driver: no hitch in the on window that the off windows do not have, and
   quick flicks and releases drawn where the hands put them.
+
+### 8.42 The measuring machine, before any launch: the maps agree, and the blame lines were never printed
+
+Read on the measuring machine, 2026-09-23. Nothing launched. The dev artifact
+of `2b58e1d53` is installed in the game folder and in the second instance's
+home, the old build kept as `.bak_89e5d30`; both copies carry
+`rollback-netcode 2b58e1d`, and `2b58e1d53` is the code repository's `HEAD`.
+
+**1. The maps are the ones 8.40 read.** `harnais/maps.py` on this machine's
+install (the v2.4 assets): 152 race maps, 85 with water FOFs, 57 with ACS, 36
+with linedef executors, 6 with polyobjects, 30 with none of the four, 1561
+things on average. Every row of 8.40's shortlist, and Skyscraper Leaps, reads
+the same. The shortlist stands as written.
+
+**2. There is no `rngsum` to read in the second cleancmds race.** Both of its
+logs (8.37, binary `89e5d30`) switch `rollback_blame` on -- the confirmation
+line is there, once each -- and neither holds a single blame line: 0
+`SERVER`, 0 `CLIENT`. Read in the code, it cannot be otherwise
+(`d_clisrv.c`, the consistency check in the client-packet handler):
+
+- the server prints its `rollback_blame: SERVER` line after it has decided to
+  resend. With `rollback_correct` on, `K_RollbackCorrectSuppress()` prints the
+  "resend suppressed" notice and `break`s first;
+- the client prints its `CLIENT` lines when `PT_WILLRESENDGAMESTATE` arrives,
+  and a suppressed resend never sends it.
+
+So no race with the correction channel on has ever printed a blame line. The
+readings this file took from them (8.1, 8.5) come from races that still
+resent. **8.38's prediction for `correct_on` -- "`rngsum` identical on both
+machines at every refusal" -- cannot be read**: its server runs
+`rollback_correct 4`. ROADMAP step 5's first item has nothing to read.
+
+**3. What those logs do show: a refusal count, and it never stops.** The server
+log carries one "consistency mismatch ... resend suppressed" line per refused
+checksum, throttled like the resend it replaces, to one per five seconds.
+`cleancmds_report.py` now counts them per window:
+
+| window | switch | tics | wrong inputs, local / others | mean drift | refusals |
+|---|---|---|---|---|---|
+| before 0 | (speculation off) | join to 2203 | -- | -- | 0 |
+| 0 | off | 2204-3197 | 840/994 / 2729/7952 | 0.442 | 6, from tic 2243 |
+| 1 | **on** | 3198-4197 | **0**/1000 / **0**/8000 | 0.133 | **6** |
+| 2 | off | 4198-5267 | 865/1070 / 6362/8560 | 0.539 | 6, last at 5219 |
+
+All 18 are for the client's kart (player 9 in the server's numbering, `p8`).
+They fall 175 tics apart, once 176: each time the five-second throttle ran
+out, the very next checksum from the client disagreed. The first came 39 tics
+into window 0 -- twoclock was 0 until that window opened, and nothing was
+refused before it -- and from there no sample ever agreed again, the on window
+included, while that window ran not one wrong input.
+
+**The control, from the same folder:** the `nospec` race of 8.9 (binary
+`cbd2011`, same server scenario, `rollback_correct 4`, blame on) has **0**
+refusals, over the race that read 0.000 units on 3357 kart samples.
+
+**Reading.** This is what 8.38 said an off window would leave behind: the
+confirmed worlds part in the first off window and do not come back together,
+whatever the next window's inputs. But it does not say *what* differs. The
+checksum sums each player's `x`, `y`, `itemtype` and the synchronised RNG
+seeds, and a position a fraction of a unit off is enough to change it -- the
+on window's drift, 0.133 units mean, is that already. RNG and objects are
+neither shown nor ruled out.
+
+**What changes for `correct_on`.** The refusal count is readable and has a
+control, so the prediction gains a clause, written before the run: if 8.31's
+mechanism was the drift's whole source, `correct_on`'s confirmed world agrees
+with the server's as `nospec`'s did -- **0 refusals** in every window, beside
+a mean drift under 0.05 units. Any refusal means something still differs; the
+report dates the first one, but not what it is.
+
+**Proposed, not coded** (it touches `src/`): make `rollback_blame` print
+without a resend. Both machines print the blame line of every 35th confirmed
+tic (`gametic % TICRATE == 0`, at the one place `Consistancy_Describe` is
+called), and the server also prints its own line in the suppressed branch.
+The two logs then hold lines for the same tics once a second, refusal or not,
+and the first tic at which `rngsum` parts can be told apart from the first
+tic at which a position does. About 200 bytes a second a machine.

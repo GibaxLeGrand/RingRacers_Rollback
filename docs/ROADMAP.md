@@ -46,8 +46,10 @@ leak soak and two driven cleancmds races (8.34-8.37). The audit of 2026-09-22
 found that those races' off/on/off protocol cannot measure the drift (8.38),
 and built `rollback_history` for the feel (8.39). The audit of 2026-09-23 found
 that every driven race ran on one plain map, made the harness run any map, and
-found that `rollback_history` as built probably judders (8.40). **Nothing
-run** since 2026-09-21. **Every launch is asked for first.**
+found that `rollback_history` as built probably judders (8.40). On the
+measuring machine, the same day, the steps that need no launch are done, and
+found that the blame lines never print with the correction channel on (8.42).
+**Nothing run** since 2026-09-21. **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -65,23 +67,23 @@ run** since 2026-09-21. **Every launch is asked for first.**
      from 64-85% (local) and 23-80% (bots) to **0-0.1%**; no felt difference
      (8.36); now on by default. Their drift readings disagreed -- and cannot be
      trusted either way (8.38).
-5. **Without a launch, on the measuring machine:**
-   - read `rngsum` in the second cleancmds race's `rollback_blame` lines, both
-     machines, at every refusal. Parting in window 0 and never agreeing again
-     would show the inheritance of 8.38 directly;
-   - take the dev artifact of the latest commit CI built (the newest green run
-     in the Actions tab; `rollback_history` compiled green on 2026-09-22) and
-     check its sha. Since 2026-09-22, pushes that touch only docs are not
-     built, and the harness accepts an exe whose commit differs from `HEAD`
-     only by docs;
-   - `python maps.py` in `harnais/`, to check the map list and the shortlist
-     of 8.40 against the measuring machine's version of the game.
+5. ~~**Without a launch, on the measuring machine.**~~ Done on 2026-09-23
+   (8.42):
+   - the dev artifact of `2b58e1d53` is installed, its sha checked;
+   - `maps.py`: the same 152 race maps as 8.40, the shortlist stands;
+   - `rngsum`: there is none to read. No blame line prints while the
+     correction channel suppresses resends. What the logs do show: the
+     server refused the client's checksum at every five-second sample from
+     window 0 to the end, the on window included; `nospec` refused none.
 6. **The next test session, one launch at a time, each asked for:**
    - `playtest.sh correct_on`, driven -- `rollback_cleancmds` on from start to
-     finish. Prediction in 8.38: mean drift under 0.05 units in every window,
-     `rngsum` equal at every refusal. Read with `cleancmds_report.py
-     playlog_correct_on.txt srvlog_correct_on.txt`. Read the relabel split too,
-     and write it down this time (8.32).
+     finish. Prediction in 8.38, plus a clause written in 8.42: mean drift
+     under 0.05 units in every window, and **0 checksum refusals**, as
+     `nospec`. Read with `cleancmds_report.py playlog_correct_on.txt
+     srvlog_correct_on.txt`, which now counts the refusals per window. Its
+     `rngsum` clause needs `rollback_blame` to print without a resend first
+     (proposed in 8.42, touches `src/`). Read the relabel split too, and write
+     it down this time (8.32).
    - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
      in 8.41 (it replaces 8.39's). Ask the driver which window felt closest
      to their hands. Needs the build with the held lead (8.41): the first
