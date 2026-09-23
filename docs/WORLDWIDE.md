@@ -13,7 +13,7 @@ rest lives in the private notes only -- `README.md`, the entry point (working
 rules, decisions, environment); `ROLLBACK.md`, the closed journal from before
 the pivot; and `AUDIT_20260909.md`, the comparison with SRB2 NetPlus and Odamex.
 
-## Current state (2026-09-22) -- read this first
+## Current state (2026-09-23) -- read this first
 
 This block is the only part of this file that is rewritten to stay current.
 Everything after it is a dated journal: when a later section overturns an
@@ -58,7 +58,11 @@ Every piece is behind a switch that is off by default, except
    yet applied, in the order it was made, and goes as deep as the newest one
    needs (about 8 tics at 171 ms). What is drawn then matches what the server
    will do with the player's hands. It costs about twice the speculation.
-   Test: `playtest.sh history`, judged by the driver.
+   **As built it probably judders** (8.40): its depth makes the drawn tic
+   follow the delay the server files this machine's inputs with, which
+   jitters by a tic or two, and every change moves the drawn world by that
+   much. A held depth is proposed, not coded. Test: `playtest.sh history`,
+   judged by the driver.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
    and heavier if `rollback_history` stays on.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
@@ -72,7 +76,11 @@ Every piece is behind a switch that is off by default, except
    (8.38). To read again in the next race; the harness now keeps every race's
    logs.
 6. **Never run under prediction:** a person playing on the host; a full race;
-   Battle, Grand Prix, Encore; anything longer than a scripted race.
+   Battle, Grand Prix, Encore; anything longer than a scripted race; **any map
+   but one**. Every driven race ran on `RR_SkyscraperLeaps`, one of the 30
+   race maps out of 152 with no water, no polyobject, no linedef executor and
+   no ACS (8.40). The harness now runs any scenario on any map (`map=<lump>`),
+   and `harnais/maps.py` lists what each map exercises.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -108,6 +116,7 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
 | 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
+| 8.39 | its adaptive depth makes the drawn tic follow the server's filing jitter: probable judder, and a fix proposed (8.40) |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
 ## 0. The rename, and what it actually commits to
@@ -2377,3 +2386,91 @@ whether that reads as jitter is for eyes to say.
 - The driver: in the on window the kart goes where the hands say on quick
   flicks and releases, with no small late turn afterwards. If it feels worse
   -- remote karts jumping, the frame rate dropping -- that is the finding.
+
+⚠ **2026-09-23 (8.40):** the depth as built is not steady. It makes the drawn
+tic follow the delay the server files this machine's inputs with, which
+jitters, so the on window probably judders. Read 8.40 before running this.
+
+### 8.40 Audit, 2026-09-23: one map, and a judder in `rollback_history`
+
+Nothing run. Read: what landed since 8.39 (only the CI's docs filter, green),
+the map files of a Ring Racers install, and `rollback_history` again. Public
+repository clean of personal information; the three shared documents
+identical.
+
+**1. Every driven race ran on one of the plainest maps in the game.**
+`harnais/maps.py` reads the game's `.pk3` files, without launching anything,
+and says what each race map contains. Read on a 2025 install; to be read again
+on the measuring machine, whose version may differ:
+
+- `RR_SkyscraperLeaps`: 973 map things (the mean over the 152 race maps is
+  1561), **no water FOF, no polyobject, no linedef executor, no ACS**. It is
+  one of 30 race maps with none of the four.
+- Of the 152: 85 have water FOFs, 57 run ACS, 36 have linedef executors, 6
+  have polyobjects.
+
+So everything Phase A lists as "excluded by measurement" was excluded on that
+map: polyobjects (`P_ArchivePolyObjects`), sectors moved by executors, and ACS
+threads (`ACS_Archive`) have never been through a speculation during a driven
+race, and a kart in water has never been predicted. The soaks also ran on
+Northern District (7 water FOFs, 861 bytes of ACS), Green Hills and Sonic
+Speedway, which covers some of it without a driver.
+
+**What to run, per map, each launch asked for:** `soak.sh leak map=<lump>` then
+`soak.sh ww map=<lump>` first (unattended, one instance, and they name the
+field that breaks), then `playtest.sh correct_on map=<lump>` driven, with
+`playtest.sh nospec map=<lump>` as that map's control. Shortlist, one family
+each:
+
+| map | laps | why |
+|---|---|---|
+| `RR_NorthernDistrict` | 4 | already soaked; water 7, ACS 861 -- the gentle first step |
+| `RR_CarnivalNight` | 3 | water 37, executors 24, ACS 845 |
+| `RR_Labyrinth` | 2 | water 80, the most of any race map |
+| `RR_CoastalTemple` | 3 | polyobjects 6, ACS 2537 |
+| `RR_DeathEgg` | 3 | polyobjects 4, executors 15, ACS 3132, 2629 things: everything at once |
+| `RR_Opulence` | 3 | 3538 things, 3.6 times Skyscraper Leaps: the snapshot, so Phase B |
+
+A driven race on these is also Phase C ahead of Phase B: the resends and the
+drift can be read, but a judgement of feel is suspect wherever a pass
+overruns the tic.
+
+**Prediction, written before any of it runs:** the leak soak fails only on
+`itemList.cap`, and the resim check stays at 0, on all six maps; `correct_on`
+reads like `nospec` on each. A failure named in the polyobject or specials
+block by `P_LocateSnapshotBlock` -- or in "waypoints", under which it reports
+ACS and Lua, since they write no marker of their own -- is the second leak
+Phase A has been looking for.
+
+**2. `rollback_history`'s depth makes the drawn world judder.** As built
+(8.39), a pass speculates `(neededtic - frontier) + A` tics, `A` being the age
+of the input the server applied at `neededtic - 1`. The drawn tic is therefore
+`neededtic + A`, which works out to the local tic plus the delay the server
+filed that input with. With the switch off, the drawn tic is `frontier + 4`,
+and the frontier advances one tic per tic because the netticbuffer reserve
+absorbs arrival jitter. With it on, the drawn tic carries the server's filing
+delay, and for a client that pays for its own latency that delay is the raw
+transit time: `faketic - realstart` spread over `+6` to `+8` under
+`rollback_lag 6` (8.22). Each time it changes, the drawn world moves by that
+many tics in one frame: two tics' travel at once, or a kart that holds or
+steps back. A pass whose match fails falls back to `rollback_twoclock`, a jump
+of about four tics.
+
+**Prediction:** as built, the on window of `playtest.sh history` shows visible
+hitches, often enough that the driver notices them before any gain on flicks.
+
+**Proposed fix, not coded** (it touches `src/`):
+
+- **Hold the depth**: speculate to the high-water mark of the needed depth over
+  the last second, lowering it by at most one tic a second. The drawn tic then
+  advances one per tic except when the mark moves. The tics past the last
+  input in flight repeat the newest one, as today.
+- On a failed match, keep the previous depth instead of falling back to
+  `rollback_twoclock`.
+- **Measure the judder** instead of leaving it to the eye: count the passes
+  where the drawn tic minus the local tic changed, and print it in the
+  `rollback_history` report.
+
+**3. Still owed, no launch needed:** `rngsum` in the second cleancmds race's
+blame logs (8.38); the relabel split, written down this time (8.32);
+`itemList.cap` excluded from the leak comparison, so a clean soak reads 0.

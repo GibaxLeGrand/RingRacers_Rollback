@@ -41,11 +41,13 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
 
 ## Next, in order
 
-State on 2026-09-22. The 2026-09-21 session on the measuring machine ran the
+State on 2026-09-23. The 2026-09-21 session on the measuring machine ran the
 leak soak and two driven cleancmds races (8.34-8.37). The audit of 2026-09-22
 found that those races' off/on/off protocol cannot measure the drift (8.38),
-and built `rollback_history` for the feel (8.39). Both are committed as code
-and harness, **nothing run**. **Every launch is asked for first.**
+and built `rollback_history` for the feel (8.39). The audit of 2026-09-23 found
+that every driven race ran on one plain map, made the harness run any map, and
+found that `rollback_history` as built probably judders (8.40). **Nothing
+run** since 2026-09-21. **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -71,7 +73,9 @@ and harness, **nothing run**. **Every launch is asked for first.**
      in the Actions tab; `rollback_history` compiled green on 2026-09-22) and
      check its sha. Since 2026-09-22, pushes that touch only docs are not
      built, and the harness accepts an exe whose commit differs from `HEAD`
-     only by docs.
+     only by docs;
+   - `python maps.py` in `harnais/`, to check the map list and the shortlist
+     of 8.40 against the measuring machine's version of the game.
 6. **The next test session, one launch at a time, each asked for:**
    - `playtest.sh correct_on`, driven -- `rollback_cleancmds` on from start to
      finish. Prediction in 8.38: mean drift under 0.05 units in every window,
@@ -80,14 +84,24 @@ and harness, **nothing run**. **Every launch is asked for first.**
      and write it down this time (8.32).
    - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
      in 8.39. Ask the driver which window felt closest to their hands.
+     **Better after the held depth of 8.40** (a `src/` change and one CI
+     build): as built, the depth follows the server's filing jitter and the
+     drawn world probably judders, which would hide what the switch is for.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
+   - **Other maps** (8.40), map by map from its shortlist: `soak.sh leak
+     map=<lump>` and `soak.sh ww map=<lump>` first, unattended; then
+     `playtest.sh correct_on map=<lump>` driven, with `playtest.sh nospec
+     map=<lump>` as its control. Northern District first, then the maps
+     with water, executors, polyobjects and ACS.
 7. **Depending on 6:**
    - `correct_on` reads like `nospec`: Phase A is closed. Then the
      correction-rate sweep (`rollback_correct 8`, `16`, `35`), owed since
      2026-09-10 -- less drift should mean far fewer corrections.
    - `correct_on` still drifts: there is a second leak, and the memory-hash
      instrument below is next.
+   - A map breaks the leak soak or drifts where Skyscraper Leaps does not: the
+     block `P_LocateSnapshotBlock` names is the second leak.
    - `history` feels better: turn it on by default, and fold its cost into
      Phase B.
 8. **Then** the compatibility work (section below), and Phase B's big lever.
@@ -119,6 +133,11 @@ measure it: an on window inherits whatever the off window before it put out of
 step, and only kart kinematics are corrected (8.38). The race that can --
 `correct_on`, the switch on throughout, against `nospec`'s 0.000 units -- is
 next.
+
+**Measured on one map only** (8.40): every driven race ran on
+`RR_SkyscraperLeaps`, which has no water, no polyobject, no linedef executor
+and no ACS. The exclusions above hold there. The other maps are in *Next, in
+order*.
 
 **Also open:** the relabel histogram's `+2` cluster (2557 of 6403 packets,
 8.27). Hypothesis in 8.32: the host outside a race, harmless. The split was
@@ -183,7 +202,9 @@ Nothing here has run under prediction yet:
   differently);
 - items and respawns used on purpose -- the soak replays frozen inputs and is
   blind to anything edge-triggered;
-- three maps with geometry the test maps lack: steep slopes, water, a big drop.
+- maps with what the test map lacks: water, polyobjects, linedef executors, ACS
+  (`harnais/maps.py` lists them; shortlist in `WORLDWIDE.md` 8.40). The
+  harness runs any scenario on any map (`map=<lump>`).
 
 **Item policy:** do not predict the roulette's result. Let the reel spin under
 speculation and commit the pick on a confirmed tic (`WORLDWIDE.md` §4). Prove it
@@ -295,7 +316,8 @@ the compatibility section.
 - **The inputs still in flight** (`rollback_history`, 8.39): the speculation
   replays every input sent but not yet applied, instead of repeating the
   newest, so quick flicks and releases are drawn as the server will play
-  them. Built, off by default; judged in `playtest.sh history`.
+  them. Built, off by default; judged in `playtest.sh history`. Its depth
+  should be held steady first (8.40).
 - **Somebody hosts and judges.** Every reactivity verdict so far was given from
   the client's seat, and the host was paying 170-200 ms until 2026-09-20. The
   bench cannot stand in for this.
