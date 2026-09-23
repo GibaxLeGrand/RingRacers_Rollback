@@ -83,10 +83,10 @@ run** since 2026-09-21. **Every launch is asked for first.**
      playlog_correct_on.txt srvlog_correct_on.txt`. Read the relabel split too,
      and write it down this time (8.32).
    - `playtest.sh history`, driven -- `rollback_history` 0 / 12 / 0. Prediction
-     in 8.39. Ask the driver which window felt closest to their hands.
-     **Better after the held depth of 8.40** (a `src/` change and one CI
-     build): as built, the depth follows the server's filing jitter and the
-     drawn world probably judders, which would hide what the switch is for.
+     in 8.41 (it replaces 8.39's). Ask the driver which window felt closest
+     to their hands. Needs the build with the held lead (8.41): the first
+     build's depth followed the server's filing jitter, and the drawn world
+     would have juddered (8.40).
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
    - **Other maps** (8.40), map by map from its shortlist: `soak.sh leak
@@ -316,8 +316,9 @@ the compatibility section.
 - **The inputs still in flight** (`rollback_history`, 8.39): the speculation
   replays every input sent but not yet applied, instead of repeating the
   newest, so quick flicks and releases are drawn as the server will play
-  them. Built, off by default; judged in `playtest.sh history`. Its depth
-  should be held steady first (8.40).
+  them. Built, off by default; judged in `playtest.sh history`. Holds the
+  drawn tic's lead over the clock so the picture does not judder (8.41), and
+  counts the drawn world's jumps, as a control with the switch off too.
 - **Somebody hosts and judges.** Every reactivity verdict so far was given from
   the client's seat, and the host was paying 170-200 ms until 2026-09-20. The
   bench cannot stand in for this.

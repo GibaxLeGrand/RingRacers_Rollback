@@ -58,11 +58,12 @@ Every piece is behind a switch that is off by default, except
    yet applied, in the order it was made, and goes as deep as the newest one
    needs (about 8 tics at 171 ms). What is drawn then matches what the server
    will do with the player's hands. It costs about twice the speculation.
-   **As built it probably judders** (8.40): its depth makes the drawn tic
-   follow the delay the server files this machine's inputs with, which
-   jitters by a tic or two, and every change moves the drawn world by that
-   much. A held depth is proposed, not coded. Test: `playtest.sh history`,
-   judged by the driver.
+   As first built it would have juddered (8.40): its depth made the drawn
+   tic follow the delay the server files this machine's inputs with, which
+   jitters by a tic or two. **Fixed in code on 2026-09-23 (8.41), not run:**
+   it now holds the drawn tic's lead over the clock, and counts the drawn
+   world's jumps -- with the switch off too, as a control. Test:
+   `playtest.sh history`, judged by the driver.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
    and heavier if `rollback_history` stays on.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
@@ -116,7 +117,8 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.30 point 4 | "harmless on reading" is wrong: the speculation starts on a received tic (8.31) |
 | 8.31 | its mechanism is seen at full scale in the 2026-09-20 logs, and on the bots as well, which its counters do not count (8.33) |
 | 8.33 | its inputs prediction is confirmed at race scale, twice. Its drift prediction cannot be judged by the off/on/off protocol it wrote (8.38). Its feel risk did not materialise (8.36) |
-| 8.39 | its adaptive depth makes the drawn tic follow the server's filing jitter: probable judder, and a fix proposed (8.40) |
+| 8.39 | its adaptive depth made the drawn tic follow the server's filing jitter (8.40); replaced by a held lead over the clock (8.41), so its depth figures no longer apply |
+| 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
 ## 0. The rename, and what it actually commits to
@@ -2459,7 +2461,8 @@ of about four tics.
 **Prediction:** as built, the on window of `playtest.sh history` shows visible
 hitches, often enough that the driver notices them before any gain on flicks.
 
-**Proposed fix, not coded** (it touches `src/`):
+**Proposed fix, not coded** (it touches `src/`). ⚠ Built the same day as a
+held *lead over the clock*, not a held depth (8.41):
 
 - **Hold the depth**: speculate to the high-water mark of the needed depth over
   the last second, lowering it by at most one tic a second. The drawn tic then
@@ -2474,3 +2477,56 @@ hitches, often enough that the driver notices them before any gain on flicks.
 **3. Still owed, no launch needed:** `rngsum` in the second cleancmds race's
 blame logs (8.38); the relabel split, written down this time (8.32);
 `itemList.cap` excluded from the leak comparison, so a clean soak reads 0.
+
+### 8.41 `rollback_history` holds the drawn tic's lead over the clock
+
+Built on 2026-09-23 from 8.40 point 2, **not run**. Code:
+`src/k_rollback.c` (`K_RollbackSpeculate`, `Command_RollbackHistory_f`).
+
+**Why the lead, not the depth.** 8.40 proposed holding the *depth*. But the
+drawn tic is the frontier plus the depth, so a held depth still passes the
+frontier's own unevenness to the screen: a pass whose confirmed loop ran no tic,
+or two, moves the drawn world by a tic. What should stay put is the drawn tic
+against real time (`I_GetTime()`). So that is what is held, and the depth is
+whatever reaches it from the frontier on each pass.
+
+**How.** On each pass with the switch on:
+
+- The lead asked for is the tic the newest input in flight lands on
+  (`neededtic` plus the number in flight), minus `I_GetTime()`.
+- The held lead rises to it at once when a pass asks for more. When a whole
+  second passes in which no pass asked for the held lead, it comes down by one
+  tic. A pass that finds no match asks for nothing, and the lead stands.
+- The depth is the held lead plus `I_GetTime()` minus the frontier, never
+  below `rollback_twoclock` nor above `rollback_history N`.
+- A gap of more than a second between passes (a map change, a pause) starts
+  the hold again.
+
+The inputs in flight are still replayed from `neededtic`, oldest first. The
+extra tics a held lead adds past the newest one repeat it, as the speculation
+always did.
+
+**Measured instead of eyeballed:** every pass, with the switch on or off,
+compares the drawn tic minus `I_GetTime()` with the previous pass's. The
+`rollback_history` report now prints how many passes it changed on, and by how
+many tics in all, plus how many times the lead was raised and lowered. Setting
+the switch resets the counts. The `history` scenario already prints the report
+at each window's end. `correct_on` now does too, reset each window, for a
+baseline with the switch off throughout. `cleancmds_report.py` reads the new
+lines.
+
+**Prediction, written before the run** (`playtest.sh history`). It replaces
+8.39's depth figures and 8.40's judder prediction, which were about the first
+build:
+
+- off windows: the drawn world moves against the clock on under 5% of
+  passes;
+- on window: within 2 points of the off windows, with the lead raised and
+  lowered fewer than 20 times each;
+- the applied input found on over 95% of passes, about 7 inputs in flight, a
+  speculation 9 to 10 tics deep on average (the held lead sits at the top of
+  the jitter, a tic or two above 8.39's 8), never cut short at 12;
+- cost per pass 1.8 to 2.3 times the off windows';
+- drift unchanged between windows beyond the race-position trend;
+- the driver: no hitch in the on window that the off windows do not have, and
+  quick flicks and releases drawn where the hands put them.

@@ -12,7 +12,7 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-22** — 23 commands, checked against
+**Up to date as of 2026-09-23** — 23 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`. Two are **obsolete**
 (`rollback_loop`, `rollback_pace`) and are kept only for comparison.
 
@@ -304,17 +304,25 @@ yet applied by the server -- one per tic, in the order you made them, instead
 of repeating your newest input over every speculated tic (`WORLDWIDE.md` 8.39).
 It finds which input the server applied on the newest tic it has sent by the
 leveltime stamp every ticcmd carries, and replays everything you sent after
-it. The speculation then goes as deep as your newest input needs -- never
-below `rollback_twoclock`, never above `maxdepth` (capped at 34).
+it. The speculation then reaches the tic your newest input will land on --
+never below `rollback_twoclock`, never above `maxdepth` (capped at 34).
+
+That tic moves with the network's jitter, so the command does not chase it:
+it holds the drawn tic's **lead over the clock** at the largest one asked for
+in the last second, raises it at once, and lowers it by one tic a second at
+most. The picture then advances one tic per tic instead of jumping with every
+jitter (`WORLDWIDE.md` 8.40, 8.41).
 
 - Changes only what is **drawn**, never the confirmed world: the drift and the
   correction channel should not move.
-- About doubles the speculation's cost at 171 ms (4 tics become about 8).
+- About doubles the speculation's cost at 171 ms (4 tics become about 9 to 10).
 - Needs `rollback_cleancmds` on (the default); with it off, it does nothing
   and says so.
-- No argument: the state, the share of passes that found the applied input,
-  the inputs in flight on average (the round trip, in tics), and the average
-  depth, with how often the cap cut it short.
+- No argument: the state; how often the drawn world moved against the
+  clock (on or off -- an off window is the control); the share of passes that
+  found the applied input; the inputs in flight on average (the round trip,
+  in tics); the average depth, with how often the cap cut it short; and how
+  many times the lead was raised and lowered.
 - Setting it resets those counts, so the same race can be read off then on.
 - Suggested value: `12`.
 
