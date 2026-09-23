@@ -46,6 +46,7 @@
 #include "doomstat.h"
 #include "g_game.h" // players, playeringame
 #include "i_system.h" // I_GetPreciseTime()
+#include "i_time.h" // I_GetTime()
 #include "info.h"
 #include "k_bot.h" // K_BuildBotTiccmd
 #include "k_grandprix.h" // grandprixinfo
@@ -3165,6 +3166,33 @@ static uint32_t g_histcapped;   // passes whose replay was cut short by the dept
 static uint64_t g_histunackedsum;
 static uint64_t g_histdepthsum;
 
+// What rollback_history holds steady is the drawn tic's lead over the clock,
+// not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
+// lands on moves with the delay the server files this machine's inputs with --
+// raw transit time, jittering by a tic or two -- and speculating to exactly it
+// made the drawn world jump by as much every time it moved. So the lead is the
+// largest one asked for in the last second: it rises at once when a pass asks
+// for more, and comes down one tic a second at most. The depth is whatever
+// reaches that lead from the frontier, so the frontier's own unevenness is
+// absorbed too.
+static dboolean g_histhold;     // a lead is being held
+static int32_t g_histlead;      // the held lead: drawn tic minus I_GetTime()
+static int32_t g_histpeak;      // the largest lead asked for since the last step
+static tic_t g_histstepat;      // I_GetTime() of the last rise or step down
+static uint32_t g_histrises;    // the lead raised: the drawn world jumps forward
+static uint32_t g_histdrops;    // the lead lowered by a tic: it holds for a frame
+
+// Does the drawn world move with the clock? The tic a pass leaves on screen,
+// minus real time, stays put when it does; each change is the drawn world
+// jumping forward or back by that many tics in one frame. Counted with
+// rollback_history on or off, so its off windows are the control.
+static tic_t g_lastpassat;      // I_GetTime() of the last pass
+static dboolean g_drawnvalid;
+static int32_t g_drawnoffset;   // the drawn tic minus I_GetTime(), last pass
+static uint32_t g_drawnpasses;
+static uint32_t g_drawnjumps;
+static uint32_t g_drawnjumptics;
+
 // Messages a speculated tic tried to send. localtextcmd is netcode state, not
 // world state, so the archive does not carry it and a restore cannot take one
 // back -- the server would apply a message from a timeline that was discarded.
@@ -4456,15 +4484,18 @@ void K_RollbackSpeculate(void)
 		g_histunacked[i] = -1;
 
 	// Replaying the inputs still in flight needs the speculation to reach the
-	// tic the newest one will land on: from the frontier to the first tic the
-	// server has not sent, then one tic per input. rollback_twoclock stays the
-	// floor, rollback_history the ceiling. Needs rollback_cleancmds: without it
-	// the tic the applied input is read from may hold this machine's own
-	// overwrite instead of the server's.
+	// tic the newest one will land on: the first tic the server has not sent,
+	// plus one tic per input. That tic jitters with the server's filing delay,
+	// so the lead over the clock is held instead (see g_histlead) and the depth
+	// is what reaches it. rollback_twoclock stays the floor, rollback_history
+	// the ceiling. Needs rollback_cleancmds: without it the tic the applied
+	// input is read from may hold this machine's own overwrite instead of the
+	// server's.
 	if (ahead > 0 && g_histmax > 0 && g_cleancmds)
 	{
 		const int32_t cap = (g_histmax > ahead) ? g_histmax : ahead;
-		int32_t most = 0, need;
+		const tic_t now = I_GetTime();
+		int32_t most = -1, want = 0, depth;
 
 		K_RollbackMapHistory();
 
@@ -4482,20 +4513,58 @@ void K_RollbackSpeculate(void)
 			g_histunackedsum += (uint64_t)g_histunacked[0];
 		}
 
-		need = (int32_t)(g_histbase - gametic) + most;
+		// The lead this pass asks for. With no match it asks for nothing, and
+		// the held lead stands: falling back to rollback_twoclock would move
+		// the drawn world by four tics or so, and back again on the next match.
+		if (most >= 0)
+			want = (int32_t)(g_histbase - now) + most;
 
-		if (need > ahead)
+		if (g_histhold == false || now - g_lastpassat > TICRATE)
 		{
-			if (need > cap)
+			// Start, or start again after a gap in the passes -- a map change,
+			// a pause -- from what this pass asks for, or from the plain
+			// speculation if it asks for nothing.
+			g_histlead = (most >= 0) ? want : (int32_t)(gametic - now) + ahead;
+			g_histpeak = g_histlead;
+			g_histstepat = now;
+			g_histhold = true;
+		}
+		else if (most >= 0 && want > g_histlead)
+		{
+			g_histlead = want;
+			g_histpeak = want;
+			g_histstepat = now;
+			g_histrises++;
+		}
+		else
+		{
+			if (most >= 0 && want > g_histpeak)
+				g_histpeak = want;
+
+			// A second in which no pass asked for the whole lead: one tic down.
+			if (now - g_histstepat >= TICRATE)
 			{
-				ahead = cap;
-				g_histcapped++;
-			}
-			else
-			{
-				ahead = need;
+				if (g_histpeak < g_histlead)
+				{
+					g_histlead--;
+					g_histdrops++;
+				}
+
+				g_histpeak = (most >= 0) ? want : INT32_MIN;
+				g_histstepat = now;
 			}
 		}
+
+		depth = (int32_t)(now - gametic) + g_histlead;
+
+		if (depth > cap)
+		{
+			depth = cap;
+			g_histcapped++;
+		}
+
+		if (depth > ahead)
+			ahead = depth;
 
 		g_histdepthsum += (uint64_t)ahead;
 	}
@@ -4524,6 +4593,30 @@ void K_RollbackSpeculate(void)
 
 	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
 	g_specpasses++;
+
+	// The drawn tic against the clock (see g_drawnoffset). A gap in the passes
+	// starts the comparison again rather than counting as a jump.
+	{
+		const tic_t now = I_GetTime();
+		const int32_t offset = (int32_t)(gametic - now);
+
+		if (g_drawnvalid && now - g_lastpassat <= TICRATE)
+		{
+			g_drawnpasses++;
+
+			if (offset != g_drawnoffset)
+			{
+				g_drawnjumps++;
+				g_drawnjumptics += (uint32_t)((offset > g_drawnoffset)
+					? offset - g_drawnoffset
+					: g_drawnoffset - offset);
+			}
+		}
+
+		g_drawnoffset = offset;
+		g_drawnvalid = true;
+		g_lastpassat = now;
+	}
 }
 
 /** Console command: rollback_nullspec [0/1]
@@ -5430,11 +5523,14 @@ static void Command_RollbackCleanCmds_f(void)
   *
   * Client side, two-clock mode. With a depth above 0, the speculation replays
   * this machine's own inputs that are sent but not yet applied by the server,
-  * one per tic in the order they were made, and reaches as deep as the newest
-  * one needs -- up to maxdepth, never below rollback_twoclock. 0 (the default)
-  * repeats the newest input over the speculation, as before. Needs
-  * rollback_cleancmds on. Setting it resets the counts, so one race can be read
-  * off, then on.
+  * one per tic in the order they were made, and reaches as far as the newest
+  * one needs -- held steady against the clock, up to maxdepth, never below
+  * rollback_twoclock. 0 (the default) repeats the newest input over the
+  * speculation, as before. Needs rollback_cleancmds on. Setting it resets the
+  * counts, so one race can be read off, then on.
+  *
+  * The report also says how often the drawn world moved against the clock,
+  * with the switch on or off: the off windows are the control.
   */
 static void Command_RollbackHistory_f(void)
 {
@@ -5445,6 +5541,10 @@ static void Command_RollbackHistory_f(void)
 		g_histmax = (want <= 0) ? 0 : ((want > MAXGENTLEMENDELAY - 1) ? MAXGENTLEMENDELAY - 1 : want);
 		g_histpasses = g_histmatched = g_histcapped = 0;
 		g_histunackedsum = g_histdepthsum = 0;
+		g_histhold = false;
+		g_histrises = g_histdrops = 0;
+		g_drawnvalid = false;
+		g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	}
 
 	if (g_histmax <= 0)
@@ -5456,6 +5556,14 @@ static void Command_RollbackHistory_f(void)
 		CONS_Printf("rollback_history: on -- the speculation replays the inputs still in "
 			"flight, up to %d tics deep%s\n", g_histmax,
 			(g_cleancmds ? "" : " -- but rollback_cleancmds is OFF, so it does nothing"));
+	}
+
+	if (g_drawnpasses > 0)
+	{
+		CONS_Printf("rollback_history: the drawn world moved against the clock on %u of "
+			"%u passes (%u%%), %u tics in all\n",
+			g_drawnjumps, g_drawnpasses,
+			(uint32_t)((uint64_t)g_drawnjumps * 100 / g_drawnpasses), g_drawnjumptics);
 	}
 
 	if (g_histpasses == 0)
@@ -5483,6 +5591,9 @@ static void Command_RollbackHistory_f(void)
 			"cut short by the cap on %u passes\n",
 			(uint32_t)(d100 / 100), (uint32_t)(d100 % 100), g_histcapped);
 	}
+
+	CONS_Printf("rollback_history: lead over the clock raised %u times, lowered %u\n",
+		g_histrises, g_histdrops);
 }
 
 /** True when the network has contradicted a tic that has already run.
