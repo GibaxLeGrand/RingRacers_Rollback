@@ -396,6 +396,13 @@ in game units — a kart is about 40 units wide).
 - The argument decides whether the corrections are **also applied**
   (`rollback_drift 1`) or only measured (default): measuring and correcting in
   the same race would produce a number that says nothing about either.
+- Every kart sample also compares the kart's state with the server's:
+  spinout, flashing, `justbumped`, hitlag, offroad, speed, item and a few
+  more. A sample past 4 units prints a `SPIKE` line with them. From builds
+  after `a1df8bb85`, a sample below that whose state differs prints a
+  `STATE` line (the first 40 after each reset), and the report says how
+  many samples differed and the tic of the first (`WORLDWIDE.md` 8.49). A
+  world that agrees prints no such line.
 
 ### `rollback_delay`
 Report only. Shows both halves of the latency trade-off: the game's input

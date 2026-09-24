@@ -106,9 +106,11 @@ launch is asked for first.**
    - ~~`playtest.sh depth12`, without a driver.~~ Done on 2026-09-23 (8.48):
      the 12-tic window holds -- 0 refusals, 0.000 units. But with nobody
      driving, it does not separate depth from history's replay.
-   - **`playtest.sh history` again, driven**: the reproducibility check. It
-     parts again: `playtest.sh depth12`, driven, separates depth from the
-     replay. It holds: a rare event, which needs a longer on window.
+   - **`playtest.sh history` again, driven**: the reproducibility check, **on
+     the build with 8.49's STATE lines**, so that a divergence names its first
+     differing field and tic. It parts again: `playtest.sh depth12`, driven,
+     separates depth from the replay. It holds: a rare event, which needs a
+     longer on window.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
    - **Other maps** (8.40), map by map from its shortlist: `soak.sh leak

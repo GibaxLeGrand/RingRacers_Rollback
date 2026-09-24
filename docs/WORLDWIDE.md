@@ -3022,3 +3022,37 @@ window rather than a second guess.
 `rollback_history`, so its drawn-world count is not reset between windows and
 reads cumulatively (6, 11, 12 over 999, 1999, 2999 passes: 6, 5 and 1 a
 window). Harmless here, and fixed in the scenario.
+
+### 8.49 `rollback_drift` names a differing state before the kart is out of place
+
+Built on 2026-09-24, before the second `history` race, **not run**. Code:
+`src/k_rollback.c`, `K_RollbackApplyServerState` and the `rollback_drift`
+report.
+
+**The gap it closes.** Every correction already compared each kart's state
+with the server's -- spinout, flashing, `justbumped`, hitlag, offroad, speed,
+item and a few more (8.7's diagnostic bytes) -- but printed it only beside a
+sample 4 units or more out of place. In 8.46 that first happened at tic 4104,
+with `p7` already 15 units out and flashing on the client only: since when,
+and after what, the log could not say.
+
+**What it does now.** The state comparison runs on every kart sample. A sample
+below the spike threshold whose state differs prints
+`rollback_drift: STATE tic N pK off by X -- differs: ...`, the first 40 after
+each reset of the report. The report adds `M of N kart samples had a state
+field differing, the first at tic T`, printed at 0 too. The SPIKE line is
+unchanged. `cleancmds_report.py` shows the count and the first six STATE or
+SPIKE lines per window. Tested on made-up logs, and on the history race's,
+where it shows its two SPIKE lines.
+
+Syntax checked with MSYS2 `gcc -fsyntax-only -Wall -Wextra` on
+`k_rollback.c`, with no diagnostic in the file. A copy with an error injected
+into the changed function failed, so the check does compile it. Not compiled
+-- CI is the only build.
+
+**Prediction, written before the second `history` race:** in the windows that
+held until now (every `correct_on` and `depth12` window, and `history`'s
+window 0), 0 samples with a state field differing -- the instrument is quiet
+on a world that agrees. If the history window parts again, the first STATE
+line comes before the first refusal, and names a field on the karts that
+part: `flash` or `bumped`, as in 8.46.
