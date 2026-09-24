@@ -3250,6 +3250,16 @@ static uint32_t g_driftrefused;     // ... and karts the move refused to place
 #define ROLLBACK_SPIKEMAX 40
 static uint32_t g_driftspikes;
 
+// And the state beside the kinematics, below a spike. The history race's two
+// bots were 15 and 22 units out at the first correction that printed anything,
+// one of them flashing on this machine only -- and nothing said since when
+// (WORLDWIDE.md 8.46). A state field that differs while the position still
+// agrees is where such a divergence starts, so it is counted on every sample
+// and printed, capped. A world that agrees prints nothing.
+#define ROLLBACK_STATEMAX 40
+static uint32_t g_driftstates;       // kart samples with a state field differing
+static uint32_t g_driftstatefirst;   // the correction tic of the first one
+
 // Damage outcomes resolved on confirmed tics, and a hash of which ones.
 //
 // The collision tally this replaces counted twenty-seven million proximity
@@ -5042,6 +5052,8 @@ void K_RollbackApplyServerState(void)
 		const struct rollbackkart_t *c = &g_correctkart[k];
 		player_t *p;
 		uint64_t err;
+		char e[64];
+		char st[256];
 
 		if (c->slot >= MAXPLAYERS || playeringame[c->slot] == false)
 			continue;
@@ -5064,30 +5076,36 @@ void K_RollbackApplyServerState(void)
 			g_driftworst = (int32_t)c->slot;
 		}
 
+		// Which STATE differs, not which kinematics. A kart's momentum was
+		// seen being re-derived wrong within four tics of being handed the
+		// server's value, twenty tics running, so the cause is a state this
+		// machine holds and the server does not. These name it -- on every
+		// sample now, not only past a spike (see g_driftstates).
+		st[0] = 0;
+
+		K_NoteDiff(st, sizeof st, "spinout", p->spinouttimer, c->spinouttimer);
+		K_NoteDiff(st, sizeof st, "spintype", p->spinouttype, c->spinouttype);
+		K_NoteDiff(st, sizeof st, "noctl", p->nocontrol, c->nocontrol);
+		K_NoteDiff(st, sizeof st, "flash", p->flashing, c->flashing);
+		K_NoteDiff(st, sizeof st, "tumble", p->tumbleBounces, c->tumbleBounces);
+		K_NoteDiff(st, sizeof st, "wipeout", p->wipeoutslow, c->wipeoutslow);
+		K_NoteDiff(st, sizeof st, "bumped", p->justbumped, c->justbumped);
+		K_NoteDiff(st, sizeof st, "offroad", p->offroad, c->offroad);
+		K_NoteDiff(st, sizeof st, "speed", p->speed, c->speed);
+		K_NoteDiff(st, sizeof st, "hitlag", p->mo->hitlag, c->hitlag);
+		K_NoteDiff(st, sizeof st, "item", p->itemtype, c->itemtype);
+
+		if (st[0] != 0)
+		{
+			if (g_driftstates == 0)
+				g_driftstatefirst = g_correcttic;
+
+			g_driftstates++;
+		}
+
 		if (err >= ROLLBACK_SPIKE && g_driftspikes < ROLLBACK_SPIKEMAX)
 		{
-			char e[64];
-			char st[256];
-
 			g_driftspikes++;
-
-			// Which STATE differs, not which kinematics. A kart's momentum was
-			// seen being re-derived wrong within four tics of being handed the
-			// server's value, twenty tics running, so the cause is a state this
-			// machine holds and the server does not. These name it.
-			st[0] = 0;
-
-			K_NoteDiff(st, sizeof st, "spinout", p->spinouttimer, c->spinouttimer);
-			K_NoteDiff(st, sizeof st, "spintype", p->spinouttype, c->spinouttype);
-			K_NoteDiff(st, sizeof st, "noctl", p->nocontrol, c->nocontrol);
-			K_NoteDiff(st, sizeof st, "flash", p->flashing, c->flashing);
-			K_NoteDiff(st, sizeof st, "tumble", p->tumbleBounces, c->tumbleBounces);
-			K_NoteDiff(st, sizeof st, "wipeout", p->wipeoutslow, c->wipeoutslow);
-			K_NoteDiff(st, sizeof st, "bumped", p->justbumped, c->justbumped);
-			K_NoteDiff(st, sizeof st, "offroad", p->offroad, c->offroad);
-			K_NoteDiff(st, sizeof st, "speed", p->speed, c->speed);
-			K_NoteDiff(st, sizeof st, "hitlag", p->mo->hitlag, c->hitlag);
-			K_NoteDiff(st, sizeof st, "item", p->itemtype, c->itemtype);
 
 			CONS_Printf("rollback_drift: SPIKE tic %u p%d off by %s -- "
 				"mom here (%d,%d,%d) server (%d,%d,%d) -- damage %u/%u -- "
@@ -5098,6 +5116,13 @@ void K_RollbackApplyServerState(void)
 				c->momx, c->momy, c->momz,
 				g_livedamages, g_srvdamages,
 				(st[0] != 0 ? st : " nothing -- kinematics only"));
+		}
+		else if (st[0] != 0 && g_driftstates <= ROLLBACK_STATEMAX)
+		{
+			CONS_Printf("rollback_drift: STATE tic %u p%d off by %s -- "
+				"differs:%s" "\n",
+				g_correcttic, (int32_t)c->slot,
+				K_DescribeFrac(err, e, sizeof e), st);
 		}
 
 		if (g_correctapply == false)
@@ -5237,6 +5262,7 @@ static void Command_RollbackDrift_f(void)
 
 		g_statecorrections = g_correctused = g_correctmissed = g_driftsamples = 0;
 		g_driftspikes = 0;
+		g_driftstates = g_driftstatefirst = 0;
 		g_driftsum = g_driftmax = 0;
 		g_driftworst = -1;
 		g_driftmoved = g_driftrefused = 0;
@@ -5313,6 +5339,21 @@ static void Command_RollbackDrift_f(void)
 		K_DescribeFrac(g_driftsum / g_driftsamples, a, sizeof a),
 		K_DescribeFrac(g_driftmax, b, sizeof b),
 		g_driftworst);
+
+	// Printed at 0 too: "no state differed" is a reading, and its absence
+	// would look the same as an exe that does not count.
+	if (g_driftstates > 0)
+	{
+		CONS_Printf("rollback_drift: %u of %u kart samples had a state field "
+			"differing, the first at tic %u%s\n",
+			g_driftstates, g_driftsamples, g_driftstatefirst,
+			(g_driftstates > ROLLBACK_STATEMAX ? " (printing stopped there)" : ""));
+	}
+	else
+	{
+		CONS_Printf("rollback_drift: 0 of %u kart samples had a state field "
+			"differing\n", g_driftsamples);
+	}
 
 	if (g_correctapply)
 	{
