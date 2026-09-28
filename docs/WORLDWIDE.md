@@ -54,9 +54,11 @@ Every piece is behind a switch that is off by default, except
    then a bot, then the seed sum, which the channel never repairs. The drift
    was 8.31's mechanism -- the speculation writing the local input over tics
    already received -- and what it left behind (8.38). **The other maps
-   (item 6) found two more leaks, both through the restore and both fixed:**
-   polyobject ownership (8.57) and the plane of a dynamic slope, which the
-   first tic after every restore read from the tics before it (8.58).
+   (item 6) found two more leaks, both through the restore:** the plane of a
+   dynamic slope, which the first tic after every restore read from the tics
+   before it (8.58, fixed and measured, 8.59), and polyobject flags and
+   translucency, which a reload never put back to their spawn values (8.59,
+   fixed, not yet pushed).
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39,
    8.41 -- off by default). Instead of repeating the newest input over a 4-tic
    speculation, the speculation replays every input sent but not yet applied,
@@ -109,14 +111,20 @@ Every piece is behind a switch that is off by default, except
    Carnival Night 2 of 347, a player riding a Garden Top whose restore loses
    something the ride reads. Coastal Temple (8.57): 9 leak failures from
    polyobject ownership, which a load nulls, so a second polyobject action
-   can start after a restore; 6 resim failures, not analysed. Death Egg
-   (8.58): holds. **Opulence (8.58): 37 failures in each soak, on kart speed
-   and angle, in one stretch of the lap** -- the first tic after a restore
-   steers on a dynamic slope's plane left by the tics before it, because
-   `P_PlayerThink` runs before the slope thinkers and the plane was never
-   archived. **Four fixes pushed on 2026-09-28** (`12c2fa755` to
-   `8749842d6`): `gamedata` on off-timeline tics, polyobject ownership,
-   `roundconditions`, the slope's plane. Not yet measured.
+   can start after a restore -- ⚠ the mechanism is wrong (8.59); 6 resim
+   failures, not analysed. Death Egg (8.58): holds. **Opulence (8.58): 37
+   failures in each soak, on kart speed and angle, in one stretch of the
+   lap** -- the first tic after a restore steered on a dynamic slope's plane
+   left by the tics before it. **Four fixes pushed on 2026-09-28**
+   (`12c2fa755` to `8749842d6`) and **measured (8.59): Opulence 0 of 292 and
+   1 of 386** (the first check's `chainorder_block`, set aside), Carnival Night
+   only `itemList.cap`, `roundconditions` no longer in the walker -- **but
+   Coastal Temple still 9 of 261**: a reload leaves polyobject translucency
+   and flags as the last tics made them. Fixed as `a59fa6203`, not pushed.
+   **Cost and stutter (8.60):** one pass a tic, whole, inside one frame -- 10
+   ms on Skyscraper Leaps, an estimated 15 or more on Opulence -- and every
+   sound waits for the confirmed tic. Tracks proposed there, measurement
+   first.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -161,7 +169,7 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.39, 8.41 | "it only changes what is drawn" and "drift unchanged between windows" fail in the first run: the confirmed world parted inside the history window (8.46). They hold in the second (8.50). Its display-side predictions mostly hold; its depth and cost figures do not |
 | 8.40 point 3 | `rngsum` is not in the logs to be read (8.42) |
 | 8.55 | its pairs are named in 8.57: the trick-panel timing visual, placed from the camera. Its candidate (the bubble waves) was wrong |
-| 8.57 | its three fixes are pushed, with a fourth (8.58) |
+| 8.57 | its three fixes are pushed, with a fourth (8.58). Its polyobject mechanism is wrong (8.59): the ownership fix changed nothing on Coastal Temple |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
 ## 0. The rename, and what it actually commits to
@@ -3454,6 +3462,10 @@ every time** (142 544 -> 142 568, for one). The polyobject record shows its
 `diff` byte gaining `PD_TRANS` and a translucency of 3 or 4 where the
 reference had none.
 
+> ⚠ Wrong for these failures (8.59): ownership does not keep a fade out.
+> The restore left the translucency changed, because the polyobject archive
+> only carries values that differ from spawn and a reload does not reset them.
+
 **The mechanism, read in the code and matched to the bytes:**
 
 - A load nulls every `po->thinker` (`P_UnArchivePolyObj`): "the thinkers
@@ -3603,6 +3615,237 @@ a load would be one tic off while a floor moves; not done.
   `itemList.cap` may remain.
 - Opulence, resim soak: none of the 36 kart failures. The first-check
   `chainorder_block` failure has another cause and may remain.
-- 8.57's still stand: no polyobjects-block failure on Coastal Temple, no
+- 8.57's still stand (⚠ the first fails, 8.59): no polyobjects-block failure on Coastal Temple, no
   spray-can failure on Carnival Night, no struct-walker line at 1828/1832
   -- on Opulence's leak soak too, where they appear today.
+
+### 8.59 The fixes measured: Opulence holds, and Coastal Temple's polyobject leak was not ownership
+
+Measured on 2026-09-28, binary `8749842d6` (Gibax's go-ahead for the install
+and the four soaks; sha256 `17b8358e...`), unattended, one after the other.
+Predictions in 8.57 and 8.58.
+
+| soak | before | on `8749842d6` | log |
+|---|---|---|---|
+| Opulence, leak | 37 of 284 | **0 of 292** | `soaklog_leak_RR_Opulence_20260928-151947_8749842.txt` |
+| Opulence, resim | 37 of 375 | **1 of 386** | `soaklog_ww_RR_Opulence_20260928-152300_8749842.txt` |
+| Coastal Temple, leak | 10 of 261 | **9 of 261** | `soaklog_leak_RR_CoastalTemple_20260928-152559_8749842.txt` |
+| Carnival Night, leak | 3 kinds | **1 of 261**, `itemList.cap` | `soaklog_leak_RR_CarnivalNight_20260928-152857_8749842.txt` |
+
+- **8.58's predictions hold.** Opulence's 36 kart failures are gone from both
+  soaks. The one resim failure left is the first check's, at leveltime 705,
+  byte for byte the one 8.58 set aside: `chainorder_block` of splash flowers
+  and a tumble gem.
+- **The struct walker's lines at 1828/1832 are gone** wherever a failure
+  prints the walker: 0 on Coastal Temple (21 before), 0 on Carnival Night (6
+  before). 8.57's `roundconditions` prediction holds.
+- **The spray can:** no failure, but nothing shows the can was grabbed during
+  this soak. Not tested, then.
+- **Coastal Temple: 8.57's prediction fails.** Nine failures, the same
+  signature: honest pass, polyobjects block first, archive 24 bytes longer,
+  the polyobject's `diff` gaining `PD_TRANS` with a translucency of 3. The
+  ownership fix (`f185713cc`) changed nothing here. Also two `MT_PLAYER`
+  reference-count lines (8.54's, known).
+
+**The real mechanism, read in the code:**
+
+- `EV_DoPolyObjFade` never refuses to start: it removes the running fade only
+  if `po->thinker` is that fade, and it **does nothing when the translucency
+  already is its destination** (`p_polyobj.c`). So ownership was never what
+  kept a second fade out; 8.57 read the code of the move and rotate actions
+  and applied it to the fade.
+- `P_UnArchivePolyObj` writes `flags` and `translucency` **only when the diff
+  bit is set** -- the values differ from spawn. That is right for a load into
+  a freshly loaded level. A reload does not reload the level:
+  `P_NetUnArchiveMisc` puts sectors, lines and sides back to their spawn
+  values first, **but not the polyobjects**.
+- So when the snapshot's translucency was the spawn value and the extra pass
+  ran a fade, the restore left the faded value. On the next tic the fade
+  trigger found the translucency not at its destination and started a fade the
+  reference never had: one more thinker (24 bytes), and `PD_TRANS` set.
+
+**Fixed, not pushed: `a59fa6203`.** When the bit is absent, the load puts the
+spawn value back. No format change; right for every load, local or not.
+
+**Prediction for it:** Coastal Temple's leak soak shows no polyobjects-block
+failure. The ownership byte of `f185713cc` stays: it restores a true piece of
+state, and the move and rotate actions do refuse on it -- but no failure has
+been traced to it.
+
+
+### 8.60 What a pass sends, rebuilds and costs, against a tic -- and where the stutter comes from
+
+Gibax's question (2026-09-28): what is sent and what is re-simulated, by weight
+and by milliseconds against a tic, to explain the latency and the stutter felt
+in 8.50 -- then ways to make it cheaper. Read from the code and from logs
+already kept; nothing launched for it. Every figure is labelled measured or
+estimated.
+
+**The rhythm (read).** `D_SRB2Loop` calls `TryRunTics` only when a real tic
+has elapsed (`renderisnewtic`, `d_main.cpp`), so there is **one pass per tic,
+35 a second, not one per frame**. A pass is, in order: undo the speculation
+(`K_RollbackUnspeculate`, a full `K_LoadGameState`), `NetUpdate` and
+`GetPackets`, apply a correction, run the confirmed tics (usually one), save
+the new frontier (`K_SaveGameState`), run `rollback_twoclock` speculated tics
+through `G_Ticker`, then draw. **All of it inside one frame.** Stock runs one
+tic a tic.
+
+**What a pass costs (measured, Skyscraper Leaps, 9 karts, driven, 8.50's
+race):**
+
+| | per pass | of a 28.6 ms tic |
+|---|---|---|
+| undo the speculation (restore) | 2.6 - 2.9 ms | 9 - 10% |
+| 4 speculated tics | 5.1 - 5.5 ms, so **1.3 - 1.4 ms a tic** | 18 - 19% |
+| **pass as reported** | **7.7 - 8.4 ms** | **27 - 29%** |
+| same, `rollback_history` on (about 8 tics) | 13.5 ms | 47% |
+| same, 12 tics (8.48) | 17.9 ms | 63% |
+
+Not in those figures: the save of the frontier (0.5 to 0.9 ms there), the
+confirmed tic itself (about one more tic of simulation, which stock pays too),
+the network.
+
+**The snapshot, by map (measured: `rollback_test` at the end of each leak
+soak, one sample each, late in the soak):**
+
+| map | snapshot | save | load |
+|---|---|---|---|
+| Northern District | 127 - 184 KB | 0.9 ms | 2.5 - 2.7 ms |
+| Coastal Temple | 156 KB | 1.1 ms | 2.9 ms |
+| Carnival Night | 181 KB | 1.2 ms | 3.2 ms |
+| Death Egg | 226 KB | 1.7 ms | 5.2 ms |
+| Labyrinth | 186 - 289 KB | 1.4 ms | 5.1 - 6.2 ms |
+| **Opulence** | **281 - 294 KB** | **2.4 - 3.6 ms** | **6.5 ms** |
+
+Where a load's time goes (measured: `rollback_test`'s restore profile, same
+samples):
+
+| step | Northern District | Coastal Temple | Death Egg | Opulence |
+|---|---|---|---|---|
+| free every thinker ("thinkers purge") | 0.47 ms | 0.71 ms | 1.04 ms | 1.75 ms |
+| re-create them ("thinkers") | 0.83 ms | 1.07 ms | 1.19 ms | 2.13 ms |
+| waypoints | 0.27 ms | 0.11 ms | **1.46 ms** | **0.95 ms** |
+| chain order | 0.31 ms | 0.36 ms | 0.51 ms | 0.90 ms |
+| misc, relink, the rest | 0.5 ms | 0.5 ms | 0.8 ms | 0.7 ms |
+
+Freeing and re-creating every object is 60% of the load on Opulence. The
+waypoint step is a plain inefficiency, read in the code: each waypoint finds
+its object with `P_FindNewPosition`, which walks the whole mobj list when the
+relink index is not built -- and it is built only by `P_RelinkPointers`, the
+step *after* the waypoints (`P_LoadNetGame`). About 150 waypoints times 3700
+objects on Opulence.
+
+The load grows with the snapshot, about 2.3 ms per 100 KB. **Estimated** for
+Opulence at depth 4: 6.5 + 3 + 5 tics of at least 1.3 ms = **15 ms or more a
+pass, over half a tic.** The per-tic cost there is not measured.
+
+**What that does to frames (reasoned from the above; frame times are not
+logged).** At 60 Hz a frame has 16.7 ms. The frame that carries the pass keeps
+what the pass leaves: about 8 ms on Skyscraper Leaps, 3 ms with history on,
+nothing on Opulence -- **that frame is late, 35 times a second**, a regular
+hitch that reads as dropped frames. At 144 Hz (6.9 ms) every pass frame is late
+on every map. On the measuring machine the server's instance shares the CPU,
+which a real client does not.
+
+**What crosses the wire (read from the packet structs; per client, 9 karts,
+`rollback_correct 4`):**
+
+| | size | rate | weight |
+|---|---|---|---|
+| `PT_CLIENTCMD`, client to server | 5 + 16-byte ticcmd + 8 header = 29 B | 35/s | about 1 KB/s |
+| `PT_SERVERTICS`, server to client | 3 + 16 B a player + 8 = 155 B, at least | 35/s | about 5.4 KB/s |
+| `PT_STATECORRECTION` | 26 + 56 B a kart = 530 B | 1 every 4 tics | about 4.6 KB/s |
+| full-state resend (stock) | 107 - 318 KiB, then an 11 ms load | 0 a race with the channel, 7 - 9 without | -- |
+
+Plus 28 bytes of UDP/IP a packet. **About 11 KB/s down and 2 KB/s up: the wire
+is not where the stutter comes from.** The heavy thing is the snapshot, and it
+never leaves the machine: 107 to 294 KB written and read back 35 times a
+second, 4 to 10 MB/s of serialisation.
+
+**Latency as the player sees it (the test setup: `rollback_lag 6` adds 171 ms
+to everything the client receives; `rollback_twoclock 4` speculates 114 ms).**
+
+- **Your own kart:** your input enters the next speculation and is drawn on the
+  next tic -- no input delay (8.36).
+- **The confirmed world** trails the server by the delay, 6 tics or more, plus
+  the server's filing. The drawn world is 4 tics further on, so at `lag 6`
+  still 2 or more behind the server's present. `rollback_history` exists to
+  close that gap (8.39).
+- **The other karts** are drawn where the speculation puts them: repeating a
+  person's last known input, recomputing a bot from this machine's world. When
+  the real input differs, the next pass redraws them from the corrected past,
+  and **the kart moves by up to 4 tics of error at once: the visible "à-coup"**,
+  larger the deeper the speculation.
+- **Sounds wait for the confirmed tic** (read: `S_StartSoundAtVolume` returns
+  while `K_RollbackReplaying()`, which a speculation counts as, `s_sound.c`).
+  Every sound, your own included, plays when the authoritative loop reaches
+  its tic: behind the picture by the whole lead -- delay plus depth, about 10
+  tics or 290 ms in the test setup.
+
+**Why the pass cannot simply be spread over two frames (read).** The game
+draws the one world in memory. Between the restore and the end of the
+speculation that world is in the past, and a frame drawn then would show
+everything jump back. So the pass has to finish before the next frame, whole.
+Spreading it means changing *what* is done each tic, not *when*.
+
+**Ways to make it cheaper, in the order proposed -- none built, none measured,
+every figure an estimate from the measurements above:**
+
+1. **Measure first** (a small instrument): every frame's duration, with `nospec`
+   as the control -- the one figure the stutter needs and nobody has; the cost
+   of each step of a pass, the save and the confirmed tic included; and how
+   often the speculation was right (per pass: did every newly confirmed tic
+   carry the inputs the speculation used). The per-map cost needs no code:
+   `rollback_maxdepth 4`, `rollback_test`, `rollback_delay` at the end of the
+   resim soak, added to `soak_ww.cfg` on 2026-09-28.
+2. **The waypoint relink through the index** (small, read): build the relink
+   index before the waypoints are restored, not after. About 1 ms a restore
+   on Opulence, 1.5 on Death Egg, for a few lines.
+3. **Keep the speculation when it was right** (the large one; GGPO's own
+   shape). The speculation stays standing from one tic to the next. Each tic
+   runs one more tic at its front and saves that state into a ring of
+   snapshots: about 2 ms on Skyscraper Leaps, 4 to 5 on Opulence, instead of
+   10 and 15 or more. When the server confirms a tic, its inputs are compared
+   with those the speculation used: equal, nothing to do -- the speculated tic
+   *is* the confirmed one; different, restore the snapshot before the first
+   wrong tic and re-run from there only. The steady cost becomes small and
+   even; a burst comes only with a misprediction, and scales with it.
+   **Sounds** could then play on a tic's first run and be kept from replaying
+   on a re-run, instead of waiting for the confirmation. What it needs:
+   - a speculated tic has to do exactly what the confirmed one does. Today some
+     guards change what a replayed tic does (the spray can is not grabbed,
+     `12c2fa755`): such side effects have to be queued until confirmation
+     instead of skipped;
+   - the local input is built from the kart's angle, which is why the
+     speculation is undone before `NetUpdate` today (`d_clisrv.c`); it will
+     need the confirmed angle some other way;
+   - the consistency checksum computed when the tic runs, and kept with it;
+   - a correction that changes nothing (drift at 0.000) must not force a
+     rebuild;
+   - the hit rate, measured first. Bots are recomputed from the same world, so
+     they should hold; a remote person on an analogue stick changes `turning`
+     most tics, so repeat-last will often miss -- many short rollbacks.
+   Behind a switch, off by default, validated by the soaks -- which test
+   exactly what it relies on, that a restore and a replay give the same world.
+4. **A cheaper restore**, since mispredictions will still need one. Freeing
+   and re-creating every object is 60% of Opulence's load (1.75 + 2.13 ms):
+   keep objects removed during a speculation aside instead of freeing them, so
+   a restore finds every object at its old address, copies its fields back,
+   relinks it only if it moved, and removes those born in the speculation --
+   the 2199 rings and the still decorations are then not touched at all. Then
+   a local snapshot in raw memory for objects and players (the whole struct,
+   about 2.2 MB on Opulence, copied in about 0.3 ms) rather than the network
+   format field by field (3.6 ms to write 294 KB there); the network format
+   stays for Lua, ACS and the wire. That also makes track 3's ring of
+   snapshots nearly free.
+5. **Smaller ones:** a depth taken from the measured delay (each tic of depth
+   is about 1.3 ms); the speculated tic profiled (the game already times its
+   thinker lists, player thinks, bot commands and ACS -- `ps_thlist_times`,
+   `ps_playerthink_time`, `ps_botticcmd_time`, `ps_acs_time`); a corrected
+   kart drawn with an offset that decays over a few frames instead of a jump;
+   and on the wire, which is not latency: the correction without its 18
+   diagnostic bytes a kart (-32%), at a lower rate now that drift reads 0.000,
+   and `PT_SERVERTICS` packed in WORLDWIDE mode -- about 10 KB/s down to 3.
+
+**Estimated:** Opulence from 15 ms or more every tic to about 4 or 5 in the
+steady state, bursts only on a misprediction, and smaller ones after track 4.

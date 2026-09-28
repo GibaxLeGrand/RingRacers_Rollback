@@ -138,10 +138,12 @@ and pushed the same day. **Every launch is asked for first.**
      dynamic slope's plane left by the tics before it -- kart speed and
      angle, 37 failures in each soak). **Four fixes pushed on 2026-09-28**,
      `12c2fa755` to `8749842d6`.
-   - **Next: the soaks again, on `8749842d6`**, against 8.57's and 8.58's
-     predictions: Opulence (leak, resim), Coastal Temple (leak), Carnival
-     Night (leak). Then the driven `correct_on` on a map with dynamic slopes
-     or polyobjects, with `nospec` as its control. Still open, not blocking:
+   - ~~The soaks again, on `8749842d6`.~~ Done on 2026-09-28 (8.59):
+     Opulence 0 of 292 and 1 of 386, Carnival Night only `itemList.cap` --
+     but Coastal Temple 9 of 261: a reload never reset polyobject
+     translucency and flags. Fixed as `a59fa6203`; its leak soak again next.
+     Then the driven `correct_on` on a map with dynamic slopes or
+     polyobjects, with `nospec` as its control. Still open, not blocking:
      the Garden Top rider (8.56), Coastal Temple's resim failures on a
      waypoint counter (8.57), Opulence's first-check `chainorder_block`
      (8.58), and a player's reference count (8.54).
@@ -160,7 +162,12 @@ and pushed the same day. **Every launch is asked for first.**
    - `history` feels better **and the leak of 8.46 is found and fixed**: turn
      it on by default, and fold its cost into Phase B. Until then it stays
      off.
-8. **Then** the compatibility work (section below), and Phase B's big lever.
+8. **Cost and stutter (8.60), asked by Gibax on 2026-09-28, in this order:**
+   measure (frame times, the steps of a pass, how often the speculation was
+   right); the waypoint relink through the index; then, in an order Gibax
+   chooses: keep the speculation when it was right, a cheaper restore,
+   smaller ones.
+9. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---
 
