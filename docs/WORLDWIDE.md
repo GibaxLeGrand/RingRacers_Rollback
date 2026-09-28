@@ -3974,3 +3974,34 @@ restore by 0.5 to 1.5 ms; a pass of **24 to 27 ms**, still most of a tic;
 fewer skipped frames but still hundreds a window, **20 to 30 frames a
 second**. The hit rate does not move (48 to 53%): nothing here touches the
 inputs.
+
+### 8.64 The quick wins measured: 23 to 33 frames a second on Opulence, and a hit rate that moves with the race
+
+Measured on 2026-09-28, binary `7a8c2707f` (sha256 `d6bd1304...`), Gibax's
+go-ahead, `correct_on` on Opulence without a driver
+(`playlog_correct_on_RR_Opulence_20260928-190902_7a8c270.txt`). Prediction in
+8.63; before in 8.62.
+
+| per pass | window 0 | window 1 | window 2 | 8.62, same windows |
+|---|---|---|---|---|
+| restore | 5.22 ms | 5.55 | 5.94 | 6.05 - 6.78 |
+| confirmed tics (1.00 - 1.05 a pass) | 3.87 | 3.85 | 4.41 | 6.37 - 7.43 |
+| save of the frontier | 2.48 | 2.52 | 2.58 | 2.24 - 2.32 |
+| 4 speculated tics | 13.52 | 13.42 | 14.73 | 12.80 - 14.20 |
+| **total** | **25.2 (88%)** | **25.5 (89%)** | **27.8 (97%)** | 28.1 - 30.9 |
+| frames drawn in 1000 tics | **945** | **844** | **648** | 346 - 502 |
+| iterations past a tic, next frame skipped | 265 | 309 | 436 | 519 - 663 |
+| passes with every input right | 799 of 992 | 364 of 998 | 310 of 994 | 473 - 525 of about 990 |
+
+- **The prediction holds on the costs**: the confirmed step lost 2.7 to 3.0
+  ms (the double save), the restore 0.8 ms (the interpolation list); a pass
+  of 25 to 28 ms, for 24 to 27 written. Frames: **33, 30 and 23 a second**,
+  about twice 8.62's, for 20 to 30 written -- window 0 slightly above.
+  Skipped frames halved, still hundreds.
+- **It fails on the hit rate**, written as not moving: 80% of passes right
+  in window 0, then 36% and 31%. Same build, same map, no driver. It moves
+  with the race, not with the code; why is not known yet.
+- **Still most of a tic.** Four speculated tics are 13.4 to 14.7 ms, more
+  than half of it; each worsens as the race goes on (3.4 to 3.7 ms a tic).
+  The profile of a speculated tic and the fields of the wrong guesses are
+  built next, not yet pushed.
