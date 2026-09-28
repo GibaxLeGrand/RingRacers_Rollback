@@ -22,9 +22,11 @@ earlier one, the earlier one gets a ⚠ pointing forward, and is not rewritten.
 **Architecture.** Client-side prediction with server reconciliation -- not GGPO
 rollback. Two clocks: `gametic` runs only the tics the server has confirmed, in
 unmodified lockstep; the speculation runs `rollback_twoclock N` tics above it
-from a snapshot and is rebuilt every pass. A light correction channel
-(`PT_STATECORRECTION`, server to client every `rollback_correct N` tics) puts
-each kart back where the server has it, in place of the stock full-state resend.
+from a snapshot and is rebuilt every pass -- or, with `rollback_keepspec`
+(track A, 8.73), kept as it stands when the server confirms the tics it ran. A
+light correction channel (`PT_STATECORRECTION`, server to client every
+`rollback_correct N` tics) puts back each kart that is not already where the
+server has it (8.75), in place of the stock full-state resend.
 Every piece is behind a switch that is off by default, except
 `rollback_cleancmds`, on by default since 2026-09-21 (8.36).
 
@@ -37,7 +39,9 @@ Every piece is behind a switch that is off by default, except
 | confirmed-tic inputs | with `rollback_cleancmds`, 0 to 0.1% of confirmed tics run an input the server did not, against 64-85% (local kart) and 23-80% (bots) without it -- two driven races (8.35, 8.37) |
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
 | residual drift | **0.000 units on 6741 kart samples, 0 checksum refusals, 87 of 87 blame samples identical** with `rollback_cleancmds` on throughout -- one driven race, Skyscraper Leaps (8.44), with a same-session control that does diverge (8.45). The 0.12 to 0.86 units (worst 13 to 97) of the off/on/off races come from off windows and what they leave behind (8.38, 8.45) |
-| cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic |
+| cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic. On Opulence (3700 objects), rebuilt every pass: 25 to 35 ms, 9 to 33 frames a second (8.62-8.77) |
+| cost of a pass kept (`rollback_keepspec`) | one tic and one save: **2 ms on Skyscraper Leaps, 9 ms on Opulence, 117 frames a second there against 10** -- unattended; on Opulence the local player spectated (8.76, 8.77) |
+| Opulence's confirmed world | **0.000 units, 0 of 6714 kart samples with a state field off, 0 karts put back**, corrections applied (8.77) -- the drift it had came from the put-back itself (8.76) |
 | restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
 | listen-server host's input delay | 170-200 ms, now **0** (8.27) |
 
@@ -58,7 +62,11 @@ Every piece is behind a switch that is off by default, except
    dynamic slope, which the first tic after every restore read from the tics
    before it (8.58, fixed and measured, 8.59), and polyobject flags and
    translucency, which a reload never put back to their spawn values (8.59,
-   fixed, not yet pushed).
+   fixed as `8142e07c4`; its soak holds, 8.62). **A third was the correction
+   channel itself** (8.76): putting back a kart the server never moves relinks
+   it at the head of its chains, and on Opulence that reordered collisions.
+   With the put-back skipped when a kart already matches (`69e65f0ac`),
+   Opulence reads 0.000 with corrections applied (8.77).
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39,
    8.41 -- off by default). Instead of repeating the newest input over a 4-tic
    speculation, the speculation replays every input sent but not yet applied,
@@ -78,7 +86,13 @@ Every piece is behind a switch that is off by default, except
    throughout a race, for three times the history tics. The driver felt the
    history window "mieux". It stays off by default until then.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
-   and heavier if `rollback_history` stays on.
+   and heavier if `rollback_history` stays on. **Measured on Opulence
+   (8.60-8.69)**: a speculated tic is 3.4 to 4 ms, 83% of it the map's
+   decorations, and a pass rebuilt every tic is most of a tic. Depth 2
+   halves it (8.71). **Keeping the speculation (`rollback_keepspec`, 8.73 to
+   8.77) makes a pass one tic and one save**: 9 ms on Opulence, 117 frames a
+   second -- unattended, with the local player a spectator. Next: the same
+   race with the player in it, then driven.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
    8.28 is fixed in code (8.29), never checked against a stock build. Still
    missing: the refusal of vanilla clients, the automatic mode switch, and a
@@ -120,11 +134,12 @@ Every piece is behind a switch that is off by default, except
    1 of 386** (the first check's `chainorder_block`, set aside), Carnival Night
    only `itemList.cap`, `roundconditions` no longer in the walker -- **but
    Coastal Temple still 9 of 261**: a reload leaves polyobject translucency
-   and flags as the last tics made them. Fixed as `8142e07c4`, not pushed.
+   and flags as the last tics made them. Fixed as `8142e07c4`, pushed and
+   measured: 1 of 261, `itemList.cap` (8.62).
    **Cost and stutter (8.60):** one pass a tic, whole, inside one frame -- 10
    ms on Skyscraper Leaps, an estimated 15 or more on Opulence -- and every
    sound waits for the confirmed tic. Tracks proposed there, measurement
-   first.
+   first; measured and in progress, see item 3.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -4297,6 +4312,8 @@ Predictions in 8.73.
   of wrong inputs.
 - **A pass of 7.3 to 7.6 ms with `rollback_history` 12**, against 13.5 ms for
   the same history without it (8.50): half. About 128 frames a second.
+  ⚠ 8.77: under `rollback_keepspec`, `rollback_cost` counts twice every save
+  made inside the speculation; counted once, a pass is about 6 ms.
 
 **Opulence, driven** (`playlog_keep_RR_Opulence_20260928-211114_b24e0a2.txt`),
 window 0 only -- the session ended in window 1:
@@ -4306,6 +4323,9 @@ window 0 only -- the session ended in window 1:
 - **A pass of 83.5 ms, three tics**: saves 23.9 ms, speculation 42.1 ms (6.2
   tics a pass), confirmed tics 7.3 (2.1 a pass). 344 frames in 1000 passes,
   717 iterations past a tic, gaps up to 329 ms.
+  ⚠ 8.77: the same double count -- the saves of the tics after the
+  frontier sit inside the speculation's 42.1 ms too; counted once, about
+  60 ms.
 - Why: a rebuild now saves every speculated tic (2.5 ms each on Opulence),
   with history 12 that is six a pass; the bots' inputs differ (8.67's
   drift: 71 STATE lines, all `speed`), so most passes rebuild; a pass longer
@@ -4374,6 +4394,9 @@ does**, and the game draws as many frames as it does with no speculation at
 all (8.62's control: about 4050 to 4077). The harness warned that the race
 ended inside the session; the windows are whole (1000 passes each).
 
+⚠ 8.77: the pass figures count each save twice (`rollback_cost` under
+`rollback_keepspec`); counted once they are **1.9, 2.0 and 2.4 ms**.
+
 **`measure` on Opulence -- corrections measured, never applied**
 (`playlog_measure_RR_Opulence_20260928-213001_69e65f0.txt`):
 
@@ -4425,3 +4448,97 @@ race with no history and nothing kept.
   and 25 or so in `correct_on`, and **more than 2500 frames in 1000 tics**.
   If the machine is as slow as in 8.76's `measure`, both races are, and the
   ratio between them is what counts.
+
+**`correct_on` on Opulence, corrections applied**
+(`playlog_correct_on_RR_Opulence_20260928-230010_69e65f0.txt`):
+
+| | window 0 | window 1 | window 2 | 8.64, same windows |
+|---|---|---|---|---|
+| kart samples | 2295 | 2160 | 2259 | |
+| drift: mean / worst | **0.000 / 0.000** | **0.000 / 0.000** | **0.000 / 0.000** | 0.002 / 1.42 (8.67) |
+| samples with a state field off | **0** | **0** | **0** | 287 - 315 (8.67) |
+| karts put back / already where the server had them | **0 / 2295** | **0 / 2160** | **0 / 2259** | about 2200 put back |
+| passes with every input right | 547 of 986 | 538 of 988 | 554 of 998 | 799, 364, 310 |
+| wrong inputs: this machine / bots | 475 / 8 | 489 / 22 | 525 / 5 | 8.66: 565 - 657 / 769 - 1189 |
+| pass | 33.0 ms | 32.8 | 35.2 | 25.2 - 27.8 |
+| ... restore / save / 4 speculated tics | 6.4 / 4.7 / 16.4 | 7.1 / 4.6 / 15.7 | 7.7 / 4.4 / 17.0 | 5.2 - 5.9 / 2.5 - 2.6 / 13.4 - 14.7 |
+| a speculated tic | 4.0 ms | 3.8 | 4.2 | 3.4 - 3.7 |
+| frames drawn in 1000 tics | 304 | 302 | 262 | 648 - 945 |
+
+- **The first prediction holds whole: 0.000, not one state field off, and
+  not one kart put back in 6714 samples** -- every correction found every
+  kart where the server had it. With the put-back gone, applying the
+  corrections is the same as measuring them (8.76's `measure` read the same).
+  Opulence's confirmed world now matches the server's, as Skyscraper Leaps'
+  has since 8.44.
+- **The bots are guessed right**: 5 to 22 wrong bot inputs a window, against
+  769 to 1189 in 8.66 -- the drift was what made them wrong (8.67's reading
+  confirmed).
+- **The hit-rate prediction fails -- 55%, not 90%** -- on a cause already
+  written in 8.67 and forgotten here: with `rollback_history` off the local
+  slot repeats the newest input, whose `latency` stamp is not the one the
+  server applied. 475 to 525 wrong inputs a window are this machine's, and
+  in windows 1 and 2 they differ in `latency` and nothing else (window 0 also
+  has a few `turning`, `angle`, `buttons`: nobody drives, so probably the
+  start of the race). This race cannot read better: `keep` runs with the
+  history, which replays the stamps.
+- **The pass costs 33 to 35 ms, not 25 to 28**: every step is dearer than in
+  8.64 on the same map -- a speculated tic by 10 to 15%, the restore by 25%,
+  **the save by 80%** (2.5 ms to 4.4 - 4.7). Nothing between `7a8c2707f`
+  and `69e65f0ac` adds work to a save with `rollback_keepspec` off (read in
+  `K_RollbackSpeculate`: one `K_SaveGameState` a pass, as before). 8.76's
+  `measure` had the same slow save (5.1 to 6.3 ms). At launch the processor
+  sat at 26% with nothing of the game running, the League of Legends client
+  open. **The likeliest cause is the machine, not the build -- not
+  measured**: the same-session control that would settle it is the previous
+  build (`b24e0a2f2`) on the same race.
+
+**`keep` on Opulence** (`playlog_keep_RR_Opulence_20260928-230251_69e65f0.txt`)
+-- ⚠ **with this machine's player a spectator**: the client "has joined the
+game" as the server changed map, and never "entered the game" (the only such
+log among the 20 kept; `correct_on` just before entered). The race is
+therefore the bots and the host, with nothing local to guess:
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| passes kept, of 999 | **995** | **999** | **999** |
+| ... through a correction that changed nothing | 245 | 250 | 250 |
+| rebuilt: an input differed | 4 | 0 | 0 |
+| pass as printed | 14.1 ms | 13.9 | 14.1 |
+| **pass, each save counted once** (below) | **9.2** | **9.0** | **9.2** |
+| ... a save / the tic run | 4.9 / 3.9 | 4.9 / 3.7 | 4.9 / 4.1 |
+| frames drawn in 1000 tics | **3308** | **3369** | **3334** |
+| iterations past a tic | 8 | 1 | 1 |
+| drift: mean / worst / samples with a state off | 0.000 / 0.000 / 0 | 0.000 / 0.000 / 0 | 0.000 / 0.000 / 0 |
+| `rollback_history`: inputs in flight / depth | 0.00 / 4.18 | 0.00 / 4.00 | 0.00 / 4.00 |
+
+- **`rollback_cost` counts a save twice under `rollback_keepspec`.** A save
+  made by `K_RunSpeculatedTic` (every speculated tic's start, and the head's
+  in `K_KeepExtend`) is added to `g_saveus`, and runs inside the timer of
+  `g_specus` as well (read in `K_KeepExtend` and `K_RollbackSpeculate`); the
+  printed total adds both. Speculation minus save is 4.0 ms here, one tic.
+  Without `rollback_keepspec` no save runs inside that timer, so
+  `correct_on`'s figures stand. The true pass is the printed one less the
+  saves, **9.0 to 9.2 ms**.
+- **Kept: 99.6 to 100%**, the corrections consumed without a rebuild, drift
+  0.000 -- as predicted. **But it proves less than it reads**: with no local
+  player, the input this machine guesses worst cannot miss, and
+  `rollback_history` found no input in flight, so the speculation ran 4 tics
+  deep instead of about 8. It does show the bots are guessed right tic after
+  tic on Opulence now, and what a pass costs when nothing is rebuilt.
+- **Pass: 9.0 to 9.2 ms, for 6 to 9 written** -- at the top, because the save
+  is 4.9 ms and not 8.66's 2.5, the same slowness as `correct_on`. **Frames:
+  3308 to 3369 in 1000 tics, 116 to 118 a second, against 9 to 11 in
+  `correct_on` in the same session**: eleven times as many, and 1 to 8
+  iterations past a tic against about 700.
+
+**So:** on Opulence, with its confirmed world now exact, keeping the
+speculation turns a pass of 33 to 35 ms into one of 9 -- one tic and one
+save -- and the frame rate from 10 to 117. What is not measured yet: the same
+race with the local player in it, then driven. A rebuild there costs the
+whole depth again, about 8 tics of 4 ms plus their saves.
+
+**Next, each on Gibax's go-ahead:** count a save once in `rollback_cost`
+(a `src/` change); `keep` on Opulence again with the player in the race (the
+harness now warns when it is not: `558c8a7`); then driven; and, for the slow
+save, a race with the machine otherwise idle.

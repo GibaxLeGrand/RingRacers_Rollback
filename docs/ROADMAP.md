@@ -60,7 +60,10 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
 plain speculation at 12 tics without a driver, which held (8.48), and on
 2026-09-28 a second `history` race, which held too (8.50), then the soaks of
 six other maps, which found two leaks through the restore (8.57, 8.58), fixed
-and pushed the same day. **Every launch is asked for first.**
+and pushed the same day. Later on 2026-09-28, item 8 (8.60 to 8.77):
+instruments for the cost of a pass, three fixes to the restore, sounds kept on
+their objects, track A (`rollback_keepspec`), and Opulence's drift found in the
+correction channel's put-back and fixed. **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -141,7 +144,8 @@ and pushed the same day. **Every launch is asked for first.**
    - ~~The soaks again, on `8749842d6`.~~ Done on 2026-09-28 (8.59):
      Opulence 0 of 292 and 1 of 386, Carnival Night only `itemList.cap` --
      but Coastal Temple 9 of 261: a reload never reset polyobject
-     translucency and flags. Fixed as `a59fa6203`; its leak soak again next.
+     translucency and flags. Fixed as `8142e07c4`; its leak soak holds
+     (8.62: 1 of 261, `itemList.cap`).
      Then the driven `correct_on` on a map with dynamic slopes or
      polyobjects, with `nospec` as its control. Still open, not blocking:
      the Garden Top rider (8.56), Coastal Temple's resim failures on a
@@ -162,11 +166,24 @@ and pushed the same day. **Every launch is asked for first.**
    - `history` feels better **and the leak of 8.46 is found and fixed**: turn
      it on by default, and fold its cost into Phase B. Until then it stays
      off.
-8. **Cost and stutter (8.60), asked by Gibax on 2026-09-28, in this order:**
-   measure (frame times, the steps of a pass, how often the speculation was
-   right); the waypoint relink through the index; then, in an order Gibax
-   chooses: keep the speculation when it was right, a cheaper restore,
-   smaller ones.
+8. **Cost and stutter (8.60), asked by Gibax on 2026-09-28.** Measured (8.62
+   to 8.69): on Opulence a rebuilt pass is 25 to 35 ms, most of a tic, and a
+   speculated tic 3.4 to 4 ms, 83% of it the map's decorations. Done: the
+   double save (`a09cc3bbe`), the interpolation purge (`7a8c2707f`), the
+   waypoint relink (`242f394f2`), sounds kept on their objects across a
+   restore (`ab1c24e15`). Gibax's order for the tracks: **B1, then A, then
+   B2**; A was built first on his word ("au pire on revient en arrière").
+   - ~~A: keep the speculation when the server confirms it.~~ Built
+     (`b24e0a2f2`, `rollback_keepspec`, off by default), and a correction
+     that changes nothing no longer rebuilds (`69e65f0ac`): Skyscraper Leaps
+     99 to 100% of passes kept, 2 ms a pass (8.76); Opulence 99.6 to 100%,
+     9 ms a pass, 117 frames a second against 10 -- with the local player a
+     spectator (8.77). **Next, each asked for:** count a save once in
+     `rollback_cost` (8.77); `keep` on Opulence with the player in the race;
+     then driven.
+   - B1, restore in place; B2, a raw snapshot: not started.
+   - Open: a sound cut when an object is removed in a speculated tic (8.73);
+     the slow save of 8.76 and 8.77 (the machine was busy; not measured).
 9. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---
@@ -248,6 +265,11 @@ Measured: 4.94 ms a pass at two karts, 8.33 at eight, **9.5 ms at nine with
 somebody driving -- 33% of a 28.6 ms tic**, already past the line below. The
 restore alone was 8.6 ms at sixteen karts late in a race. **Assume it does not
 fit, and measure.**
+
+Measured on 2026-09-28 at nine karts on Opulence, 3700 objects (`WORLDWIDE.md`
+8.62 to 8.77): a pass rebuilt every tic, 25 to 35 ms; kept by
+`rollback_keepspec`, one tic and one save, 9 ms. The map's decorations, not
+the karts, are 83% of a tic.
 
 **A cheap lever first, found by reading** (`WORLDWIDE.md` 8.30):
 `P_RelinkPointers`, 4.7 ms of an 8.6 ms restore, resolved every pointer with a
