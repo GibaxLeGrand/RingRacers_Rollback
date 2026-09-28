@@ -3414,3 +3414,78 @@ stopped it anyway. The commit was moved to a local branch
 (`wip/leak-identity`), `HEAD` is back on the pushed branch, and the soak
 itself ran on the right exe. Not run yet: Coastal Temple, Death Egg,
 Opulence.
+
+### 8.57 The state-naming instrument, and Coastal Temple: the polyobject leak
+
+**The instrument, pushed and measured.** Commit `854bcf5e9` (Gibax's go-ahead,
+CI green, installed, sha checked): each per-object capture keeps the living
+object's state, sprite, frame and target, and a changed object prints them.
+On its first run -- Labyrinth's leak soak again (262 checks, 5 failures: 4
+`MT_THOK`, 1 `itemList.cap`; log
+`soaklog_leak_RR_Labyrinth_20260928-142058_854bcf5.txt`) -- it named every
+changed `MT_THOK`: **`S_THOK`, sprite `TRCK`, frame 0 or 1, no target.** Only
+`K_trickPanelTimingVisual` (`k_kart.c`) spawns that sprite: the two half
+circles of the trick-panel timing visual, frames 0 and 1 -- the pairs. It
+places them with `R_PointToAnglePlayer`, which measures from **the local
+camera** (`camera[i].x/y`, else `viewx/viewy`): drawing state, never archived,
+different on every machine. So they move with the camera across a restore.
+**8.55 is explained: a view-dependent effect built into the game, drawn only,
+not hashed.** No fix is proposed. The candidate 8.55 named (the bubble waves)
+was wrong: those set a state other than their spawn state, and these masks
+had no `MD_STATE`.
+
+**Coastal Temple's leak soak: 261 checks, 10 failures, 9 of them in the
+polyobjects block** (the tenth `itemList.cap`; log
+`soaklog_leak_RR_CoastalTemple_20260928-142356_854bcf5.txt`). All nine after
+an honest pass, no object record differing, and the archive **24 bytes longer
+every time** (142 544 -> 142 568, for one). The polyobject record shows its
+`diff` byte gaining `PD_TRANS` and a translucency of 3 or 4 where the
+reference had none.
+
+**The mechanism, read in the code and matched to the bytes:**
+
+- A load nulls every `po->thinker` (`P_UnArchivePolyObj`): "the thinkers
+  themselves will fight over who gets the field when they first start to
+  run".
+- The polyobject actions refuse to start on a polyobject that has a thinker
+  -- "Don't crowd out another thinker", `if (po->isBad || po->thinker)
+  return` (`p_polyobj.c`).
+- Between a restore and the first run of the restored thinker, the
+  polyobject looks idle, so a trigger in that window **starts a second
+  action** the unbroken run had refused.
+- A polyobject fade thinker archives as exactly **24 bytes** (type, number,
+  source, destination, three flags, duration, timer), and it changes the
+  translucency. That is the growth and the `PD_TRANS`.
+
+A fade can also switch the polyobject's collision (`docollision`), and a
+second move or rotate would move it. So this is not only drawn: **on a map with
+polyobjects, a client that restores every pass can start polyobject actions
+the server never started.** The second leak Phase A was looking for, on the
+maps that have them (8.40 predicted it would be named in this block).
+
+**Coastal Temple's resim soak: 347 checks, 6 failures** (log
+`soaklog_ww_RR_CoastalTemple_20260928-142947_854bcf5.txt`). The first names
+three `MT_WAYPOINT` objects whose record changes by one in a counter field
+(`0x03` -> `0x02`); the struct walker also lists `po_movecount` on rings --
+"NOT savegame", compared with an ever-growing counter, harmless on reading --
+and shadow fields. Not analysed further yet.
+
+**Built, not pushed, not run** (Gibax asked for the fixes after the series):
+
+- **Polyobject ownership** (`p_saveg.cpp`): a local snapshot records, for each
+  of the eight polyobject thinker types, whether it owns its polyobject, and
+  a local restore gives the ownership back as it loads the thinker, before
+  anything runs. Network gamestates keep the stock format.
+- **Unlocks and `gamedata` on off-timeline tics** (`p_inter.c`, `p_mobj.c`,
+  `k_rollback.c`): an emblem, a spray can, a prison-egg pickup, the Mystic
+  Melody record and the challenge-destructible condition check write nothing
+  while `K_RollbackReplaying()` -- a speculation, a correction replay, and
+  now the soak's check passes (`K_RunFrozenTics`).
+- **`roundconditions`** (`p_saveg.cpp`): only `unlocktriggers` is archived;
+  the rest -- what happened this round, for the challenges -- goes into
+  local snapshots whole, so a speculated tic cannot count towards an unlock.
+
+**Predictions for that build, written before it runs:** Coastal Temple's leak
+soak shows no polyobjects-block failure; Carnival Night's leak soak shows no
+spray-can failure even when the can is grabbed; and the struct walker's
+lines at 1828/1832 -- inside `roundconditions` -- stop appearing.
