@@ -3933,7 +3933,7 @@ tics** (Gibax, watching it: "injouable", 15 frames a second at most).
   was saved twice**: `rollback_twoclock` turns `rollback_keep` on, so
   `K_RollbackTicker` saved every confirmed tic, and `K_RollbackSpeculate`
   then saved the frontier -- the same tic, the same slot. Two-clock mode
-  restores only the frontier. Found here, fixed as `487f26b4a` (not pushed).
+  restores only the frontier. Found here, fixed as `a09cc3bbe`.
 - **8.61's prediction fails twice.** The pass: "12 ms or more", measured 28
   to 31. The hit rate: "90% or more", measured **48 to 53%** (473 of 980,
   525 of 995, 513 of 991 passes with every input right), the first wrong tic
@@ -3952,10 +3952,25 @@ frame a window. The two Opulence loads the harness warned about came before
 window 0: the windows are Opulence's.
 
 **So on Opulence the speculation takes the game from about 142 frames a
-second to 12 to 17.** Written, not pushed: `487f26b4a` (the double save, 2.3
-ms) and `f8e392a48` (the interpolation list emptied before the purge, part
+second to 12 to 17.** Written, not pushed: `a09cc3bbe` (the double save, 2.3
+ms) and `7a8c2707f` (the interpolation list emptied before the purge, part
 of up to 2.2 ms). Together about 25 ms a pass: still most of the tic. The
 largest item is now **the tics themselves: five a pass at 3.3 ms**. What
 would cut it: a depth of 2 on such maps (-6.6 ms), finding what makes an
 Opulence tic cost 3.3 ms (3700 objects; 401 gems and coins run a Lua
 `MobjThinker` every tic), and track A once the hit rate is understood.
+
+### 8.63 The two quick wins, pushed, and what the next race should show
+
+Pushed on 2026-09-28 with Gibax's go-ahead ("pousse, installe et lance la
+course de mesure"): `a09cc3bbe` (no second save of the confirmed tic in
+two-clock mode) and `7a8c2707f` (the interpolation list emptied before the
+purge). Both were first committed under other shas, reordered below the docs
+commit before their push.
+
+**Prediction for `correct_on` on Opulence, no driver, written before it
+runs:** the confirmed step falls by about 2.3 ms (to about 4.1 to 5.1), the
+restore by 0.5 to 1.5 ms; a pass of **24 to 27 ms**, still most of a tic;
+fewer skipped frames but still hundreds a window, **20 to 30 frames a
+second**. The hit rate does not move (48 to 53%): nothing here touches the
+inputs.
