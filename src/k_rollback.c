@@ -4064,7 +4064,14 @@ void K_RollbackTicker(void)
 	// so keeping them would fill the ring with worlds nobody will ever go back to
 	// -- and the one slot that matters, the confirmed frontier, is written by
 	// K_RollbackSpeculate itself.
-	if (g_keeping && gamestate == GS_LEVEL && g_soakbusy == false && g_speculating == false)
+	//
+	// Nor in two-clock mode at all: its only restore is to the frontier, and
+	// K_RollbackSpeculate saves the frontier itself, into the same slot, a few
+	// microseconds after this would -- the same state written twice a pass. On
+	// Opulence that was 2.3 ms of a pass that already took the whole tic
+	// (WORLDWIDE.md 8.62).
+	if (g_keeping && g_twoclock == 0 && gamestate == GS_LEVEL && g_soakbusy == false
+		&& g_speculating == false)
 		K_SaveGameState(gametic);
 
 	K_RollbackSoakTicker();
