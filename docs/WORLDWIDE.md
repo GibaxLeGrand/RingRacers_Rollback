@@ -4163,3 +4163,38 @@ of **18 to 21 ms** (the 8.69 race's 26 to 27, minus two speculated tics of
 about 3.4 ms), speculation 6.5 to 7.5 ms; **35 to 45 frames a second** on
 Opulence; skipped frames down to tens a window, not hundreds. The hit rate
 rises a little: fewer guessed tics a pass, the same first one.
+
+### 8.71 `depth2` on Opulence: 50 to 71 frames a second, for one tic of the local input ahead instead of three
+
+Measured on 2026-09-28, binary `5a417494f`, `playtest.sh depth2
+map=RR_Opulence` (`playlog_depth2_RR_Opulence_20260928-194532_5a41749.txt`).
+Prediction in 8.70.
+
+| | window 0 | window 1 | window 2 | depth 4 (8.69) |
+|---|---|---|---|---|
+| pass | 18.6 ms (65%) | 20.6 (72%) | 21.9 (77%) | 26.4 - 27.5 |
+| ... speculation, 2 tics | 6.8 | 7.3 | 8.2 | 13.9 - 14.4 |
+| frames drawn in 1000 tics | **2030** | **1631** | **1437** | 598 - 791 |
+| frames a second | **71** | **57** | **50** | 21 - 28 |
+| iterations past a tic, next frame skipped | 14 | 82 | 109 | 352 - 455 |
+| drift: mean / worst / samples with a state field off | 0.004 / 0.99 / 749 of 2241 | 0.003 / 0.24 / 817 of 2250 | 0.196 / 5.04 / 1335 of 2250 | |
+
+- **The pass holds its prediction** (18 to 21 written, 18.6 to 21.9
+  measured); **the frames beat it**, 50 to 71 a second for 35 to 45 written,
+  and skipped frames fall to tens, as written.
+- **The hit rate says nothing at this depth.** Windows 1 and 2 read 1000 of
+  1000 passes right. `rollback_cleancmds` explains it: exactly one local
+  input a pass "would have been written over an already-received tic" --
+  **the first of the two speculated tics is a tic the server has already
+  sent**, and it is the one the next pass confirms. The check compares only
+  confirmed tics, so it compares a received tic with itself. The same is
+  likely true at depth 4, where its "first wrong tic at 0" then needs
+  another reading; to settle before track A leans on it.
+- **What depth 2 costs the player, then:** of two speculated tics, one
+  already carries the server's (old) input, so the newest local input steers
+  the drawn kart for **one tic instead of three**. The input is still drawn
+  at once, but moves the kart a third as far ahead. Gibax is the only
+  instrument for whether that feels worse.
+- The drift grows in window 2 (mean 0.196, worst 5.0 units, 59% of samples
+  with `speed` off). The confirmed world should not depend on the depth;
+  one race, not explained.
