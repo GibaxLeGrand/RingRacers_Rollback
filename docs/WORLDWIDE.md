@@ -3367,3 +3367,45 @@ them" has not been checked.
 and Opulence were not run. Three open items from these soaks, none explained
 to the end: the spray can and `gamedata` (8.54, mechanism read), the player's
 reference count (8.54), and these `MT_THOK` pairs.
+
+### 8.56 The resim soaks of Labyrinth and Carnival Night: a player on a Garden Top
+
+Measured on 2026-09-28: binary `9652ccc7c`, `soak.sh ww` on each map,
+unattended, the first two soaks of the series resumed after 8.55 with the
+`MT_THOK` pairs as known. Logs kept as
+`soaklog_ww_RR_Labyrinth_20260928-140410_9652ccc.txt` and
+`soaklog_ww_RR_CarnivalNight_20260928-140706_9652ccc.txt`.
+
+- **Labyrinth: 312 resim checks, 0 failures.** The `MT_THOK` pairs of its leak
+  soak (8.55) do not show in a resim: they need an extra pass, which a resim
+  check does not make. The game used 1.24 GB during this soak, against 387 MB
+  during Northern District's leak soak; one reading each, not compared on the
+  same scenario.
+- **Carnival Night: 347 resim checks, 2 failures**, at leveltime 4650 and
+  4680. Both the same: after a restore, the replayed tics differ from the
+  first pass on **one player's kart (`MT_PLAYER`, the same object both times)
+  and one `MT_GARDENTOP`** -- the kart's `spritexoffset` (and
+  `old_spritexoffset`), the top's `rollangle`, and `shadowcolor` on a few
+  smoke objects. Every damage event and every collision pair agrees
+  between the passes, and the two restored passes agree with each other:
+  "the replay is repeatable and it is the restore that loses something the
+  simulation uses". So a player was riding a Garden Top, and the restore does
+  not bring back something its ride reads.
+
+Read, not proven: the top's tilt (`gardentop.c`, `tilt`) steps `rollangle`
+from its own value and the rider's `steering`, and the vibration sets
+`spritexoffset` from `topinfirst` and `leveltime`. The restore's own report
+lists, besides the fields every soak shows, bytes of `player_t` that are not
+put back -- at 44, 106-111 and 252 -- which the struct walker cannot name.
+Which of them the ride reads is not known. The fields that differ are drawn,
+not hashed; whether the ride's physics reads any of them has not been
+checked.
+
+**The series stopped here, and partly by my error.** I committed the
+state-naming instrument to `src/` locally while it ran; the harness then saw
+an exe that is not the code repository's `HEAD` and stopped with a warning
+before its checker ran. The Carnival Night resim failures would have
+stopped it anyway. The commit was moved to a local branch
+(`wip/leak-identity`), `HEAD` is back on the pushed branch, and the soak
+itself ran on the right exe. Not run yet: Coastal Temple, Death Egg,
+Opulence.
