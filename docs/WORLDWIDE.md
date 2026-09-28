@@ -91,7 +91,11 @@ Every piece is behind a switch that is off by default, except
    but one**. Every driven race ran on `RR_SkyscraperLeaps`, one of the 30
    race maps out of 152 with no water, no polyobject, no linedef executor and
    no ACS (8.40). The harness now runs any scenario on any map (`map=<lump>`),
-   and `harnais/maps.py` lists what each map exercises.
+   and `harnais/maps.py` lists what each map exercises. **First other map, on
+   2026-09-28 (8.51):** Northern District's leak soak holds (only
+   `itemList.cap`), but its ACS drives a ring's reference count negative six
+   times -- read as an ACS thread releasing a `mo` from before a restore; a
+   one-line guard is proposed, not coded.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -3120,3 +3124,68 @@ the server's instance running on the same machine. A frame that carries a
 is Phase B's problem -- the cost of a pass -- felt as frames rather than read
 as milliseconds. Whether the drops came only in the history window is not
 known.
+
+### 8.51 The first other map: Northern District's leak soak, and an ACS reference count that goes negative
+
+Measured on 2026-09-28: binary `88d8a878f`, `soak.sh leak
+map=RR_NorthernDistrict`, unattended, one instance, eight karts,
+`rollback_soak 20 4 1`. Prediction written in 8.40. Log kept as
+`soaklog_leak_RR_NorthernDistrict_20260928-131434_88d8a87.txt`. The first
+launch never started: see the harness defect below.
+
+**The prediction holds.** 258 checks, 1 failure: `itemList.cap` (one byte of
+the players block, `00`->`20`, 672 bytes into `player_t` for `p4`), the known
+and harmless case of 8.34. 0 of 1728 objects differ. `rollback_test`'s round
+trip after the soak is byte-identical over the whole 184 086-byte snapshot --
+1.7 times Skyscraper Leaps' 106 909 -- with save 0.9 ms and load 2.7 ms,
+against 0.5 and 1.7 there.
+
+**New, and not a leak failure: six `PARANOIA/P_SetTarget ... MT_RING ...
+references=-1, references go negative!`**, all from `src/acs/thread.hpp:119`.
+No Skyscraper Leaps log has one; Northern District runs ACS (861 bytes, 8.40),
+Skyscraper Leaps none. So it comes from ACS, which no speculation had
+exercised before.
+
+Read in the code, **not proven**:
+
+- Line 119 is `ThreadInfo::operator=`: it sets `thread_era = thinker_era`,
+  then `P_SetTarget(&mo, info.mo)`, which releases the old `mo` -- one
+  reference down on whatever it points at. `Thread::start` and
+  `Thread::stop` both assign (`src/acs/thread.cpp`).
+- `thinker_era` exists so that a `mo` from before the thinkers were rebuilt
+  is never touched: the destructor (`thread.hpp:110`) and the environment
+  (`environment.cpp:376`) only release it `if (thread_era == thinker_era)`.
+  The assignment does not check.
+- **Every restore rebuilds the thinkers**: `P_LoadNetGame` calls
+  `P_InitThinkers`, which bumps `thinker_era` (`p_tick.c:299`). Stock Ring
+  Racers restores on a join or a resync; a rollback client restores on every
+  pass, and the soak every 20 tics.
+- So a thread whose `mo` dates from before a restore, assigned after it,
+  takes one reference off an object that was freed -- or off a new object
+  allocated at the same address. Here that was a ring: -1.
+
+A count that goes negative can keep an object from ever being freed. A count
+that reaches 0 early frees an object that is still referenced. The second is
+a crash, or a world that differs on one machine only -- on a client, whose
+confirmed world is restored every pass. It is not seen in this soak's leak
+checks, which compare archives, and the reference count is not archived.
+
+**Proposed, not coded** (it touches `src/`, and `acs/` is upstream code): the
+destructor's guard in the assignment too -- forget, rather than release, a
+`mo` from an older era. The prediction for that change: the next leak soak on
+an ACS map prints no `references go negative`.
+
+**Harness defect, found at the first launch and fixed.** `rrww_map_exists`
+(`map_override.sh`, 2026-09-23) grepped each `.pk3` as text. A 300 MB archive
+with almost no newline is one "line" of hundreds of MB: `grep` aborted on
+every file, and the check refused a map that `maps.py` lists, before
+launching anything. It had only been tried on fake files. It now reads each
+zip's member names with Python, as `maps.py` does. A dry run on the real
+`.pk3` files found the six maps of the shortlist and Skyscraper Leaps,
+refused a made-up name, and accepted a `/d/` path.
+
+**Instrument limit, not a defect:** `rollback_test` reports "42 appeared from
+nowhere" here and 0 on Skyscraper Leaps. `K_CopyMobjs` copies at most 2048
+objects before the restore (`k_rollback.c`), and Northern District has 2090:
+2090 - 2048 = 42 with no copy to compare against. Opulence (3538 things)
+will show more. The message should say "not copied".
