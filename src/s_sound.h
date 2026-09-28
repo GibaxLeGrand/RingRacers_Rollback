@@ -154,6 +154,14 @@ void S_ReducedVFXSoundAtVolume(const void *origin, sfxenum_t sfx_id, int32_t vol
 // Stop sound for thing at <origin>
 void S_StopSound(void *origin);
 
+// Sounds across a rollback's local restore (WORLDWIDE.md 8.73). The restore
+// frees every mobj and loads it again, most at another address, while the
+// sounds are left playing on purpose. Note which object each playing sound
+// comes from, by mobj number, before the restore; point it at the object
+// carrying that number once they are loaded again.
+void S_NoteChannelOrigins(void);
+void S_RelinkChannelOrigins(struct mobj_t *(*find)(uint32_t mobjnum));
+
 //
 // Music Status
 //

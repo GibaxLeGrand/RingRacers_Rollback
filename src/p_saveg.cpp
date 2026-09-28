@@ -8553,6 +8553,11 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 		P_UnArchivePolyObjects(save);
 		P_ProfileStep("polyobjects");
 
+		// Which object each playing sound comes from, before the purge frees
+		// them all (S_NoteChannelOrigins, WORLDWIDE.md 8.73).
+		if (local)
+			S_NoteChannelOrigins();
+
 		P_NetUnArchiveThinkers(save);
 		P_ProfileStep("thinkers");
 
@@ -8572,6 +8577,12 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 		P_BuildRelinkIndex();
 		P_NetUnArchiveTubeWaypoints(save);
 		P_NetUnArchiveWaypoints(save);
+
+		// And the sounds back onto the objects they came from, through the
+		// same index (S_RelinkChannelOrigins, WORLDWIDE.md 8.73).
+		if (local)
+			S_RelinkChannelOrigins(P_FindNewPosition);
+
 		relinkindexlen = 0;
 		P_ProfileStep("waypoints");
 
