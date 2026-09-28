@@ -4542,3 +4542,25 @@ whole depth again, about 8 tics of 4 ms plus their saves.
 (a `src/` change); `keep` on Opulence again with the player in the race (the
 harness now warns when it is not: `558c8a7`); then driven; and, for the slow
 save, a race with the machine otherwise idle.
+
+### 8.78 `keep` on Opulence again, with the local player in the race
+
+Pushed on 2026-09-28 on Gibax's go-ahead ("oui, pousse 755ea3c0c et lance
+keep sur Opulence"): `755ea3c0c`, `rollback_cost` counts a save made inside
+the speculation once (8.77). Then the same `keep` race on Opulence,
+unattended, with the harness's new check that this machine's player entered
+the game.
+
+**Predictions, written before it runs:**
+
+- The client's player enters; `rollback_history` finds about 7 inputs in
+  flight and speculates about 8 tics deep, as on Skyscraper Leaps (8.76).
+- **97% of passes kept or more**, the rebuilds a handful of wrong inputs;
+  drift 0.000. The history replays this machine's inputs with their own
+  stamps, and the bots are guessed right (8.77).
+- `rollback_cost`, now counting each save once: the speculation about one
+  tic (4 ms), the save beside it; **a pass of 8 to 10 ms** if the save is
+  still 4.9 ms, 6 to 7 if it is back at 2.5. **More than 3000 frames in 1000
+  tics.**
+- A rebuild, when one comes, costs about 8 tics and their saves, some 70
+  ms: a handful of them shows as a handful of iterations past a tic.
