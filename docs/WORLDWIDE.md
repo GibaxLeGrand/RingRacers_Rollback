@@ -4207,3 +4207,65 @@ frames as unattended -- about 50 to 70 a second at depth 2, 20 to 33 at
 depth 4; **depth 2 feels smoother and its steering a little less ahead**,
 and Gibax prefers it on this map if the steering does not float. The drift
 stays on `speed` in the dynamic-slope stretch either way.
+
+### 8.73 The driven races, the sound's stutter, and track A built
+
+**Driven, 2026-09-28, binary `5a417494f`, Gibax at the wheel** (8.72's
+prediction): `depth2` then `correct_on` on Opulence
+(`playlog_depth2_RR_Opulence_20260928-195035_5a41749.txt`,
+`playlog_correct_on_RR_Opulence_20260928-195321_5a41749.txt`).
+
+| | depth 2 | depth 4 |
+|---|---|---|
+| pass | 18.9 / 19.2 / 21.3 ms | 25.4 / 27.5 / 30.0 |
+| frames a second | **69 / 65 / 54** | 32 / 21 / 14 |
+| skipped frames a window | 29 / 37 / 89 | 269 / 463 / 609 |
+| worst drift | 1.8 / **126** / 10.7 units | 23 / 34 / 48 |
+
+Gibax: "Depth2 était bien plus fluide sans aucun doute. Assez fluide en
+moyenne", and the sound stutters. The frames hold 8.72's prediction. **New:
+driven, the confirmed world drifts far more** -- worst 23 to 126 units, three
+kart widths once, against under 5 unattended -- which the channel then snaps
+back: the speed drift of 8.67 under a driver.
+
+**The sound's stutter, found in the code.** A local restore leaves sounds
+playing on purpose (`P_RemoveSavegameMobj`), but every channel kept the
+address of the object it came from, and the restore frees every object and
+loads it again, most elsewhere. `S_UpdateSounds` then set each sound's volume
+and panning from whatever that memory now held, every pass; the local
+player's engine stopped being recognised as its own (`c->origin !=
+listenmobj`). **Fixed, not pushed: `ab1c24e15`** -- each channel notes its
+object's mobj number and type before the purge and is pointed at the object
+carrying them after the load, through the relink index, or stopped. A second
+cause, not fixed: an object removed in a speculated tic stops its sounds
+(`P_RemoveMobj`), and the restore that brings it back does not restart them.
+
+**Track A, built on Gibax's word** ("tu veux pas juste faire A au pire ?
+... au pire on revient en arrière"), **not pushed: `b24e0a2f2`,
+`rollback_keepspec`**, off by default -- off, every pass runs as before
+(checked line by line). On, the speculation is left standing: the netcode
+gets the frontier's clock (`gametic`, and the `leveltime` the local input is
+stamped with) while the world stays at the head; once the server's tics are
+in, the tics the loop would run are checked against the inputs the
+speculation ran. Kept: their checksums (noted when the speculation ran them)
+go to `consistancy[]`, the frontier moves, and the pass runs only the tics
+beyond the head. Otherwise: back to the frontier, and the usual pass. Never
+kept: a tic with a netxcmd filed, one that raised a refused message, one where
+a gamedata guard changed what it did (`K_RollbackOffTimeline`), or a pass
+with a correction due. Sounds now play on a tic's first run
+(`K_RollbackSoundsSilenced`). It needs `rollback_history` and
+`rollback_cleancmds`: without them this machine's own input is guessed wrong
+every pass. Harness mode `keep` = `history_on` with it on.
+
+**What it costs, and the prediction, written before it runs.** A kept pass
+is one tic and one save; a rebuilt one now saves every speculated tic, and
+with `rollback_history` that is 7 to 12 of them. So:
+
+- **Skyscraper Leaps, `keep`, unattended** (correctness first, the map with
+  no drift): no refusal, drift 0.000 as in 8.44; **60% of passes kept or
+  more**; the rebuilds mostly "a correction was due" (one pass in four with
+  `rollback_correct 4`); a pass of about 2 ms kept and 15 to 20 rebuilt,
+  bimodal.
+- **Opulence, `keep`**: fewer passes kept (its drift makes the bots' inputs
+  differ), rebuilds of 40 ms or more; **no better than depth 2 on
+  average**, and hitchier. Opulence needs its drift found before A pays.
