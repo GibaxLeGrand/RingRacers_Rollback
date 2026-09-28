@@ -4352,3 +4352,51 @@ first point.
   elsewhere, and applying only hid it. I expect the second: 8.67 saw the
   first `speed` difference at tic 2248, into the dynamic-slope stretch, not
   at the first correction.
+
+### 8.76 Opulence's drift was the corrections themselves; track A keeps every pass on Skyscraper Leaps
+
+Measured on 2026-09-28, binary `69e65f0ac` (sha256 `45d59222...`), Gibax's
+go-ahead, unattended. Predictions in 8.75.
+
+**`keep` on Skyscraper Leaps** (`playlog_keep_20260928-212641_69e65f0.txt`):
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| passes kept, of 999 | **992** | **999** | **999** |
+| ... through a correction that changed nothing | 248 | 246 | 249 |
+| pass | **2.5 ms** | **2.7** | **3.2** |
+| frames drawn in 1000 tics | 4100 | 4097 | 4103 |
+| drift | 0.000 | 0.000 | 0.000 |
+
+The prediction holds (97% or more; 3 ms or less, window 2 just above):
+**with `rollback_history` 12, the speculation now costs about what one tic
+does**, and the game draws as many frames as it does with no speculation at
+all (8.62's control: about 4050 to 4077). The harness warned that the race
+ended inside the session; the windows are whole (1000 passes each).
+
+**`measure` on Opulence -- corrections measured, never applied**
+(`playlog_measure_RR_Opulence_20260928-213001_69e65f0.txt`):
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| kart samples | 2096 | 1936 | 1968 |
+| drift: mean / worst | **0.000 / 0.000** | **0.000 / 0.000** | **0.000 / 0.000** |
+| samples with a state field off | **0** | **0** | **0** |
+
+**8.75's prediction fails, and the failure is the finding: with nothing
+applied, Opulence's confirmed world matches the server's exactly, in every
+field, for three windows.** Every drift seen on Opulence since 8.62 -- the
+`speed` of 8.67, the 126-unit spike of 8.73, and the bots' wrong inputs
+behind A's rebuilds (8.74) -- came from applying the corrections: putting
+back karts the server never moves, which relinks them in their chains
+(8.75). With `69e65f0ac` an identical kart is no longer put back, so a
+client that does not diverge never puts one back at all.
+
+The same run was slow -- restore 6.9 to 8.5 ms, a save 5.1 to 6.3 (2.5
+before), 1.25 to 1.47 confirmed tics a pass, 9 to 11 frames a second -- with
+nothing in this build to explain a save twice as dear. Noted, not explained;
+the machine may have been busy.
+
+**What follows:** `correct_on` on Opulence on this build should read 0.000
+with no kart put back; and `keep` on Opulence, its bots now guessed right,
+should keep most passes.
