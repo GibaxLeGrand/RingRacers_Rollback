@@ -5271,6 +5271,18 @@ void K_RollbackKeepCommit(void)
 	leveltime = g_keepheadleveltime;
 }
 
+/** The time a speculation took since started, less the saves made inside it.
+  * With rollback_keepspec every speculated tic's start is saved from inside the
+  * speculation, and those saves are already in g_saveus: rollback_cost printed
+  * them twice (WORLDWIDE.md 8.77). */
+static uint32_t K_SpeculationMicros(precise_t started, uint32_t savedbefore)
+{
+	const uint32_t all = K_PreciseToMicros(I_GetPreciseTime() - started);
+	const uint32_t saves = g_saveus - savedbefore;
+
+	return (all > saves) ? all - saves : 0;
+}
+
 /** A kept pass: the frontier has moved on, the world is still at the head, and
   * only the tics the clock now asks for beyond it are run. */
 static void K_KeepExtend(void)
@@ -5278,6 +5290,7 @@ static void K_KeepExtend(void)
 	const tic_t frontier = g_confirmedtic;
 	const int32_t s = (int32_t)(frontier % ROLLBACK_TICS);
 	int32_t ahead = K_SpeculationDepth(K_RollbackTwoClock(), frontier);
+	const uint32_t savedbefore = g_saveus;
 	precise_t started;
 
 	g_keepkept = false;
@@ -5308,7 +5321,7 @@ static void K_KeepExtend(void)
 	}
 
 	g_speculated = true;
-	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_specus += K_SpeculationMicros(started, savedbefore);
 	g_specpasses++;
 
 	K_NoteDrawnOffset();
@@ -5317,6 +5330,7 @@ static void K_KeepExtend(void)
 void K_RollbackSpeculate(void)
 {
 	int32_t ahead = g_nullspec ? 0 : K_RollbackTwoClock();
+	uint32_t savedbefore;
 	precise_t started;
 	int32_t i;
 
@@ -5353,6 +5367,7 @@ void K_RollbackSpeculate(void)
 	g_saveus += K_PreciseToMicros(I_GetPreciseTime() - started);
 
 	ahead = K_SpeculationDepth(ahead, gametic);
+	savedbefore = g_saveus;
 
 	started = I_GetPreciseTime();
 	g_speculating = true;
@@ -5370,7 +5385,7 @@ void K_RollbackSpeculate(void)
 	g_speculating = false;
 	g_speculated = true;
 
-	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_specus += K_SpeculationMicros(started, savedbefore);
 	g_specpasses++;
 
 	K_NoteDrawnOffset();
