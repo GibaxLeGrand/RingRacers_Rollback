@@ -4198,3 +4198,12 @@ Prediction in 8.70.
 - The drift grows in window 2 (mean 0.196, worst 5.0 units, 59% of samples
   with `speed` off). The confirmed world should not depend on the depth;
   one race, not explained.
+
+### 8.72 Driven, depth 2 then depth 4 on Opulence: the feel
+
+Gibax's go-ahead on 2026-09-28: `depth2` then `correct_on` on Opulence, Gibax
+driving both, binary `5a417494f`. **Prediction, written before they run:**
+frames as unattended -- about 50 to 70 a second at depth 2, 20 to 33 at
+depth 4; **depth 2 feels smoother and its steering a little less ahead**,
+and Gibax prefers it on this map if the steering does not float. The drift
+stays on `speed` in the dynamic-slope stretch either way.
