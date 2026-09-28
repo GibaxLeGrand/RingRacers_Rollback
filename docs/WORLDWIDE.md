@@ -120,7 +120,7 @@ Every piece is behind a switch that is off by default, except
    1 of 386** (the first check's `chainorder_block`, set aside), Carnival Night
    only `itemList.cap`, `roundconditions` no longer in the walker -- **but
    Coastal Temple still 9 of 261**: a reload leaves polyobject translucency
-   and flags as the last tics made them. Fixed as `a59fa6203`, not pushed.
+   and flags as the last tics made them. Fixed as `8142e07c4`, not pushed.
    **Cost and stutter (8.60):** one pass a tic, whole, inside one frame -- 10
    ms on Skyscraper Leaps, an estimated 15 or more on Opulence -- and every
    sound waits for the confirmed tic. Tracks proposed there, measurement
@@ -3664,7 +3664,7 @@ Predictions in 8.57 and 8.58.
   trigger found the translucency not at its destination and started a fade the
   reference never had: one more thinker (24 bytes), and `PD_TRANS` set.
 
-**Fixed, not pushed: `a59fa6203`.** When the bit is absent, the load puts the
+**Fixed, not pushed: `8142e07c4`.** When the bit is absent, the load puts the
 spawn value back. No format change; right for every load, local or not.
 
 **Prediction for it:** Coastal Temple's leak soak shows no polyobjects-block
@@ -3849,3 +3849,39 @@ every figure an estimate from the measurements above:**
 
 **Estimated:** Opulence from 15 ms or more every tic to about 4 or 5 in the
 steady state, bursts only on a misprediction, and smaller ones after track 4.
+
+### 8.61 Steps 0 and 1 of 8.60, pushed, and what their first runs should show
+
+Gibax, 2026-09-28: "fais dans l'ordre que tu proposes", then chose the order
+of the rest after the pros and cons of each track: **B1 (restore in place),
+then A (keep the speculation when it was right), then B2 (raw snapshot)**,
+after the measurement. Pushed with his go-ahead:
+
+- `8142e07c4` -- polyobject flags and translucency back to spawn values on a
+  reload (8.59; first committed as `a59fa6203`, reordered before its push).
+- `865f79d95` -- **the instrument (step 0).** `rollback_twoclock`'s report
+  adds `rollback_cost` (per pass: restore, network, correction, confirmed
+  tics, save, speculation), `rollback_frames` (each main-loop iteration's work
+  before its sleep, with and without a pass, in buckets; the gap between two
+  drawn frames; iterations that ran past a tic, after which the game skips a
+  frame) and `rollback_hits` (of the passes that confirmed guessed tics, how
+  many had every input right, the first wrong tic, whose inputs were wrong).
+  No behaviour change.
+- `242f394f2` -- **the waypoints restored through the relink index (step
+  1).** Same lookups, same order.
+
+**Predictions, written before the runs Gibax asked for** (Coastal Temple's
+leak soak, Opulence's leak and resim soaks, then `correct_on` and `off` on
+Opulence without a driver):
+
+- Coastal Temple, leak: **no polyobjects-block failure**.
+- Opulence, leak: 0 failures again; resim: at most the first check's
+  `chainorder_block`. The restore profile's `waypoints` step falls from about
+  0.95 ms to **under 0.1 ms**, the load by about as much.
+- `correct_on` on Opulence: `rollback_cost` **12 ms a pass or more**
+  (estimated 15 in 8.60), of which restore about 5.5, save 2.5 to 3.5,
+  speculation 5 or more. Iterations with a pass mostly above 16.7 ms, some
+  past a tic -- so skipped frames, which `off` should not show.
+- `rollback_hits`, no driver: **90% of passes or more with every input
+  right** -- the idle kart's input does not change and bots are recomputed
+  from the same world. A driven race is what will say how a person fares.
