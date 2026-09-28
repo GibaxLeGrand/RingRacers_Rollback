@@ -4153,3 +4153,13 @@ over decorations that behave the same in every tic; making one type cheaper
 takes a tenth of it at best. The number of tics a pass runs -- five -- is the
 lever: a shallower speculation now, track A later, which needs the drift
 (8.67) and the latency stamp settled first.
+
+### 8.70 `depth2`: the same race at half the speculation
+
+Gibax's go-ahead on 2026-09-28. Harness mode `depth2`: `correct_on` with
+`rollback_twoclock 2`. Run on the installed `5a417494f`
+(`rollback_objprofile` off). **Prediction, written before it runs:** a pass
+of **18 to 21 ms** (the 8.69 race's 26 to 27, minus two speculated tics of
+about 3.4 ms), speculation 6.5 to 7.5 ms; **35 to 45 frames a second** on
+Opulence; skipped frames down to tens a window, not hundreds. The hit rate
+rises a little: fewer guessed tics a pass, the same first one.
