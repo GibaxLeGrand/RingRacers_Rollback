@@ -58,8 +58,9 @@ since 2026-09-21: `correct_on`, which read like `nospec` on every count
 (8.45). Then `history`, whose confirmed world parted inside its window
 (8.46), the leak soak at its depth, which found no archive leak (8.47),
 plain speculation at 12 tics without a driver, which held (8.48), and on
-2026-09-28 a second `history` race, which held too (8.50). **Every launch is
-asked for first.**
+2026-09-28 a second `history` race, which held too (8.50), then the soaks of
+six other maps, which found two leaks through the restore (8.57, 8.58), fixed
+and pushed the same day. **Every launch is asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -129,10 +130,21 @@ asked for first.**
      Night's leak soak (8.54: a spray can re-derived from `gamedata` at every
      load, and a player's reference count) and Labyrinth's (8.55: 15
      failures on pairs of `MT_THOK`), then Carnival Night's resim soak
-     (8.56: a player riding a Garden Top). Labyrinth's resim soak holds. Not
-     run yet: Coastal Temple, Death Egg and Opulence. Before more soaks, the
-     open items want the state-naming instrument (built, not pushed, branch
-     `wip/leak-identity`).
+     (8.56: a player riding a Garden Top). Labyrinth's resim soak holds. The
+     state-naming instrument (`854bcf5e9`) named Labyrinth's pairs -- a
+     camera-placed visual, drawn only (8.57). Then the last three: Coastal
+     Temple (8.57: polyobject ownership, which a load nulls), Death Egg
+     (holds) and Opulence (8.58: the first tic after a restore steers on a
+     dynamic slope's plane left by the tics before it -- kart speed and
+     angle, 37 failures in each soak). **Four fixes pushed on 2026-09-28**,
+     `12c2fa755` to `8749842d6`.
+   - **Next: the soaks again, on `8749842d6`**, against 8.57's and 8.58's
+     predictions: Opulence (leak, resim), Coastal Temple (leak), Carnival
+     Night (leak). Then the driven `correct_on` on a map with dynamic slopes
+     or polyobjects, with `nospec` as its control. Still open, not blocking:
+     the Garden Top rider (8.56), Coastal Temple's resim failures on a
+     waypoint counter (8.57), Opulence's first-check `chainorder_block`
+     (8.58), and a player's reference count (8.54).
 7. **Depending on 6:**
    - `correct_on` reads like `nospec` (it did, 8.44) and the control shows
      the instruments see a divergence (it did, 8.45): **Phase A's mechanism
@@ -186,6 +198,15 @@ windows' divergence.
 `RR_SkyscraperLeaps`, which has no water, no polyobject, no linedef executor
 and no ACS. The exclusions above hold there. The other maps are in *Next, in
 order*.
+
+**Two more leaks, found by the other maps' soaks and fixed (2026-09-28),
+not yet measured:** a load nulls every polyobject's owning thinker, so a
+second polyobject action can start after a restore (8.57); and the plane of
+a dynamic slope was never archived, while `P_PlayerThink` reads it before the
+slope thinkers recompute it, so the first tic after every restore steered the
+karts on a plane some tics ahead (8.58). Both happen at every pass of the
+netcode, on the maps that have them, and the server never restores: each
+could part the confirmed world from the server's.
 
 **The relabel histogram's `+2` cluster** (8.27), read in both races of
 2026-09-23: it falls before the measurement windows -- the host's before

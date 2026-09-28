@@ -13,7 +13,7 @@ rest lives in the private notes only -- `README.md`, the entry point (working
 rules, decisions, environment); `ROLLBACK.md`, the closed journal from before
 the pivot; and `AUDIT_20260909.md`, the comparison with SRB2 NetPlus and Odamex.
 
-## Current state (2026-09-23) -- read this first
+## Current state (2026-09-28) -- read this first
 
 This block is the only part of this file that is rewritten to stay current.
 Everything after it is a dated journal: when a later section overturns an
@@ -53,8 +53,10 @@ Every piece is behind a switch that is off by default, except
    never agree again. The driven kart parts first by thousandths of a unit,
    then a bot, then the seed sum, which the channel never repairs. The drift
    was 8.31's mechanism -- the speculation writing the local input over tics
-   already received -- and what it left behind (8.38). Still owed: the other
-   maps (item 6).
+   already received -- and what it left behind (8.38). **The other maps
+   (item 6) found two more leaks, both through the restore and both fixed:**
+   polyobject ownership (8.57) and the plane of a dynamic slope, which the
+   first tic after every restore read from the tics before it (8.58).
 2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39,
    8.41 -- off by default). Instead of repeating the newest input over a 4-tic
    speculation, the speculation replays every input sent but not yet applied,
@@ -101,12 +103,20 @@ Every piece is behind a switch that is off by default, except
    re-derived at every load from `gamedata`, this install's unlock progress,
    which a grab inside a tic changes and saves -- so a speculated grab would
    unlock a can for good -- and a player's reference count goes negative,
-   not explained. Fixes proposed, not coded. Labyrinth's leak soak (8.55):
-   15 failures in 267, all on pairs of visual `MT_THOK` objects after an
-   honest pass -- not identified. Resim soaks (8.56): Labyrinth 0 of 312;
+   not explained. Labyrinth's leak soak (8.55): 15 failures in 267, all on
+   pairs of `MT_THOK` -- the trick-panel timing visual, placed from the local
+   camera, drawn only (8.57). Resim soaks (8.56): Labyrinth 0 of 312;
    Carnival Night 2 of 347, a player riding a Garden Top whose restore loses
-   something the ride reads. Coastal Temple, Death Egg and Opulence are not
-   run.
+   something the ride reads. Coastal Temple (8.57): 9 leak failures from
+   polyobject ownership, which a load nulls, so a second polyobject action
+   can start after a restore; 6 resim failures, not analysed. Death Egg
+   (8.58): holds. **Opulence (8.58): 37 failures in each soak, on kart speed
+   and angle, in one stretch of the lap** -- the first tic after a restore
+   steers on a dynamic slope's plane left by the tics before it, because
+   `P_PlayerThink` runs before the slope thinkers and the plane was never
+   archived. **Four fixes pushed on 2026-09-28** (`12c2fa755` to
+   `8749842d6`): `gamedata` on off-timeline tics, polyobject ownership,
+   `roundconditions`, the slope's plane. Not yet measured.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -150,6 +160,8 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
 | 8.39, 8.41 | "it only changes what is drawn" and "drift unchanged between windows" fail in the first run: the confirmed world parted inside the history window (8.46). They hold in the second (8.50). Its display-side predictions mostly hold; its depth and cost figures do not |
 | 8.40 point 3 | `rngsum` is not in the logs to be read (8.42) |
+| 8.55 | its pairs are named in 8.57: the trick-panel timing visual, placed from the camera. Its candidate (the bubble waves) was wrong |
+| 8.57 | its three fixes are pushed, with a fourth (8.58) |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
 ## 0. The rename, and what it actually commits to
@@ -3470,6 +3482,9 @@ three `MT_WAYPOINT` objects whose record changes by one in a counter field
 "NOT savegame", compared with an ever-growing counter, harmless on reading --
 and shadow fields. Not analysed further yet.
 
+> ⚠ Pushed on 2026-09-28 as `12c2fa755`, `f185713cc` and `74df18f95`,
+> with a fourth fix, the dynamic slope's plane (8.58).
+
 **Built, not pushed, not run** (Gibax asked for the fixes after the series):
 
 - **Polyobject ownership** (`p_saveg.cpp`): a local snapshot records, for each
@@ -3489,3 +3504,105 @@ and shadow fields. Not analysed further yet.
 soak shows no polyobjects-block failure; Carnival Night's leak soak shows no
 spray-can failure even when the can is grabbed; and the struct walker's
 lines at 1828/1832 -- inside `roundconditions` -- stop appearing.
+
+### 8.58 The end of the series: Death Egg holds, and Opulence reads a dynamic slope the restore never put back
+
+**Death Egg, on `854bcf5e9`.** Leak soak: 274 checks, 2 failures, both
+`itemList.cap` (log `soaklog_leak_RR_DeathEgg_20260928-143404_854bcf5.txt`).
+Resim soak: 357 checks, **0 failures**
+(`soaklog_ww_RR_DeathEgg_20260928-143704_854bcf5.txt`).
+
+**Opulence, on `854bcf5e9`: 37 failures in each soak, on the karts.**
+
+- Leak soak: 284 checks, 37 failures
+  (`soaklog_leak_RR_Opulence_20260928-144016_854bcf5.txt`). One is
+  `itemList.cap`. The other 36 all follow an **honest pass** -- the same
+  inputs, four extra tics, a restore -- and every object shown in full is a
+  kart or one of its effects: `MT_PLAYER` 20 times, `MT_SMOOTHLANDING` 20,
+  `MT_WAVEDASH` 20, `MT_FASTLINE` 19, `MT_DRAFTDUST` 4. Every bot is named
+  in turn, and states and masks stay the same: the values move, not the
+  shape. When the first difference falls in the players block, it is 996 to
+  1001 bytes into a bot's record, "past the fields this can name" (the one
+  at 1006 is the `itemList.cap`).
+  Walking `P_NetArchivePlayers` byte by byte on the dump places it in
+  `botvars.recentDeflection` and `botvars.lastAngle`, which
+  `K_UpdateBotGameplayVars` derives from the kart's momentum angle
+  (`k_bot.cpp`). The kart moved differently.
+- Resim soak: 375 checks, 37 failures
+  (`soaklog_ww_RR_Opulence_20260928-144324_854bcf5.txt`), every one "the two
+  restored passes agree with each other": the restore loses something. The
+  players block names kart `speed` and `angleturn`; the thinkers block names
+  `MT_FASTLINE` and `MT_SNEAKERTRAIL`. Both passes examine **the same
+  collision pairs in the same order** and agree on every hit event.
+- Both soaks fail in the same two stretches: leveltime 1620 to 2300 and 4240
+  to 4660 (leak), 1710 to 2160 and 4245 to 4545 (resim). The two stretches
+  are 2620 tics apart -- a lap. **One part of the track.**
+- The first resim failure is different: at leveltime 705, the very first
+  check, 11 decorations (splash flowers, a tumble gem) differ by one byte.
+  Decoded on the dump, that byte is `chainorder_block`, the object's place
+  in its blockmap chain (1 on the live side, 0 on the restored). It does not
+  come back in the 374 checks that follow. Not analysed.
+
+**Why the per-object comparison named nothing.** On Opulence the karts carry
+mobjnums above 3100, because 3538 map things are numbered first, and
+`K_CopyMobjs` stops at 2048 objects: "1791 appeared from nowhere" on every
+check. The resim soak's field comparison never looked at a kart. That is an
+instrument limit (8.40 called Opulence "3.6 times Skyscraper Leaps").
+
+**What Opulence has that the other maps do not** (read from its `TEXTMAP` and
+`scripts.pk3`): 41 slopes flagged dynamic (special 700, `TMSL_DYNAMIC`), 37
+continuous plane movers (special 53, tags 650 to 697), 1127 slope anchors,
+and Lua-driven tumble gems and coins. No polyobject.
+
+**The mechanism, read in the code:**
+
+- A dynamic slope's plane (`pslope_t`: `o`, `normal`, `d`, `zdelta`,
+  `zangle`, `xydirection`) is recomputed from its control sectors by its
+  thinker, `T_DynamicSlopeLine` or `T_DynamicSlopeVert` (`p_slopes.c`), in
+  `THINK_DYNSLOPE` -- the first list `P_RunThinkers` runs.
+- **`P_Ticker` runs `P_PlayerThink` before `P_RunThinkers`** (`p_tick.c`),
+  and `P_3dMovement` reads the plane under the kart to direct its thrust:
+  `zdelta`, `xydirection`, and `P_QuantizeMomentumToSlope` on the normal
+  (`p_user.c:2145-2166`). Effects spawned in that step take
+  `P_GetMobjZMovement`, which reads the plane too.
+- The archive carries the slope thinkers, with the slope's id, but **not the
+  plane**. A load leaves the plane as the last tics run left it.
+- So the first tic after a restore steers the karts on the plane of **the
+  tics before the restore**: four tics ahead after the leak check's honest
+  pass, the first pass's end in the resim check. Everywhere else the plane
+  is the one its thinker computed in the previous tic. On a floor that moves,
+  those differ. Hence one stretch of the lap, every kart, speed and angle,
+  and the effects spawned from them.
+- The `MT_FASTLINE`-only failures fit: the fast line's first archived field,
+  `z`, is the one that moves, and its `momz` is three quarters of the kart's
+  `P_GetMobjZMovement`. `MT_SMOOTHLANDING` is the slope-landing effect.
+
+**This is not only the instruments.** Every pass of the netcode restores the
+confirmed snapshot after a speculation of `rollback_twoclock` tics, then runs
+the next confirmed tic. On a dynamic slope over a moving floor, that tic
+reads a plane `rollback_twoclock` tics ahead, and the server never restores.
+**On such a map, the confirmed world can part from the server's** -- the
+second leak Phase A was looking for, on the maps that have them.
+
+**Fixed:** `8749842d6` (Gibax's go-ahead, pushed 2026-09-28). Each dynamic
+slope thinker writes its plane into a local snapshot, and a local restore
+puts it back as it loads the thinker, before anything runs. Network
+gamestates keep the stock format. Syntax checked, with an injected error as
+the counter-test. With it, 8.57's three fixes, split one subject a commit:
+`12c2fa755` (`gamedata` on off-timeline tics), `f185713cc` (polyobject
+ownership), `74df18f95` (`roundconditions`).
+
+**Left as it is:** a network load -- a joining client, a full-state resend --
+still keeps whatever plane the client had. Stock does the same: a joiner
+reads the map's plane until the thinker's first run. A recompute after such
+a load would be one tic off while a floor moves; not done.
+
+**Predictions for `8749842d6`, written before it runs:**
+
+- Opulence, leak soak: no honest-pass failure on a kart or its effects;
+  `itemList.cap` may remain.
+- Opulence, resim soak: none of the 36 kart failures. The first-check
+  `chainorder_block` failure has another cause and may remain.
+- 8.57's still stand: no polyobjects-block failure on Coastal Temple, no
+  spray-can failure on Carnival Night, no struct-walker line at 1828/1832
+  -- on Opulence's leak soak too, where they appear today.
