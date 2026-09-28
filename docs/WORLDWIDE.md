@@ -94,8 +94,9 @@ Every piece is behind a switch that is off by default, except
    and `harnais/maps.py` lists what each map exercises. **First other map, on
    2026-09-28 (8.51):** Northern District's leak soak holds (only
    `itemList.cap`), but its ACS drives a ring's reference count negative six
-   times -- read as an ACS thread releasing a `mo` from before a restore; a
-   one-line guard is proposed, not coded.
+   times -- read as an ACS thread releasing a `mo` from before a restore. Its
+   resim soak holds, with no such warning (8.52). The guard is built in
+   `src/acs/`, not run (8.52).
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -3189,3 +3190,38 @@ nowhere" here and 0 on Skyscraper Leaps. `K_CopyMobjs` copies at most 2048
 objects before the restore (`k_rollback.c`), and Northern District has 2090:
 2090 - 2048 = 42 with no copy to compare against. Opulence (3538 things)
 will show more. The message should say "not copied".
+
+### 8.52 Northern District's resim soak holds, and the ACS guard is built
+
+**Measured:** binary `88d8a878f`, `soak.sh ww map=RR_NorthernDistrict`,
+unattended, one instance, eight karts, `rollback_soak 15 4`. Log kept as
+`soaklog_ww_RR_NorthernDistrict_20260928-132403_88d8a87.txt`. **347 resim
+checks, 0 failures**; `rollback_detect` reports nothing; and **no `references
+go negative`** -- the leak soak's six (8.51) come from its restores, not from
+ACS running on its own. 8.40's prediction for Northern District holds on both
+soaks. The script exited 1 on this clean run: its last line greps the
+`rollback_test` profile, which the `ww` scenario does not print. Fixed in
+`soak.sh`.
+
+**Built on 2026-09-28, not run:** the guard of 8.51, in `src/acs/` (upstream
+code). Reading the load path while writing it showed that the assignment
+alone would not do:
+
+- `ThreadInfo::operator=` (`thread.hpp`): a `mo` from an older era is
+  forgotten, as the destructor does, instead of released.
+- `Thread::loadState` (`thread.cpp`) takes a reference on the thread's new `mo`
+  without stamping the era. With only the first change, that reference would
+  then be forgotten too, never given back, and its object never freed. So the
+  load now forgets a `mo` from an older era, stamps `thread_era =
+  thinker_era`, then reads the new one. That also fixes a second gap: a
+  thread saved with no `mo` came back with the stale one it held.
+
+Syntax checked with MSYS2 `g++ -fsyntax-only -Wall -Wextra -std=c++17` on
+`thread.cpp`, which includes `thread.hpp`: no diagnostic. A copy with an
+error injected into each changed function failed on both, so both are
+compiled. Not compiled -- CI is the only build.
+
+**Prediction, written before it runs:** `soak.sh leak map=RR_NorthernDistrict`
+on the build with the guard prints **no `references go negative`**, and its
+leak checks still fail only on `itemList.cap`. On Skyscraper Leaps, which has
+no ACS, nothing changes.

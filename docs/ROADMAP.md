@@ -121,10 +121,11 @@ asked for first.**
      map=<lump>` and `soak.sh ww map=<lump>` first, unattended; then
      `playtest.sh correct_on map=<lump>` driven, with `playtest.sh nospec
      map=<lump>` as its control. Northern District first, then the maps
-     with water, executors, polyobjects and ACS. **Northern District's leak
-     soak is done (8.51)**: it holds, but its ACS drives a reference count
-     negative -- the guard proposed there comes before the maps with more
-     ACS (Coastal Temple 2537 bytes, Death Egg 3132).
+     with water, executors, polyobjects and ACS. **Northern District's two
+     soaks are done (8.51, 8.52)**: both hold, but the leak soak's restores
+     drive an ACS reference count negative. The guard is built (8.52): its
+     check is Northern District's leak soak again, on its build, before the
+     maps with more ACS (Coastal Temple 2537 bytes, Death Egg 3132).
 7. **Depending on 6:**
    - `correct_on` reads like `nospec` (it did, 8.44) and the control shows
      the instruments see a divergence (it did, 8.45): **Phase A's mechanism
