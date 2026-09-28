@@ -12,7 +12,7 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-23** — 23 commands, checked against
+**Up to date as of 2026-09-28** — 25 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`. Two are **obsolete**
 (`rollback_loop`, `rollback_pace`) and are kept only for comparison.
 
@@ -171,6 +171,18 @@ split the packets: **host or remote client**, **during a race or outside
 one**. Hypothesis to test (`WORLDWIDE.md` 8.32): the `+2` cluster comes from
 the host **outside a race**, where the delay exemption does not apply.
 
+### `rollback_objprofile [0|1]`
+Off by default. Times the objects' thinker list **object by object** and adds
+the time up by object type (`p_tick.c`, `WORLDWIDE.md` 8.68, 8.69). Built to
+find what an Opulence tic spends its time on: its decorations (gems and
+coins, mace chains, braziers), not the karts.
+
+- No argument: the list's time a tic, then the 15 dearest types -- how many
+  think a tic, their time a tic and each -- and every other type together.
+- The timing adds its own cost, so the total reads above a tic's real one:
+  compare types with each other, not with a race without it.
+- Setting it resets the counts.
+
 ### `rollback_lagcheck` — not a command
 Looked for as a command, it is not one: it is an **automatic print**, edge
 triggered, inside `UpdatePingTable` (`d_clisrv.c`). It emits a line
@@ -224,7 +236,26 @@ itself.
 - No argument: report (speculation passes built, tics they ran, time spent
   undoing/redoing the speculation per pass against a whole tic's budget,
   network messages refused because they were raised inside a speculation — a
-  netxcmd sent during a speculation cannot be taken back).
+  netxcmd sent during a speculation cannot be taken back), then four kinds of
+  line (`WORLDWIDE.md` 8.60 to 8.66):
+  - `rollback_cost` — a pass step by step: restore, network, correction,
+    confirmed tics (and how many a pass), save, speculation (and how many
+    tics), against a tic's 28571 us;
+  - `rollback_frames` — the main loop's iterations with and without a pass,
+    their work before the sleep in buckets, the gaps between drawn frames,
+    how many frames were drawn and how many iterations ran past a tic (the
+    frame after each is skipped);
+  - `rollback_hits` — of the passes that confirmed tics the speculation had
+    run, how many had every input right, the first wrong tic, whose input
+    was wrong (this machine, bots, people) and in which ticcmd fields. ⚠ It
+    compares only the tics confirmed at the next pass, often tics already
+    received when they were speculated: it can read near 100% for nothing
+    (8.71);
+  - `rollback_tic` — a speculated tic's time split into player thinks, the
+    thinker lists, ACS and Lua, with the Lua mobj hooks and
+    `P_CheckPosition` calls a tic.
+- Setting it (any value) resets all of these, so a race can print one report
+  a window.
 - Removes the fixed input delay while it is on (see the box below).
 
 > #### ⚠️ 2026-09-14 fix: `rollback_twoclock` finally removes the fixed delay
@@ -335,6 +366,34 @@ jitter (`WORLDWIDE.md` 8.40, 8.41).
 - Setting it resets those counts, so the same race can be read off then on.
 - Suggested value: `12`.
 
+### `rollback_keepspec [0|1]`
+**Client side, two-clock mode. Off by default.** Track A (`WORLDWIDE.md`
+8.73 to 8.76): instead of putting the confirmed world back and rebuilding the
+speculation every pass, the speculation **stays standing** when the tics the
+server confirms are the ones it ran -- same inputs for every player -- and
+becomes the confirmed world as it is. Only the tics past the head are then
+run. A pass that keeps costs about one tic and one save instead of a restore
+and the whole speculation again.
+
+- It rebuilds, as before, when an input differed, when a tic carries a
+  netxcmd, when a tic raised a message that had to be refused or hit a
+  gamedata guard, when the server confirmed past the head, when a gamestate
+  was loaded or the level was starting, and when a correction is due that
+  **moves** a kart. A correction whose karts all match what the speculation
+  had at that tic changes nothing and is consumed without a rebuild (from
+  `69e65f0ac`, 8.75).
+- Needs `rollback_twoclock`, and to guess this machine's own input right,
+  `rollback_history` and `rollback_cleancmds`; without them it says so.
+- No argument: how many passes left the speculation standing, how many kept
+  it (and how many of those through a correction that changed nothing), and
+  the count of each reason to rebuild.
+- Setting it resets the counts.
+- Measured on Skyscraper Leaps with `rollback_history 12`: 99 to 100% of
+  passes kept, a pass of 2.5 to 3.2 ms, as many frames as with no
+  speculation, drift 0.000 (8.76). ⚠ Driven on Opulence before
+  `69e65f0ac` it was far worse than without it (8.74), and it has not been
+  judged there since: **leave it off** outside a test.
+
 ### `rollback_nullspec [0|1]`
 Saves and restores the frontier on **every pass** without speculating
 anything. Isolates a single question: does the plain round trip through the
@@ -396,6 +455,14 @@ in game units — a kart is about 40 units wide).
 - The argument decides whether the corrections are **also applied**
   (`rollback_drift 1`) or only measured (default): measuring and correcting in
   the same race would produce a number that says nothing about either.
+- Applying is not neutral: putting a kart back relinks it at the head of its
+  blockmap and sector chains, which the server never does, and the order of
+  those chains is the order of a collision. That alone made Opulence's
+  confirmed world drift (`WORLDWIDE.md` 8.76). From `69e65f0ac` a kart
+  already exactly where the server has it is left alone (8.75); the report
+  then says how many karts were put back, how many were refused because the
+  destination was blocked, and how many were already where the server had
+  them.
 - Every kart sample also compares the kart's state with the server's:
   spinout, flashing, `justbumped`, hitlag, offroad, speed, item and a few
   more. A sample past 4 units prints a `SPIKE` line with them. From builds
@@ -422,8 +489,9 @@ nothing has been measured yet.
   - client: `rollback_twoclock 4` and `rollback_drift 1` (it is that `1` that
     applies the corrections; without it, the client only measures them).
     `rollback_cleancmds` is already on by default. Optionally
-    `rollback_history 12`, to draw your inputs still in flight (not yet judged
-    in a race);
+    `rollback_history 12`, to draw your inputs still in flight, and with it
+    `rollback_keepspec 1`, to keep the speculation when the server confirms
+    it (neither is settled yet);
   - to simulate 171 ms of latency locally: `rollback_lag 6` on the client.
 - **Measuring the switches**: an off/on/off race cannot measure a switch that
   changes the confirmed world, since an on window inherits what the off window
