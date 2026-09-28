@@ -4099,3 +4099,15 @@ Read on 2026-09-28, from 8.66's log and the code; nothing launched.
 
 **For track A**: its hit rate on bots is bounded by this drift, and on this
 machine by the stamp. Neither is a reason A cannot work; both come first.
+
+### 8.68 `rollback_objprofile`, pushed, and what it should show
+
+Pushed on 2026-09-28 with Gibax's go-ahead: `5a417494f`. Run with
+`playtest.sh objprofile map=RR_Opulence` (correct_on, the objects' list timed
+by type, printed each window). **Predictions, written before it runs:** the
+list's timed total a little above 8.66's 2.9 to 3.4 ms a speculated tic (the
+timing costs); **`MT_RING` first by count**, about 2200 a tic, and among the
+first three by time, **about 1 ms a tic**; the Lua gems and coins
+(`MT_TUMBLEGEM`, `MT_OPULENCECOIN`, 401 together) **0.5 ms a tic or more**,
+their hook being the cost; the eight `MT_PLAYER` dearest each, **0.3 to 0.6
+ms a tic** together.
