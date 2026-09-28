@@ -3105,3 +3105,18 @@ depend on it and go ahead.
 **Relabel split**, for the record: host `+0` ×2034, `+2` ×1464, identical to
 the three races of 2026-09-23; remote `+1`/`+2` ×1594, `+7`/`+8` ×1348, the
 rest ×10. The same shape, the same reading (8.44).
+
+**How it felt, asked after the race.** Gibax: the history window "a l'air
+d'être mieux", with "un peu de latence, genre à-coups, je saurais pas dire" --
+and, new, **frame drops**, "comme si le jeu galère à afficher les images".
+Not measured: no log records the frame rate, and the drawn-world count
+above (0 jumps in the history window) is about which tic is drawn, not how
+often a frame is. Read against what is measured, it is what the pass costs
+predict. A pass runs once a tic, all at once, inside one frame: 7.7 to 8.4
+ms with history off, 13.5 ms with it on. That is 27 to 29% of a second's
+CPU with history off, 47% with it on, on the thread that also renders, with
+the server's instance running on the same machine. A frame that carries a
+13.5 ms pass has about 3 ms left of a 60 Hz frame's 16.7 to draw it. This
+is Phase B's problem -- the cost of a pass -- felt as frames rather than read
+as milliseconds. Whether the drops came only in the history window is not
+known.
