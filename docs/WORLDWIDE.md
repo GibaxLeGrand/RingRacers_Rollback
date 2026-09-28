@@ -4319,3 +4319,36 @@ cost of the history window. On Opulence it needs, in this order: the drift
 found (the bots' inputs), a due correction that changes nothing not to force
 a rebuild (on Skyscraper Leaps that alone would take it from 75% toward all
 passes kept), and cheaper saves (B2) before rebuilding stops hurting.
+
+### 8.75 A correction that changes nothing: no rebuild, and no kart put back
+
+Written 2026-09-28, not pushed: `69e65f0ac`, on Gibax's go-ahead for 8.74's
+first point.
+
+- **A kart already exactly where a correction has it is left alone.**
+  Putting it back was not neutral: `P_MoveOrigin` re-runs `P_CheckPosition`
+  and relinks the kart at the head of its blockmap and sector chains. The
+  server never moves a kart. So every correction -- every kart, every four
+  tics, about 2200 a window -- reordered the client's chains and not the
+  server's, and the order objects are met in a collision is the order of
+  those chains. **A candidate for Opulence's drift** (8.67), where karts touch
+  gems and coins in crowds and order can matter; the leak and resim soaks
+  cannot see it, since neither applies corrections.
+- **With `rollback_keepspec`, a correction due at the frontier no longer
+  rebuilds when it changes nothing.** Each speculated tic notes its karts in a
+  correction's terms; the due correction is compared with the frontier's
+  note, and if every kart matches it is measured against the note (the same
+  drift figures) and consumed.
+- Harness mode `measure`: `correct_on` with `rollback_drift 0`, corrections
+  measured and never applied.
+
+**Predictions, written before they run:**
+
+- `keep` on Skyscraper Leaps, unattended: **97% of passes kept or more**, the
+  corrections kept through (drift 0.000 there); a pass of 3 ms or less on
+  average; every kart "already where the server had it".
+- `measure` on Opulence, unattended: if the put-back is the drift's source,
+  **0.000 with nothing applied**. If it drifts anyway, the source is
+  elsewhere, and applying only hid it. I expect the second: 8.67 saw the
+  first `speed` difference at tic 2248, into the dynamic-slope stretch, not
+  at the first correction.
