@@ -4400,3 +4400,28 @@ the machine may have been busy.
 **What follows:** `correct_on` on Opulence on this build should read 0.000
 with no kart put back; and `keep` on Opulence, its bots now guessed right,
 should keep most passes.
+
+### 8.77 Opulence with corrections applied again, then track A there
+
+Launched on 2026-09-28 on Gibax's go-ahead ("lance la suite"), binary
+`69e65f0ac` (sha256 `45d59222...`), unattended, one after the other.
+`correct_on` is also the same-session control for `keep`'s timings: the same
+race with no history and nothing kept.
+
+**Predictions, written before they run:**
+
+- `correct_on` on Opulence: **drift 0.000 in all three windows, and every
+  kart sample "already where the server had it"** -- no kart put back once.
+  If a window drifts, something other than the put-back parts the two worlds
+  as soon as a correction is applied, and 8.76's conclusion is only half
+  right. **Passes with every input right: 90% or more in every window**,
+  against 8.64's 80%, 36% and 31% falling with the race -- if the bots were
+  wrong because the confirmed world drifted, they no longer are. The pass
+  stays near 8.64's 25 to 28 ms: this build changes nothing it pays for.
+- `keep` on Opulence: **90% of passes kept or more**, the rebuilds a handful
+  of wrong inputs (nobody drives) and no due correction among them; drift
+  0.000. A kept pass runs one tic and saves it, so about 4 ms of tic
+  (8.66) plus 2.5 of save: **a pass of 6 to 9 ms**, against 83.5 ms in 8.74
+  and 25 or so in `correct_on`, and **more than 2500 frames in 1000 tics**.
+  If the machine is as slow as in 8.76's `measure`, both races are, and the
+  ratio between them is what counts.
