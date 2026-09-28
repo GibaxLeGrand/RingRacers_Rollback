@@ -4061,3 +4061,41 @@ Predictions in 8.65.
   A value that moves every tic while the steering it comes with rarely
   changes reads like the server building it from a world one tic older than
   the client's guess. A candidate, not read yet in the server's loop.
+
+### 8.67 Why the guesses fail on Opulence: a driver, a stamp, and a confirmed world that drifts on speed
+
+Read on 2026-09-28, from 8.66's log and the code; nothing launched.
+
+- **Gibax was driving** during 8.66's race, and during 8.62's and 8.64's
+  ("oui je jouais"). That explains this machine's wrong `turning` and
+  `buttons`: a person's input changes and repeat-last misses it -- and part of
+  the race-to-race spread in frames. Those races are driven, not unattended
+  as written in 8.62 to 8.66.
+- **This machine's `latency` is wrong on every wrong input**, as 8.65 said:
+  the speculation fills the local slot with the newest input, whose stamp is
+  not the one the server applied, a round trip older. `rollback_history`
+  replays the inputs in flight with their own stamps (8.39); measuring the
+  hit rate with it on is how to tell.
+- **The server builds a bot's input exactly as the client guesses it**, read
+  in the code: `NetUpdate` runs only at the head of `TryRunTics`, and the
+  server's `SV_Maketic` makes tic `maketic` from the world after `maketic - 1`
+  and runs it in the same pass (`neededtic = maketic`); `target_lag` delays
+  inputs, not the server's world. **8.66's candidate -- a world one tic older
+  -- is refuted.**
+- **What the bots see differently is the world itself.** The same race's
+  drift report: mean 0.002 units, worst 1.42 then 0.15, **287 to 315 of about
+  2200 kart samples with a state field differing, and that field is `speed`
+  every time** (120 STATE lines, all `speed`), from tic 2248 -- Opulence's
+  dynamic-slope stretch (8.58). About 2200 karts put back a window by the
+  correction channel. A bot's `angle` input is its prediction error, computed
+  from its position and heading: a world a hair off gives another value while
+  the steering, quantised, rarely moves. **On Opulence the confirmed world
+  does not reach 8.44's 0.000**; the correction channel hides it.
+- **A candidate, not tested**: the order objects sit in their blockmap chains.
+  A client restores every pass and relinks in the archived order; the server
+  never restores. 8.58's first-check resim failure is exactly that order
+  (`chainorder_block`) differing between a live world and a restored one --
+  which the leak soak, restoring on both sides, cannot see.
+
+**For track A**: its hit rate on bots is bounded by this drift, and on this
+machine by the stamp. Neither is a reason A cannot work; both come first.
