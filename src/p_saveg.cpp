@@ -991,6 +991,15 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		// It is the ONLY roundcondition that is sent over the wire and I'd like it to stay that way.
 		WRITEUINT32(save->p, players[i].roundconditions.unlocktriggers);
 
+		// The rest of them stays off the wire, but not out of a rollback: they
+		// record what happened this round for the challenges -- fell off, hit
+		// in mid-air, top speed -- and a speculated tic that sets one would
+		// count towards an unlock if nothing put it back. Every leak soak has
+		// shown bytes here that a restore did not reset (WORLDWIDE.md 8.11,
+		// 8.57). A plain struct, no pointers.
+		if (localsnapshot)
+			WRITEMEM(save->p, &players[i].roundconditions, sizeof (players[i].roundconditions));
+
 		// powerupvars_t
 		WRITEUINT16(save->p, players[i].powerup.superTimer);
 		WRITEUINT16(save->p, players[i].powerup.barrierTimer);
@@ -1793,6 +1802,10 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		// ACS has read access to this, so it has to be net-communicated.
 		// It is the ONLY roundcondition that is sent over the wire and I'd like it to stay that way.
 		players[i].roundconditions.unlocktriggers = READUINT32(save->p);
+
+		// See the archiver: the whole of them, in a rollback's own snapshots.
+		if (localrestore)
+			READMEM(save->p, &players[i].roundconditions, sizeof (players[i].roundconditions));
 
 		// powerupvars_t
 		players[i].powerup.superTimer = READUINT16(save->p);
