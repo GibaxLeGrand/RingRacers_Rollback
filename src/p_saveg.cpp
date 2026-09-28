@@ -6840,10 +6840,17 @@ static inline void P_UnArchivePolyObj(savebuffer_t *save, polyobj_t *po)
 
 	diff = READUINT8(save->p);
 
-	if (diff & PD_FLAGS)
-		po->flags = READINT32(save->p);
-	if (diff & PD_TRANS)
-		po->translucency = READINT32(save->p);
+	// The archive carries only what differs from the spawn values, which is
+	// right for a load into a freshly loaded level. A reload does not reload
+	// the level: P_NetUnArchiveMisc puts the sectors, lines and sides back to
+	// their spawn values, but not the polyobjects. So a value that was back at
+	// its spawn value when the save was made kept whatever the tics run since
+	// had made of it. On Coastal Temple a fade run after the save left the
+	// translucency changed across a restore, and the next fade trigger -- which
+	// does nothing when the translucency already is its destination -- started
+	// a fade the unbroken run never had (WORLDWIDE.md 8.59).
+	po->flags = (diff & PD_FLAGS) ? READINT32(save->p) : po->spawnflags;
+	po->translucency = (diff & PD_TRANS) ? READINT32(save->p) : po->spawntrans;
 
 	// if the object is bad or isn't in the id hash, we can do nothing more
 	// with it, so return now
