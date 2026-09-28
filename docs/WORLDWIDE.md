@@ -4617,3 +4617,45 @@ driven `keep` race on Opulence, to compare with 8.74's, not with 8.77's.
   touches the save path (`K_WriteSnapshot`, `P_SaveNetGame`: read). Not
   explained. The installed backups of `5a417494f` and `b24e0a2f2` can
   bisect it without a build.
+- **Gibax's feel**: "la cam qui déconait un peu, genre qui laggait, le jeu
+  bon ça va, toujours pas du 60 fps+ mais mieux que le diapo d'avant". A
+  lead for the camera, not checked: every snapshot carries the cameras
+  (`slot->cameras`, `K_WriteSnapshot`) and a restore puts them back, so each
+  rebuild may move the camera back to where it stood at the frontier.
+
+### 8.79 Who is wrong when a kept speculation is rebuilt: the instrument
+
+Written on 2026-09-29 on Gibax's go-ahead ("oui, écris l'instrument"):
+`80d530d82`, on the local branch `wip/keep-miss`, **not pushed**. Syntax
+checked, and an error injected at each of the ten changed places is reported
+by the compiler.
+
+`rollback_hits` does not run while the speculation is kept. For every
+rebuild for a wrong input, `rollback_keepspec`'s report now says: how far past
+the frontier the first wrong tic was; whose input was wrong on it (this
+machine, bots, people) and in which fields; for this machine's input, where
+the speculation took it from -- a tic already received, an input replayed
+from `rollback_history`, or the newest input repeated past it; and how many
+of the tics the rebuild threw away came before the first wrong tic, which a
+rebuild from that tic would keep. The field counting is shared with
+`rollback_hits`, whose lines read as before.
+
+**A doubt about 8.78's reading, found while writing it**: the depth counts
+from the frontier, the inputs in flight from the first tic the server has not
+sent, and the confirmed loop stops short of that tic by the `netticbuffer`
+reserve. On Skyscraper Leaps depth minus inputs in flight is 0.6 tics, so the
+speculation hardly ever runs past the newest input there; on Opulence it is
+1.4 to 1.9, part of which is the same gap. The guessed tics may be fewer
+than 8.78 assumed, and the wrong inputs may be replayed ones -- the history
+losing its place after a hitch.
+
+**Predictions, for a driven `keep` race on Opulence with it:**
+
+- The wrong inputs are this machine's, 95% or more; the bots a handful.
+- Of this machine's, **the newest input guessed past the history is the
+  larger part** (8.78's reading), with the driver's fields (`turning`,
+  `buttons`, `forwardmove`) and `latency` with them. If the replayed ones
+  are the larger part, the history loses its place, and that is what to fix
+  first.
+- The first wrong tic mostly 4 or more past the frontier, and a rebuild from
+  it would keep **more than half** of the tics thrown away.
