@@ -95,8 +95,9 @@ Every piece is behind a switch that is off by default, except
    2026-09-28 (8.51):** Northern District's leak soak holds (only
    `itemList.cap`), but its ACS drives a ring's reference count negative six
    times -- read as an ACS thread releasing a `mo` from before a restore. Its
-   resim soak holds, with no such warning (8.52). The guard is built in
-   `src/acs/`, not run (8.52).
+   resim soak holds, with no such warning (8.52). **The guard (`src/acs/`,
+   `9652ccc7c`) is measured: the same soak prints 0 such warnings instead of
+   6 (8.53).** Next: the soaks of the other five maps of the shortlist.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -3225,3 +3226,31 @@ compiled. Not compiled -- CI is the only build.
 on the build with the guard prints **no `references go negative`**, and its
 leak checks still fail only on `itemList.cap`. On Skyscraper Leaps, which has
 no ACS, nothing changes.
+
+### 8.53 The ACS guard, measured: no reference count goes negative
+
+Measured on 2026-09-28: binary `9652ccc7c` (sha checked by the harness), the
+same `soak.sh leak map=RR_NorthernDistrict` as 8.51, unattended. Prediction
+written in 8.52. Log kept as
+`soaklog_leak_RR_NorthernDistrict_20260928-133715_9652ccc.txt`.
+
+| build | checks | failures | `references go negative` | any PARANOIA |
+|---|---|---|---|---|
+| `88d8a878f` (8.51) | 258 | 1, `itemList.cap` | **6** | 6 |
+| `9652ccc7c`, the guard | 260 | 1, `itemList.cap` | **0** | 0 |
+
+**The prediction holds.** 0 of 1636 objects differ, and the round trip after
+the soak is byte-identical. One soak each side, so this is 6 against 0 in
+about 260 checks, not a rate. But the warning named the one line the guard
+changes, and it is gone.
+
+**What it does not show.** A reference the guard forgets instead of giving back
+would keep an object from being freed: a slow leak of memory, not of state,
+which a leak soak does not see. The load path was changed so that it takes
+its references in the current era (8.52), and nothing in this run points to
+such a leak. It is still not measured.
+
+**What it changes for the other maps.** Coastal Temple (2537 bytes of ACS)
+and Death Egg (3132) run far more ACS than Northern District's 861. They
+now go through their soaks on a build where an ACS thread cannot take a
+reference off freed memory at a restore.
