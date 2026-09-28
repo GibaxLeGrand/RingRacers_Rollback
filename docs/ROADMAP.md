@@ -125,8 +125,11 @@ asked for first.**
      soaks are done (8.51, 8.52)**: both hold, but the leak soak's restores
      drive an ACS reference count negative. The guard is built (8.52) and
      measured (8.53): the same soak prints 0 such warnings instead of 6.
-     Next, unattended: the leak and resim soaks of Carnival Night,
-     Labyrinth, Coastal Temple, Death Egg and Opulence, on that build.
+     The series of the other five (2026-09-28) stopped twice: Carnival
+     Night's leak soak (8.54: a spray can re-derived from `gamedata` at every
+     load, and a player's reference count) and Labyrinth's (8.55: 15
+     failures on pairs of `MT_THOK`). Not run yet: the resim soaks of both,
+     and Coastal Temple, Death Egg and Opulence.
 7. **Depending on 6:**
    - `correct_on` reads like `nospec` (it did, 8.44) and the control shows
      the instruments see a divergence (it did, 8.45): **Phase A's mechanism

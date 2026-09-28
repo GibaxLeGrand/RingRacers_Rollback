@@ -101,8 +101,10 @@ Every piece is behind a switch that is off by default, except
    re-derived at every load from `gamedata`, this install's unlock progress,
    which a grab inside a tic changes and saves -- so a speculated grab would
    unlock a can for good -- and a player's reference count goes negative,
-   not explained. Fixes proposed, not coded. The other four maps' soaks are
-   running.
+   not explained. Fixes proposed, not coded. Labyrinth's leak soak (8.55):
+   15 failures in 267, all on pairs of visual `MT_THOK` objects after an
+   honest pass -- not identified. The series stopped there; Coastal Temple,
+   Death Egg and Opulence are not run.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -3316,3 +3318,50 @@ a player's kart object, whose count was already 0. Not ACS (the guard of
 **The series goes on** with the four other maps (Labyrinth, Coastal Temple,
 Death Egg, Opulence), with both cases above as known -- reported, not a stop
 -- at Gibax's choice. Carnival Night's resim soak (`ww`) waits for them.
+
+**Also read, for the fix:** `gamedata` is written from inside a tic in
+several places, each followed by a deferred save -- emblems
+(`p_inter.c:794`), spray cans (`p_inter.c:833-896`), prison-egg pickups
+(`p_inter.c:966-978`), an unlock in `p_mobj.c:7302`, a condition check in
+`p_mobj.c:12138`. The spray can is one case of a family: anything a tic
+unlocks.
+
+### 8.55 Labyrinth: fifteen honest-pass failures, all on pairs of `MT_THOK`
+
+Measured on 2026-09-28: binary `9652ccc7c`, `soak.sh leak map=RR_Labyrinth`,
+unattended, the first soak of the resumed series; it stopped there. Log kept
+as `soaklog_leak_RR_Labyrinth_20260928-134917_9652ccc.txt`.
+
+**267 checks, 15 failures -- 5.6%, against 1 in 260 on Skyscraper Leaps and
+Northern District.** No PARANOIA; the round trip after the soak is identical;
+no player differs in the archive. All fifteen are the same kind:
+
+- an honest pass ("a pass on the REAL inputs already changed the tic that
+  followed it"): running extra tics at all, no misprediction involved;
+- in the thinkers block, **two objects each time (three in four cases), all
+  `MT_THOK`**, with the same masks -- position, type, momentum, tics, sprite,
+  frame, eflags, and `MD2_RENDERFLAGS`;
+- the record keeps its size; 8 bytes differ in 4 runs, the low halves of two
+  32-bit fields right after the type, the high halves equal -- small
+  differences in values like an angle or a momentum, not objects appearing
+  or vanishing.
+
+**Not identified. A candidate, by reading only:** `P_MobjRegularThink` spawns
+exactly two `MT_THOK` a tic as "wave effects" (`S_BUBBLESHIELDWAVE1`) behind
+an object moving near the floor, each with an angle perpendicular to its
+parent's and a `P_Thrust` along it (`p_mobj.c`, the case around line 10150).
+Pairs of `MT_THOK` fit it. What makes them differ after an extra pass is not
+known: the parent's own record does not differ. `MT_THOK` is spawned by at
+least twenty sites, so the candidate is a lead, not a finding. The leak
+report names the changed objects by type only; naming their state would
+settle which effect it is.
+
+**What it means.** `MT_THOK` is a visual effect: if nothing in the simulation
+reads these, they are harmless to the race and only make the leak soak noisy
+on this map -- 15 failures a soak hide anything else. That "nothing reads
+them" has not been checked.
+
+**Where the series stands.** Labyrinth's resim soak, Coastal Temple, Death Egg
+and Opulence were not run. Three open items from these soaks, none explained
+to the end: the spray can and `gamedata` (8.54, mechanism read), the player's
+reference count (8.54), and these `MT_THOK` pairs.
