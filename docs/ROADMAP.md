@@ -56,9 +56,10 @@ they now print once a second on both machines (8.43). Then the first launches
 since 2026-09-21: `correct_on`, which read like `nospec` on every count
 (8.44), and its same-session control `correct`, which diverged as predicted
 (8.45). Then `history`, whose confirmed world parted inside its window
-(8.46), the leak soak at its depth, which found no archive leak (8.47), and
-plain speculation at 12 tics without a driver, which held (8.48). **Every
-launch is asked for first.**
+(8.46), the leak soak at its depth, which found no archive leak (8.47),
+plain speculation at 12 tics without a driver, which held (8.48), and on
+2026-09-28 a second `history` race, which held too (8.50). **Every launch is
+asked for first.**
 
 1. ~~**Code everything that needs no launch.**~~ Done on 2026-09-21, one commit
    each: roulette fields local-only (8.29), indexed relink (8.30),
@@ -106,11 +107,14 @@ launch is asked for first.**
    - ~~`playtest.sh depth12`, without a driver.~~ Done on 2026-09-23 (8.48):
      the 12-tic window holds -- 0 refusals, 0.000 units. But with nobody
      driving, it does not separate depth from history's replay.
-   - **`playtest.sh history` again, driven**: the reproducibility check, **on
-     the build with 8.49's STATE lines**, so that a divergence names its first
-     differing field and tic. It parts again: `playtest.sh depth12`, driven,
-     separates depth from the replay. It holds: a rare event, which needs a
-     longer on window.
+   - ~~`playtest.sh history` again, driven.~~ Done on 2026-09-28 (8.50), on
+     `88d8a878f`: it held -- 0 refusals, 0.000 units, no kart state differing.
+     One divergence in 2000 history tics: rare, not explained.
+   - **`playtest.sh history_on`, driven, when a driver is free**: history on
+     throughout a race, three windows of 1000 tics, for three times the
+     history tics a race gives. The STATE lines name the first differing
+     field if it comes. Until then, history stays off by default; nothing
+     below depends on it.
    - **A race played from the host's seat**, to judge the feel now the host's
      delay is gone (8.27). Only a person can do this one.
    - **Other maps** (8.40), map by map from its shortlist: `soak.sh leak

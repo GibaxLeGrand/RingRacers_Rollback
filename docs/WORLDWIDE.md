@@ -67,10 +67,12 @@ Every piece is behind a switch that is off by default, except
    out by 15 and 22 units, one bump on the server and not on the client. Not
    a mechanism yet; one event. The leak soak at its depth (12 tics) finds no
    leak through the archive (8.47), and plain speculation at 12 tics holds
-   for 1000 tics -- but without a driver (8.48). Next: `history` again,
-   driven, as the reproducibility check; if it parts again, `depth12`
-   driven. The driver felt the history window "mieux". It stays off by
-   default until the divergence is understood.
+   for 1000 tics -- but without a driver (8.48). **A second driven history
+   race held (8.50)**: 0 refusals, 0.000 units, and no kart state differing
+   in 6741 samples (8.49's new comparison). One divergence in 2000 history
+   tics: rare, not explained. Next, when a driver is free: history on
+   throughout a race, for three times the history tics. The driver felt the
+   history window "mieux". It stays off by default until then.
 3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
    and heavier if `rollback_history` stays on.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
@@ -131,7 +133,7 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.42 | its proposed server line in the suppressed branch was left out of 8.43 |
 | 8.40 point 1 | its map figures hold on the measuring machine's install (8.42) |
 | 8.40 point 2 | the proposed "held depth" was built as a held *lead over the clock* instead (8.41) |
-| 8.39, 8.41 | "it only changes what is drawn" and "drift unchanged between windows" fail in the first run: the confirmed world parted inside the history window (8.46). Its display-side predictions mostly hold; its depth and cost figures do not |
+| 8.39, 8.41 | "it only changes what is drawn" and "drift unchanged between windows" fail in the first run: the confirmed world parted inside the history window (8.46). They hold in the second (8.50). Its display-side predictions mostly hold; its depth and cost figures do not |
 | 8.40 point 3 | `rngsum` is not in the logs to be read (8.42) |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
 
@@ -3056,3 +3058,50 @@ window 0), 0 samples with a state field differing -- the instrument is quiet
 on a world that agrees. If the history window parts again, the first STATE
 line comes before the first refusal, and names a field on the karts that
 part: `flash` or `bumped`, as in 8.46.
+
+### 8.50 A second `history` race holds: 8.46 does not reproduce
+
+Measured on 2026-09-28: binary `88d8a878f` (sha checked by the harness; it
+carries 8.49's STATE lines), `playtest.sh history`, driven by Gibax,
+`RR_SkyscraperLeaps`, nine karts, `rollback_lag 6`. Predictions written in
+8.46 and 8.49. Logs kept as `*_history_20260928-130110_88d8a87.txt`.
+
+| window | history | kart samples | drift | samples with a state field differing | refusals | blame samples differing | cost of a pass |
+|---|---|---|---|---|---|---|---|
+| 0 | off | 2241 | 0.000 / 0.000 | **0** | 0 | 0 of 28 | 7.7 ms |
+| 1 | **12** | 2250 | 0.000 / 0.000 | **0** | 0 | 0 of 29 | 13.5 ms |
+| 2 | off | 2250 | 0.000 / 0.000 | **0** | 0 | 0 of 30 | 8.4 ms |
+
+Confirmed inputs identical on every tic, no reload. The history window found
+the applied input on every pass, with 7.08 inputs in flight, a speculation
+8.00 tics deep, **cut short by the cap on 0 passes** (4 in 8.46), and the
+drawn world moved against the clock on 0 of 999 passes. The held lead again
+was raised 0 times and lowered 0: in two races it has never moved after its
+first pass. That is within 8.41's "fewer than 20", and it is also what a lead
+set once at the top of the jitter would do. Not yet read in the code.
+
+**8.49's prediction for a world that agrees holds:** the new STATE comparison
+ran on 6741 kart samples and found none differing, in any window. The
+instrument is quiet when it should be.
+
+**8.46 did not reproduce.** The divergence -- a refusal, two bots 15 and 22
+units out, one bump on the server only -- came once in 1000 history tics, and
+not in these 1000. Counting since 8.44, with `rollback_cleancmds` on
+throughout and outside an off window's inheritance, the confirmed world has
+held for about 9 200 tics without history -- `correct_on` 3064, `depth12`
+3068 (1000 of them at 12 tics, without a driver), the history races' off
+windows 994 and 2064 -- and parted once in 2000 tics with it. One event cannot tell a
+leak tied to history from a rare one that history happened to be running
+for. It also cannot say that nothing is there.
+
+**What that decides.** 8.48 wrote this branch down: "the event is rare, and it
+needs a longer on window rather than a second guess". A driven race with
+history on throughout -- three windows of 1000 tics, like `correct_on` --
+triples the history tics a race gives. The STATE lines will name the first
+differing field if it comes. Until then `rollback_history` stays off by
+default. The other maps, the host's seat and Phase A's strict half do not
+depend on it and go ahead.
+
+**Relabel split**, for the record: host `+0` ×2034, `+2` ×1464, identical to
+the three races of 2026-09-23; remote `+1`/`+2` ×1594, `+7`/`+8` ×1348, the
+rest ×10. The same shape, the same reading (8.44).
