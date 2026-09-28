@@ -2317,9 +2317,19 @@ static void Command_RollbackTest_f(void)
   * than by P_Ticker, so through a replay they carry on with the frozen ones.
   * That is deterministic, which is all this asks of them.
   */
+static dboolean g_replaying;   // defined with the replay, further down
+
 static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
 {
+	const dboolean wasreplaying = g_replaying;
 	int32_t n, i;
+
+	// Every tic run here is off the timeline -- the check restores the world
+	// after it -- so it counts as a replay for whatever should sit replays out:
+	// sounds, and the unlocks a tic writes to gamedata, which no restore puts
+	// back. A leak soak on Carnival Night failed on a spray can the local kart
+	// grabbed inside a check (WORLDWIDE.md 8.54).
+	g_replaying = true;
 
 	for (n = 0; n < tics; n++)
 	{
@@ -2331,6 +2341,8 @@ static void K_RunFrozenTics(int32_t tics, const ticcmd_t *frozen)
 
 		P_Ticker(true);
 	}
+
+	g_replaying = wasreplaying;
 }
 
 /** Runs the same tics twice from the same state and compares where they end up.
