@@ -49,6 +49,11 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local);
 // an interpolation origin -- should be left alone when this is true.
 dboolean P_LocalRestoreInProgress(void);
 
+// How many gamestates have been loaded from elsewhere -- a join or a resend,
+// never a rollback's own restore. A speculation left standing across a pass
+// (rollback_keepspec) checks it did not change underneath it.
+uint32_t P_NetLoadCount(void);
+
 // Names the archive block that a byte offset of a P_SaveNetGame buffer falls
 // in. Diagnostic aid for comparing two snapshots of the same state.
 const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset);

@@ -792,7 +792,7 @@ void P_TouchSpecialThing(mobj_t *special, mobj_t *toucher, dboolean heightcheck)
 				// An emblem collected on a speculated or re-run tic is not
 				// collected: that tic may never happen, and gamedata is saved
 				// to disk and never restored (WORLDWIDE.md 8.54).
-				if (!K_RollbackReplaying() && !gamedata->collected[special->health-1])
+				if (!K_RollbackOffTimeline() && !gamedata->collected[special->health-1])
 				{
 					gamedata->collected[special->health-1] = true;
 					if (!M_UpdateUnlockablesAndExtraEmblems(true, true))
@@ -834,7 +834,7 @@ void P_TouchSpecialThing(mobj_t *special, mobj_t *toucher, dboolean heightcheck)
 				// saved to disk and never restored -- or redraws the cans from
 				// it. On a speculated or re-run tic the grab may never happen:
 				// it waits for the tic that does (WORLDWIDE.md 8.54).
-				if (K_RollbackReplaying())
+				if (K_RollbackOffTimeline())
 				{
 					return;
 				}
@@ -976,7 +976,7 @@ void P_TouchSpecialThing(mobj_t *special, mobj_t *toucher, dboolean heightcheck)
 					grandprixinfo.gp == true // Bonus Round
 					&& netgame == false // game design + makes it easier to implement
 					&& gamedata->thisprisoneggpickup_cached != NULL
-					&& K_RollbackReplaying() == false // gamedata: real tics only (WORLDWIDE.md 8.54)
+					&& K_RollbackOffTimeline() == false // gamedata: real tics only (WORLDWIDE.md 8.54)
 				)
 				{
 					gamedata->thisprisoneggpickupgrabbed = true;

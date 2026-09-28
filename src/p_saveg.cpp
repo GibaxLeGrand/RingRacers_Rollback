@@ -8506,6 +8506,13 @@ badloadgame:
 	return false;
 }
 
+static uint32_t netloadcount;
+
+uint32_t P_NetLoadCount(void)
+{
+	return netloadcount;
+}
+
 dboolean P_LocalRestoreInProgress(void)
 {
 	return localrestore;
@@ -8517,6 +8524,9 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 
 	current_savebuffer = save;
 	localrestore = local;
+
+	if (local == false)
+		netloadcount++;
 
 	if (local)
 	{

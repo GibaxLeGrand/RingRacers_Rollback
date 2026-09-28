@@ -3199,6 +3199,43 @@ static uint32_t g_specnosave;       // times the frontier could not be saved
 static uint32_t g_unspecus;         // microseconds spent putting the world back
 static uint32_t g_specus;           // and running the speculation forward
 
+// rollback_keepspec -- track A (WORLDWIDE.md 8.60, 8.73).
+//
+// A pass today puts the world back to the frontier, runs the confirmed tics and
+// runs the speculation again from scratch: on Opulence five tics of 3.4 ms and a
+// restore of 6, every pass, whether or not anything the speculation guessed was
+// wrong (8.62, 8.69). Left standing instead, a pass only has to check that the
+// tics the server has just confirmed carry the inputs the speculation ran them
+// with; if so, the speculation's own run of them is the confirmed one, and the
+// pass adds a tic at the front. Everything a kept tic owes the netcode -- the
+// checksum after it, the inputs it ran -- is noted when the speculation runs it.
+//
+// A tic is never kept if it ran something a speculation cannot stand for: a
+// netxcmd (only the authoritative loop runs them), a message a speculated tic
+// raised and had refused, or a gamedata guard that changed what the tic did.
+// Each of those rebuilds, and the loop runs the tic for real.
+static dboolean g_keepspec;                 // the switch
+static dboolean g_keeparmed;                // this pass left the speculation standing
+static dboolean g_keepkept;                 // and it was kept
+static tic_t g_keephead;                    // the tic the standing speculation reached
+static tic_t g_keepheadleveltime;           // and its leveltime
+static tic_t g_keepupto;                    // the frontier a kept pass moves to
+static uint32_t g_keeploads;                // P_NetLoadCount() when armed
+static tic_t g_keeptic[ROLLBACK_TICS];      // which tic each record below is for
+static tic_t g_keeplevel[ROLLBACK_TICS];    // leveltime at the start of it
+static ticcmd_t g_keepcmds[ROLLBACK_TICS][MAXPLAYERS];   // the inputs it ran
+static dboolean g_keepin[ROLLBACK_TICS][MAXPLAYERS];
+static int16_t g_keepafter[ROLLBACK_TICS];  // Consistancy() after it
+static dboolean g_keeptaint[ROLLBACK_TICS]; // it ran something only the loop may run
+static tic_t g_soundhorizon;                // the first tic this machine has not run yet
+
+enum
+{
+	KEEP_KEPT, KEEP_CORRECTION, KEEP_AHEAD, KEEP_INPUT, KEEP_TEXTCMD, KEEP_TAINT,
+	KEEP_MISSING, KEEP_RELOADED, KEEP_LEVELSTART, KEEP_NUMREASONS
+};
+static uint32_t g_keepcount[KEEP_NUMREASONS];
+
 // The discriminator: save the frontier and restore it, and run no speculative
 // tic at all. The world round-trips through the archive once a pass with nothing
 // happening in between.
@@ -3606,6 +3643,43 @@ void K_RollbackNoteObjectTic(void)
 		g_objtics++;
 }
 
+static void Command_RollbackKeepSpec_f(void)
+{
+	static const char *const why[KEEP_NUMREASONS] = {
+		"kept", "a correction was due", "the server confirmed past the head",
+		"an input differed", "a netxcmd", "a tic the loop must run",
+		"no record of a tic", "a gamestate was loaded", "the level was starting"
+	};
+	int32_t r;
+	uint32_t armed = 0;
+
+	if (COM_Argc() > 1)
+	{
+		g_keepspec = (atoi(COM_Argv(1)) != 0);
+		memset(g_keepcount, 0, sizeof g_keepcount);
+		memset(g_keeptic, 0xff, sizeof g_keeptic);
+	}
+
+	CONS_Printf("rollback_keepspec: %s%s\n", g_keepspec ? "on" : "off",
+		(g_keepspec && (g_twoclock <= 0 || g_histmax <= 0 || g_cleancmds == false))
+			? " -- but it keeps nothing without rollback_twoclock, and guesses this "
+				"machine's own input wrong every pass without rollback_history and "
+				"rollback_cleancmds"
+			: "");
+
+	for (r = 0; r < KEEP_NUMREASONS; r++)
+		armed += g_keepcount[r];
+
+	CONS_Printf("rollback_keepspec: %u passes left the speculation standing, %u kept it\n",
+		armed, g_keepcount[KEEP_KEPT]);
+
+	for (r = 1; r < KEEP_NUMREASONS; r++)
+	{
+		if (g_keepcount[r] > 0)
+			CONS_Printf("rollback_keepspec: rebuilt %u times because %s\n", g_keepcount[r], why[r]);
+	}
+}
+
 static void Command_RollbackObjProfile_f(void)
 {
 	enum { SHOWN = 15 };
@@ -3887,6 +3961,28 @@ dboolean K_RollbackReplaying(void)
 	// stays unconfirmed. The sound arrives when the authoritative loop reaches
 	// that tic for real -- later by the lead, and once.
 	return (g_replaying || g_speculating);
+}
+
+dboolean K_RollbackOffTimeline(void)
+{
+	if (g_speculating)
+		g_keeptaint[gametic % ROLLBACK_TICS] = true;
+
+	return (g_replaying || g_speculating);
+}
+
+dboolean K_RollbackSoundsSilenced(void)
+{
+	if (g_replaying)
+		return true;
+
+	// With the speculation kept, most tics are never run again for real, so
+	// waiting for the confirmed run would mean never hearing them. A tic sounds
+	// the first time this machine runs it, and not again on a rebuild.
+	if (g_keepspec && g_twoclock > 0 && gamestate == GS_LEVEL)
+		return (gametic < g_soundhorizon);
+
+	return g_speculating;
 }
 
 /** True when two inputs say the player pressed different things.
@@ -4272,6 +4368,11 @@ void K_RollbackTicker(void)
 	if (g_keeping && g_twoclock == 0 && gamestate == GS_LEVEL && g_soakbusy == false
 		&& g_speculating == false)
 		K_SaveGameState(gametic);
+
+	// The first tic not yet run, for K_RollbackSoundsSilenced. A soak's extra
+	// tics are not the timeline and do not move it.
+	if (g_replaying == false && g_soakbusy == false && gametic + 1 > g_soundhorizon)
+		g_soundhorizon = gametic + 1;
 
 	K_RollbackSoakTicker();
 }
@@ -4934,6 +5035,10 @@ dboolean K_RollbackSpeculating(void)
 void K_RollbackNoteSuppressedXCmd(void)
 {
 	g_suppressedxcmds++;
+
+	// The message is gone; the tic that raised it must be run by the loop.
+	if (g_speculating)
+		g_keeptaint[gametic % ROLLBACK_TICS] = true;
 }
 
 void K_RollbackUnspeculate(void)
@@ -5036,6 +5141,170 @@ static const ticcmd_t *K_RollbackLocalCmdFor(uint8_t ss, tic_t tic)
 	return D_LocalTiccmdAge(ss, age);
 }
 
+static int32_t K_SpeculationDepth(int32_t ahead, tic_t frontier);
+static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart);
+static void K_NoteDrawnOffset(void);
+
+dboolean K_RollbackKeepArm(void)
+{
+	const int32_t s = (int32_t)(g_confirmedtic % ROLLBACK_TICS);
+
+	g_keeparmed = g_keepkept = false;
+
+	if (g_keepspec == false || g_twoclock <= 0 || g_nullspec || g_speculated == false
+		|| gamestate != GS_LEVEL || g_keeptic[s] != g_confirmedtic)
+		return false;
+
+	// The world stays at the speculation's head; the netcode is handed the
+	// frontier's clock, which is what it builds and sends this machine's input
+	// by -- the tic it reports, and the leveltime stamp in the input.
+	g_keephead = gametic;
+	g_keepheadleveltime = leveltime;
+	gametic = g_confirmedtic;
+	leveltime = g_keeplevel[s];
+	g_keeploads = P_NetLoadCount();
+	g_keeparmed = true;
+
+	return true;
+}
+
+dboolean K_RollbackKeepArmed(void)
+{
+	return g_keeparmed;
+}
+
+static int32_t K_KeepCheckTic(tic_t tic)
+{
+	const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
+	int32_t p;
+
+	if (g_keeptic[s] != tic)
+		return KEEP_MISSING;
+
+	if (g_keeptaint[s])
+		return KEEP_TAINT;
+
+	for (p = 0; p < MAXPLAYERS; p++)
+	{
+		if (playeringame[p] != g_keepin[s][p])
+			return KEEP_INPUT;
+
+		if (playeringame[p] && K_SameInput(&g_keepcmds[s][p], &netcmds[tic % BACKUPTICS][p]) == false)
+			return KEEP_INPUT;
+	}
+
+	return KEEP_KEPT;
+}
+
+dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds)
+{
+	const tic_t from = g_confirmedtic;
+	int32_t reason = KEEP_KEPT;
+	tic_t t;
+
+	if (g_keeparmed == false)
+		return false;
+
+	g_keeparmed = false;
+
+	if (P_NetLoadCount() != g_keeploads || gamestate != GS_LEVEL)
+	{
+		// A gamestate came from the server underneath the speculation: the
+		// world is that one now, and there is nothing to put back.
+		g_speculated = false;
+		g_keepcount[KEEP_RELOADED]++;
+		return false;
+	}
+
+	if (leveltime <= 1)
+		reason = KEEP_LEVELSTART;
+	else if (g_correctpending && g_correcttic <= (uint32_t)from)
+		reason = KEEP_CORRECTION;   // due now, against the frontier's world
+	else if (upto > g_keephead)
+		reason = KEEP_AHEAD;        // the server confirmed past what was run
+	else if (textcmds)
+		reason = KEEP_TEXTCMD;
+	else
+	{
+		for (t = from; t < upto && reason == KEEP_KEPT; t++)
+			reason = K_KeepCheckTic(t);
+
+		// The new frontier's start has to be on file, to come back to. At the
+		// head it is the world itself, which the extension saves.
+		if (reason == KEEP_KEPT && upto < g_keephead
+			&& (rollbackring == NULL || rollbackring[upto % ROLLBACK_TICS].valid == false
+				|| rollbackring[upto % ROLLBACK_TICS].tic != upto))
+			reason = KEEP_MISSING;
+	}
+
+	g_keepcount[reason]++;
+
+	if (reason != KEEP_KEPT)
+	{
+		// Back to the frontier, and the pass runs as it always has.
+		K_RollbackUnspeculate();
+		return false;
+	}
+
+	g_keepkept = true;
+	g_keepupto = upto;
+	return true;
+}
+
+int16_t K_RollbackKeepConsistancy(tic_t tic)
+{
+	return g_keepafter[tic % ROLLBACK_TICS];
+}
+
+void K_RollbackKeepCommit(void)
+{
+	g_confirmedtic = g_keepupto;
+	gametic = g_keephead;
+	leveltime = g_keepheadleveltime;
+}
+
+/** A kept pass: the frontier has moved on, the world is still at the head, and
+  * only the tics the clock now asks for beyond it are run. */
+static void K_KeepExtend(void)
+{
+	const tic_t frontier = g_confirmedtic;
+	const int32_t s = (int32_t)(frontier % ROLLBACK_TICS);
+	int32_t ahead = K_SpeculationDepth(K_RollbackTwoClock(), frontier);
+	precise_t started;
+
+	g_keepkept = false;
+
+	started = I_GetPreciseTime();
+	g_speculating = true;
+
+	while (gametic < frontier + (tic_t)ahead)
+		K_RunSpeculatedTic(frontier, true);
+
+	g_speculating = false;
+
+	// The whole speculation confirmed and nothing run past it: the frontier is
+	// the head, and its start has to be on file for the next pass.
+	if (gametic == frontier
+		&& (rollbackring == NULL || rollbackring[s].valid == false || rollbackring[s].tic != frontier))
+	{
+		const precise_t at = I_GetPreciseTime();
+
+		if (K_SaveGameState(frontier) == false)
+			g_specnosave++;
+
+		g_saveus += K_PreciseToMicros(I_GetPreciseTime() - at);
+		g_keeptic[s] = frontier;
+		g_keeplevel[s] = leveltime;
+		g_keeptaint[s] = false;
+	}
+
+	g_speculated = true;
+	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_specpasses++;
+
+	K_NoteDrawnOffset();
+}
+
 void K_RollbackSpeculate(void)
 {
 	int32_t ahead = g_nullspec ? 0 : K_RollbackTwoClock();
@@ -5045,9 +5314,15 @@ void K_RollbackSpeculate(void)
 	if (K_RollbackTwoClock() <= 0)
 		return;
 
+	if (g_keepkept)
+	{
+		K_KeepExtend();
+		return;
+	}
+
 	// Before the frontier moves: were the tics just confirmed the ones the last
 	// speculation guessed? (see K_CheckGuesses)
-	if (gamestate == GS_LEVEL && g_guesstics > 0)
+	if (gamestate == GS_LEVEL && g_guesstics > 0 && g_keepspec == false)
 		K_CheckGuesses(g_confirmedtic, gametic);
 
 	g_guesstics = 0;
@@ -5067,6 +5342,36 @@ void K_RollbackSpeculate(void)
 	}
 
 	g_saveus += K_PreciseToMicros(I_GetPreciseTime() - started);
+
+	ahead = K_SpeculationDepth(ahead, gametic);
+
+	started = I_GetPreciseTime();
+	g_speculating = true;
+
+	for (i = 0; i < ahead; i++)
+	{
+		// Your own input is not a guess and goes in as itself; everyone else is
+		// predicted. Same step the old loop used, and the only part of it worth
+		// keeping. The frontier's start is saved above; with rollback_keepspec
+		// every later tic's start is saved too, so that any of them can become
+		// the frontier without running again.
+		K_RunSpeculatedTic(g_confirmedtic, i > 0);
+	}
+
+	g_speculating = false;
+	g_speculated = true;
+
+	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
+	g_specpasses++;
+
+	K_NoteDrawnOffset();
+}
+
+/** How deep this pass speculates from a frontier: rollback_twoclock, or with
+  * rollback_history what the inputs still in flight need (see below). */
+static int32_t K_SpeculationDepth(int32_t ahead, tic_t frontier)
+{
+	int32_t i;
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 		g_histunacked[i] = -1;
@@ -5112,7 +5417,7 @@ void K_RollbackSpeculate(void)
 			// Start, or start again after a gap in the passes -- a map change,
 			// a pause -- from what this pass asks for, or from the plain
 			// speculation if it asks for nothing.
-			g_histlead = (most >= 0) ? want : (int32_t)(gametic - now) + ahead;
+			g_histlead = (most >= 0) ? want : (int32_t)(frontier - now) + ahead;
 			g_histpeak = g_histlead;
 			g_histstepat = now;
 			g_histhold = true;
@@ -5143,7 +5448,7 @@ void K_RollbackSpeculate(void)
 			}
 		}
 
-		depth = (int32_t)(now - gametic) + g_histlead;
+		depth = (int32_t)(now - frontier) + g_histlead;
 
 		if (depth > cap)
 		{
@@ -5157,37 +5462,71 @@ void K_RollbackSpeculate(void)
 		g_histdepthsum += (uint64_t)ahead;
 	}
 
-	started = I_GetPreciseTime();
-	g_speculating = true;
+	return ahead;
+}
 
-	for (i = 0; i < ahead; i++)
+/** One speculated tic, from a frontier. With rollback_keepspec, also what a
+  * later pass needs to keep it: its start saved (when asked), the leveltime and
+  * inputs it ran from, and the checksum after it. */
+static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
+{
+	const tic_t tic = gametic;
+	const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
+	int32_t p;
+
+	if (g_keepspec)
 	{
-		// Your own input is not a guess and goes in as itself; everyone else is
-		// predicted. Same step the old loop used, and the only part of it worth
-		// keeping.
-		K_RollbackPredictInputs(gametic, i);
-		K_RecordGuess(gametic);
-
-		// The whole tic, through the live loop's own entry point. Driving
-		// P_Ticker directly missed everything G_Ticker does around the
-		// simulation, and that cost four separate bug hunts to learn once.
+		if (savestart)
 		{
-			const precise_t ticat = I_GetPreciseTime();
+			const precise_t at = I_GetPreciseTime();
 
-			G_Ticker(true);
-			K_NoteSpeculatedTic(I_GetPreciseTime() - ticat);
+			if (K_SaveGameState(tic) == false)
+				g_specnosave++;
+
+			g_saveus += K_PreciseToMicros(I_GetPreciseTime() - at);
 		}
 
-		gametic++;
-		g_spectics++;
+		g_keeptic[s] = tic;
+		g_keeplevel[s] = leveltime;
+		g_keeptaint[s] = false;
 	}
 
-	g_speculating = false;
-	g_speculated = true;
+	K_RollbackPredictInputs(tic, (int32_t)(tic - frontier));
 
-	g_specus += K_PreciseToMicros(I_GetPreciseTime() - started);
-	g_specpasses++;
+	if (g_keepspec)
+	{
+		for (p = 0; p < MAXPLAYERS; p++)
+		{
+			g_keepin[s][p] = playeringame[p];
 
+			if (playeringame[p])
+				g_keepcmds[s][p] = netcmds[tic % BACKUPTICS][p];
+		}
+	}
+	else
+	{
+		K_RecordGuess(tic);
+	}
+
+	// The whole tic, through the live loop's own entry point. Driving
+	// P_Ticker directly missed everything G_Ticker does around the
+	// simulation, and that cost four separate bug hunts to learn once.
+	{
+		const precise_t ticat = I_GetPreciseTime();
+
+		G_Ticker(true);
+		K_NoteSpeculatedTic(I_GetPreciseTime() - ticat);
+	}
+
+	gametic++;
+	g_spectics++;
+
+	if (g_keepspec)
+		g_keepafter[s] = Consistancy();
+}
+
+static void K_NoteDrawnOffset(void)
+{
 	// The drawn tic against the clock (see g_drawnoffset). A gap in the passes
 	// starts the comparison again rather than counting as a jump.
 	{
@@ -6640,6 +6979,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 	COM_AddDebugCommand("rollback_objprofile", Command_RollbackObjProfile_f);
+	COM_AddDebugCommand("rollback_keepspec", Command_RollbackKeepSpec_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
 	COM_AddDebugCommand("rollback_cleancmds", Command_RollbackCleanCmds_f);
 	COM_AddDebugCommand("rollback_history", Command_RollbackHistory_f);

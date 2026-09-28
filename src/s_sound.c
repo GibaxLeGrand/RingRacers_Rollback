@@ -430,7 +430,7 @@ void S_StartSoundAtVolume(const void *origin_p, sfxenum_t sfx_id, int32_t volume
 	mobj_t *listenmobj[MAXSPLITSCREENPLAYERS];
 
 	// A replayed tic already made its noise the first time round.
-	if (S_SoundDisabled() || !sound_started || K_RollbackReplaying())
+	if (S_SoundDisabled() || !sound_started || K_RollbackSoundsSilenced())
 		return;
 
 	// Don't want a sound? Okay then...

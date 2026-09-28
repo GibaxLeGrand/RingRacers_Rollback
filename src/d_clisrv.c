@@ -7205,11 +7205,19 @@ dboolean TryRunTics(tic_t realtics)
 	// The restore was never the problem and neither were netxcmds -- the guard
 	// against those refused precisely zero messages in every race. What leaked
 	// was the one thing a client always sends: its own input.
+	// rollback_keepspec (WORLDWIDE.md 8.73): the speculation may be left standing
+	// instead, with the frontier's clock handed to the netcode; whether it is
+	// kept is decided once the server's tics are in, below.
 	if (K_RollbackTwoClock() > 0)
-		K_RollbackUnspeculate();
+	{
+		if (demo.playback || client == false || K_RollbackKeepArm() == false)
+			K_RollbackUnspeculate();
+	}
 
 	// Where the rest of this pass spends its time, step by step (WORLDWIDE.md
 	// 8.60). The restore above and the speculation below time themselves.
+	dboolean kept = false;
+	tic_t keptcount = 0;
 	precise_t stepat = I_GetPreciseTime();
 	const tic_t confirmedfrom = gametic;
 
@@ -7228,12 +7236,71 @@ dboolean TryRunTics(tic_t realtics)
 
 	K_RollbackNoteStep(ROLLBACK_STEP_NET, &stepat);
 
+	// Were the tics the authoritative loop would now run the ones the standing
+	// speculation ran? The loop runs from the frontier until it holds
+	// netticbuffer tics in reserve (see its end), at least one; a tic with
+	// netxcmds is never kept, since only the loop runs them.
+	if (K_RollbackKeepArmed())
+	{
+		const tic_t from = gametic;
+		tic_t upto = from;
+		tic_t t;
+		dboolean textcmds = false;
+
+		if (neededtic > from)
+		{
+			const int32_t reserve = (int32_t)neededtic - cv_netticbuffer.value;
+
+			upto = (reserve > (int32_t)from + 1) ? (tic_t)reserve : from + 1;
+		}
+
+		for (t = from; t < upto && textcmds == false; t++)
+		{
+			int32_t p;
+
+			for (p = 0; p < MAXPLAYERS; p++)
+			{
+				if ((playeringame[p] || p == 0) && D_GetExistingTextcmd(t, p) != NULL)
+				{
+					textcmds = true;
+					break;
+				}
+			}
+		}
+
+		if (K_RollbackKeepDecide(upto, textcmds))
+		{
+			// What the loop does after each tic it runs, for the ones kept.
+			for (t = from; t < upto; t++)
+			{
+				int32_t p;
+
+				for (p = 0; p < MAXPLAYERS; p++)
+				{
+					if (playeringame[p])
+						K_RollbackNoteInput((uint32_t)t, (uint8_t)p, &netcmds[t % BACKUPTICS][p]);
+				}
+
+				consistancy[(t + 1) % BACKUPTICS] = K_RollbackKeepConsistancy(t);
+				lastconfirmedtic = t + 1;
+
+				if (client)
+					D_FreeTextcmd(t);
+			}
+
+			K_RollbackKeepCommit();
+			R_UpdateViewInterpolation();
+			kept = true;
+			keptcount = upto - from;
+		}
+	}
+
 	// A correction has to be measured and applied against the *confirmed* world,
 	// which exists exactly here: the speculation was undone above, GetPackets has
 	// just read whatever the server sent, and the authoritative loop below has
 	// not run yet. Anywhere earlier and the karts being compared are speculated;
 	// anywhere later and they have already moved on.
-	if (client && gamestate == GS_LEVEL)
+	if (client && gamestate == GS_LEVEL && kept == false)
 		K_RollbackApplyServerState();
 
 	K_RollbackNoteStep(ROLLBACK_STEP_CORRECTION, &stepat);
@@ -7335,7 +7402,7 @@ dboolean TryRunTics(tic_t realtics)
 		return false;
 	}
 
-	if (ticking)
+	if (ticking && kept == false)
 	{
 		// run the count * tics
 		while (runto > gametic)
@@ -7504,7 +7571,7 @@ dboolean TryRunTics(tic_t realtics)
 		K_RollbackNotePass(predictedthispass);
 
 	K_RollbackNoteStep(ROLLBACK_STEP_CONFIRMED, &stepat);
-	K_RollbackNoteConfirmedTics((int32_t)(gametic - confirmedfrom));
+	K_RollbackNoteConfirmedTics((int32_t)(kept ? keptcount : gametic - confirmedfrom));
 
 	// And rebuild the speculation on top of the confirmed world, so what the
 	// player sees and acts in is ahead of what the server has confirmed. Every

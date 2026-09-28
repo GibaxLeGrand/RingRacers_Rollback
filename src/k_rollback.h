@@ -180,6 +180,34 @@ void K_RollbackSpeculate(void);
   * effects should sit those out: the tic already happened once. */
 dboolean K_RollbackReplaying(void);
 
+/** The same answer, for gameplay code that changes what a tic does when it is
+  * off the timeline -- the gamedata guards. Also marks the tic so a speculation
+  * that ran it is not kept as if it were the real one (rollback_keepspec). */
+dboolean K_RollbackOffTimeline(void);
+
+/** Whether a sound started now should stay silent: a replay, or a tic this
+  * machine has already run once and so already heard (WORLDWIDE.md 8.73). */
+dboolean K_RollbackSoundsSilenced(void);
+
+// rollback_keepspec -- track A (WORLDWIDE.md 8.60, 8.73): leave the speculation
+// standing across a pass, and rebuild it only when the tics the server confirms
+// are not the ones it ran. Off by default; while off, nothing below does
+// anything and every pass runs as before.
+//
+// K_RollbackKeepArm, at the head of TryRunTics in place of K_RollbackUnspeculate:
+// leaves the world where it is and hands the netcode the frontier's clock.
+// K_RollbackKeepDecide, after GetPackets, with the tic the authoritative loop
+// would stop at and whether any tic up to it carries netxcmds: true if the
+// speculation stands; false once the world is back at the frontier.
+// K_RollbackKeepConsistancy, the checksum a kept tic left behind it, for the
+// netcode's consistancy[]. K_RollbackKeepCommit moves the frontier and puts the
+// clock back on the speculation's head.
+dboolean K_RollbackKeepArm(void);
+dboolean K_RollbackKeepArmed(void);
+dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds);
+int16_t K_RollbackKeepConsistancy(tic_t tic);
+void K_RollbackKeepCommit(void);
+
 /** Tells the rollback code a netxcmd arrived for a tic, which may already have
   * been predicted. */
 void K_RollbackNoteMessage(tic_t tic);

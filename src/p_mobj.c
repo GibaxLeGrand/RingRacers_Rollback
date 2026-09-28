@@ -54,7 +54,7 @@
 #include "m_easing.h"
 #include "k_podium.h"
 #include "g_party.h"
-#include "k_rollback.h" // K_RollbackReplaying
+#include "k_rollback.h" // K_RollbackOffTimeline
 
 actioncache_t actioncachehead;
 
@@ -7299,7 +7299,7 @@ static dboolean P_MobjRegularThink(mobj_t *mobj)
 				// Map records are this install's, saved and never restored:
 				// real tics only (WORLDWIDE.md 8.54).
 				if (!(mapheaderinfo[gamemap-1]->records.mapvisited & MV_MYSTICMELODY)
-					&& K_RollbackReplaying() == false)
+					&& K_RollbackOffTimeline() == false)
 				{
 					mapheaderinfo[gamemap-1]->records.mapvisited |= MV_MYSTICMELODY;
 
@@ -12143,7 +12143,7 @@ void P_RemoveMobj(mobj_t *mobj)
 					// The count is archived and comes back with a restore;
 					// the condition check it asks for runs against gamedata,
 					// which does not. Real tics only (WORLDWIDE.md 8.54).
-					if (K_RollbackReplaying() == false)
+					if (K_RollbackOffTimeline() == false)
 						gamedata->deferredconditioncheck = true;
 				}
 
