@@ -6528,6 +6528,15 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 	// a shit ton of time loading mobj thinkers.
 	CalculateDoomednumToMobjtype();
 
+	// Every mobj below leaves the renderer's interpolation list, one linear
+	// search each (R_RemoveMobjInterpolator): quadratic in the number of
+	// objects, and every one of them goes. Emptying the list first makes each
+	// of those searches find nothing at once; LoadMobjThinker puts every
+	// loaded object back. Precipitation, which a local restore keeps, was
+	// never in it (P_SpawnPrecipMobj does not add to it). WORLDWIDE.md 8.60:
+	// the purge is 1.75 ms of Opulence's 6.5 ms load.
+	R_InitMobjInterpolators();
+
 	// remove all the current thinkers
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
