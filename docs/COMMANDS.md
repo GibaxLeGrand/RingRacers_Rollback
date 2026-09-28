@@ -240,7 +240,9 @@ itself.
   line (`WORLDWIDE.md` 8.60 to 8.66):
   - `rollback_cost` — a pass step by step: restore, network, correction,
     confirmed tics (and how many a pass), save, speculation (and how many
-    tics), against a tic's 28571 us;
+    tics), against a tic's 28571 us. Before `755ea3c0c`, a save made inside
+    the speculation under `rollback_keepspec` was counted in both `save` and
+    `speculation`;
   - `rollback_frames` — the main loop's iterations with and without a pass,
     their work before the sleep in buckets, the gaps between drawn frames,
     how many frames were drawn and how many iterations ran past a tic (the
@@ -386,13 +388,20 @@ and the whole speculation again.
   `rollback_history` and `rollback_cleancmds`; without them it says so.
 - No argument: how many passes left the speculation standing, how many kept
   it (and how many of those through a correction that changed nothing), and
-  the count of each reason to rebuild.
+  the count of each reason to rebuild. From `a61ccadd8`, for the rebuilds
+  for a wrong input (`WORLDWIDE.md` 8.79): how far past the frontier the
+  first wrong tic was; whose input was wrong on it, and in which fields; for
+  this machine's, whether the speculation had run it from a tic already
+  received, from the history, or as the newest input repeated past it; and
+  how many of the tics thrown away a rebuild from the first wrong tic would
+  have kept.
 - Setting it resets the counts.
 - Measured on Skyscraper Leaps with `rollback_history 12`: 99 to 100% of
-  passes kept, a pass of 2.5 to 3.2 ms, as many frames as with no
-  speculation, drift 0.000 (8.76). ⚠ Driven on Opulence before
-  `69e65f0ac` it was far worse than without it (8.74), and it has not been
-  judged there since: **leave it off** outside a test.
+  passes kept, a pass of 1.9 to 2.4 ms (each save counted once), as many
+  frames as with no speculation, drift 0.000 (8.76, 8.77). Driven on
+  Opulence (8.78): 65 to 69% kept, 54 to 65 frames a second against 12
+  before, each rebuild a hitch of about 60 ms, the camera stuttering:
+  **leave it off** outside a test.
 
 ### `rollback_nullspec [0|1]`
 Saves and restores the frontier on **every pass** without speculating

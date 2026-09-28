@@ -178,12 +178,18 @@ correction channel's put-back and fixed. **Every launch is asked for first.**
      that changes nothing no longer rebuilds (`69e65f0ac`): Skyscraper Leaps
      99 to 100% of passes kept, 2 ms a pass (8.76); Opulence 99.6 to 100%,
      9 ms a pass, 117 frames a second against 10 -- with the local player a
-     spectator (8.77). **Next, each asked for:** count a save once in
-     `rollback_cost` (8.77); `keep` on Opulence with the player in the race;
-     then driven.
+     spectator (8.77). A save counted once in `rollback_cost`
+     (`755ea3c0c`). **Driven on Opulence with the player in (8.78): 65 to 69%
+     kept, 54 to 65 frames a second against 12**, each rebuild a hitch of
+     about 60 ms, the camera stuttering. **Next, each asked for:** install
+     `a61ccadd8` (who is wrong on a rebuild, 8.79) and drive `keep` on
+     Opulence again; then, by what it shows, rebuild from the first wrong
+     tic, or fix where the history loses its place.
    - B1, restore in place; B2, a raw snapshot: not started.
    - Open: a sound cut when an object is removed in a speculated tic (8.73);
-     the slow save of 8.76 and 8.77 (the machine was busy; not measured).
+     the slow save -- 4 ms from `69e65f0ac` against 2.5 up to `5a417494f`,
+     not the machine (8.78), to bisect with the kept exes; the camera
+     during rebuilds (8.78).
 9. **Then** the compatibility work (section below), and Phase B's big lever.
 
 ---

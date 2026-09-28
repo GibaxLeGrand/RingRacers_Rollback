@@ -40,7 +40,7 @@ Every piece is behind a switch that is off by default, except
 | full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
 | residual drift | **0.000 units on 6741 kart samples, 0 checksum refusals, 87 of 87 blame samples identical** with `rollback_cleancmds` on throughout -- one driven race, Skyscraper Leaps (8.44), with a same-session control that does diverge (8.45). The 0.12 to 0.86 units (worst 13 to 97) of the off/on/off races come from off windows and what they leave behind (8.38, 8.45) |
 | cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic. On Opulence (3700 objects), rebuilt every pass: 25 to 35 ms, 9 to 33 frames a second (8.62-8.77) |
-| cost of a pass kept (`rollback_keepspec`) | one tic and one save: **2 ms on Skyscraper Leaps, 9 ms on Opulence, 117 frames a second there against 10** -- unattended; on Opulence the local player spectated (8.76, 8.77) |
+| cost of a pass kept (`rollback_keepspec`) | one tic and one save: **2 ms on Skyscraper Leaps, 9 ms on Opulence, 117 frames a second there against 10** -- unattended; on Opulence the local player spectated (8.76, 8.77). Driven on Opulence: 65 to 69% kept, 54 to 65 frames a second (8.78) |
 | Opulence's confirmed world | **0.000 units, 0 of 6714 kart samples with a state field off, 0 karts put back**, corrections applied (8.77) -- the drift it had came from the put-back itself (8.76) |
 | restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
 | listen-server host's input delay | 170-200 ms, now **0** (8.27) |
@@ -91,8 +91,10 @@ Every piece is behind a switch that is off by default, except
    decorations, and a pass rebuilt every tic is most of a tic. Depth 2
    halves it (8.71). **Keeping the speculation (`rollback_keepspec`, 8.73 to
    8.77) makes a pass one tic and one save**: 9 ms on Opulence, 117 frames a
-   second -- unattended, with the local player a spectator. Next: the same
-   race with the player in it, then driven.
+   second -- unattended, with the local player a spectator. **Driven, with
+   the player in (8.78): 65 to 69% kept, 54 to 65 frames a second against
+   12**, each rebuild a hitch of about 60 ms, and the camera stutters. Who
+   is wrong on those rebuilds is the next measure (8.79).
 4. **Vanilla compatibility** against the policy below. The savegame misread of
    8.28 is fixed in code (8.29), never checked against a stock build. Still
    missing: the refusal of vanilla clients, the automatic mode switch, and a
@@ -4659,3 +4661,7 @@ losing its place after a hitch.
   first.
 - The first wrong tic mostly 4 or more past the frontier, and a rebuild from
   it would keep **more than half** of the tics thrown away.
+
+⚠ Pushed the same night on Gibax's go-ahead ("pousse dès que c'est bon") as
+`a61ccadd8` -- `80d530d82` put on top of the docs -- CI run 36489955086. Not
+installed, not run: the session ended there ("on finit là-dessus ce soir").
