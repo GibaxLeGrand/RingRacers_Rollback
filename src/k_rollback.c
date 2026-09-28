@@ -3580,6 +3580,90 @@ static void K_NoteSpeculatedTic(precise_t whole)
 	g_spticcount++;
 }
 
+// ---- rollback_objprofile ----
+//
+// A speculated tic on Opulence is 83% the objects' thinker list (8.66), and
+// the map has 2199 rings, 401 gems and coins with a Lua hook, the karts and
+// their effects. Which of them is the question; the game only times the list
+// as a whole.
+dboolean g_rollbackobjprofile;
+static uint64_t g_objus[NUMMOBJTYPES];
+static uint32_t g_objthinks[NUMMOBJTYPES];
+static uint32_t g_objtics;
+
+void K_RollbackNoteObjectThink(int32_t type, precise_t spent)
+{
+	if (type < 0 || type >= NUMMOBJTYPES || gamestate != GS_LEVEL)
+		return;
+
+	g_objus[type] += K_PreciseToMicros(spent);
+	g_objthinks[type]++;
+}
+
+void K_RollbackNoteObjectTic(void)
+{
+	if (gamestate == GS_LEVEL)
+		g_objtics++;
+}
+
+static void Command_RollbackObjProfile_f(void)
+{
+	enum { SHOWN = 15 };
+	dboolean taken[NUMMOBJTYPES];
+	uint64_t total = 0, shown = 0;
+	int32_t n, t;
+
+	if (COM_Argc() > 1)
+	{
+		g_rollbackobjprofile = (atoi(COM_Argv(1)) != 0);
+		memset(g_objus, 0, sizeof g_objus);
+		memset(g_objthinks, 0, sizeof g_objthinks);
+		g_objtics = 0;
+	}
+
+	CONS_Printf("rollback_objprofile: %s, over %u tics\n",
+		g_rollbackobjprofile ? "on" : "off", g_objtics);
+
+	if (g_objtics == 0)
+		return;
+
+	for (t = 0; t < NUMMOBJTYPES; t++)
+		total += g_objus[t];
+
+	CONS_Printf("rollback_objprofile: %u us a tic in the objects' list, timed "
+		"object by object (the timing adds its own cost)\n",
+		(uint32_t)(total / g_objtics));
+
+	memset(taken, 0, sizeof taken);
+
+	for (n = 0; n < SHOWN; n++)
+	{
+		int32_t best = -1;
+
+		for (t = 0; t < NUMMOBJTYPES; t++)
+		{
+			if (taken[t] == false && g_objus[t] > 0 && (best < 0 || g_objus[t] > g_objus[best]))
+				best = t;
+		}
+
+		if (best < 0)
+			break;
+
+		taken[best] = true;
+		shown += g_objus[best];
+
+		CONS_Printf("rollback_objprofile: %-26s %5u a tic, %5u us a tic, %u.%02u us each\n",
+			K_MobjTypeName((mobjtype_t)best),
+			g_objthinks[best] / g_objtics,
+			(uint32_t)(g_objus[best] / g_objtics),
+			(uint32_t)(g_objus[best] / (g_objthinks[best] ? g_objthinks[best] : 1)),
+			(uint32_t)((g_objus[best] * 100 / (g_objthinks[best] ? g_objthinks[best] : 1)) % 100));
+	}
+
+	CONS_Printf("rollback_objprofile: every other type together, %u us a tic\n",
+		(uint32_t)((total - shown) / g_objtics));
+}
+
 static void K_ResetPassCosts(void)
 {
 	g_saveus = 0;
@@ -6555,6 +6639,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_pace", Command_RollbackPace_f);
 	COM_AddDebugCommand("rollback_smooth", Command_RollbackSmooth_f);
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
+	COM_AddDebugCommand("rollback_objprofile", Command_RollbackObjProfile_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
 	COM_AddDebugCommand("rollback_cleancmds", Command_RollbackCleanCmds_f);
 	COM_AddDebugCommand("rollback_history", Command_RollbackHistory_f);

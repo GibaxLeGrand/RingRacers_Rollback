@@ -54,6 +54,7 @@
 #include "k_endcam.h"
 #include "lua_profile.h"
 #include "deh_tables.h" // MOBJTYPE_LIST
+#include "k_rollback.h" // rollback_objprofile
 
 tic_t leveltime;
 dboolean thinkersCompleted;
@@ -573,10 +574,28 @@ static void P_RunThinkers(void)
 #ifdef PARANOIA
 			I_Assert(currentthinker->function.acp1 != NULL);
 #endif
-			currentthinker->function.acp1(currentthinker);
+			// rollback_objprofile times each object's think by type
+			// (WORLDWIDE.md 8.66): a clock read either side of every object
+			// is not free, so only while it is on.
+			if (g_rollbackobjprofile && i == THINK_MOBJ
+				&& currentthinker->function.acp1 == (actionf_p1)P_MobjThinker)
+			{
+				const int32_t type = (int32_t)((mobj_t *)currentthinker)->type;
+				const precise_t at = I_GetPreciseTime();
+
+				currentthinker->function.acp1(currentthinker);
+				K_RollbackNoteObjectThink(type, I_GetPreciseTime() - at);
+			}
+			else
+			{
+				currentthinker->function.acp1(currentthinker);
+			}
 		}
 		ps_thlist_times[i] = I_GetPreciseTime() - ps_thlist_times[i];
 	}
+
+	if (g_rollbackobjprofile)
+		K_RollbackNoteObjectTic();
 
 	if (gametyperules & GTR_CIRCUIT)
 		K_RunFinishLineBeam();

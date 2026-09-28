@@ -239,6 +239,13 @@ void K_RollbackNoteConfirmedTics(int32_t tics);
   * the next one for running long. Counted in a level only. */
 void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboolean skipnext);
 
+// rollback_objprofile: the objects' thinker list timed by object type
+// (WORLDWIDE.md 8.66). P_RunThinkers reads the flag and times nothing while
+// it is off.
+extern dboolean g_rollbackobjprofile;
+void K_RollbackNoteObjectThink(int32_t type, precise_t spent);
+void K_RollbackNoteObjectTic(void);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
