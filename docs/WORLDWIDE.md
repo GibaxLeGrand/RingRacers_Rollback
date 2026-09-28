@@ -4005,3 +4005,18 @@ go-ahead, `correct_on` on Opulence without a driver
   than half of it; each worsens as the race goes on (3.4 to 3.7 ms a tic).
   The profile of a speculated tic and the fields of the wrong guesses are
   built next, not yet pushed.
+
+### 8.65 The profile of a speculated tic, pushed, and what it should show
+
+Pushed on 2026-09-28 with Gibax's go-ahead: `0baa0e7df`, `rollback_tic` (a
+speculated tic's time by part, summed from the game's own m_perfstats
+figures) and `rollback_hits`' wrong fields by who. **Predictions for the same
+race on Opulence, written before it runs:**
+
+- Costs as in 8.64, within 1 ms a pass: the instrument adds a few reads a tic.
+- A speculated tic of 3.3 to 3.7 ms, **more than half of it in the objects'
+  thinker list**; player thinks 0.5 to 1 ms; **400 Lua mobj hook calls a tic
+  or more** (401 gems and coins with a `MobjThinker` hook).
+- This machine's wrong inputs differ in **`latency`**, the stamp that moves
+  every tic whatever the stick does. The bots' in **`turning`** and the
+  `bot` fields, from an input the server built off another tic's world.
