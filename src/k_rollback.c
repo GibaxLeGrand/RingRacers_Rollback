@@ -994,6 +994,17 @@ typedef struct
 	uint32_t length;
 	uint32_t num;       // mobjnum, so the two captures can be checked for drift
 	mobjtype_t type;
+
+	// What the object is doing, taken from the living object at capture time.
+	// A type alone does not name an effect: Labyrinth's leak soak failed on
+	// pairs of MT_THOK, a type at least twenty spawn sites share, and by the
+	// time the report is printed the world has been restored again, so the
+	// object cannot be looked up then (WORLDWIDE.md 8.55).
+	int32_t state;      // index into states[]
+	int32_t sprite;
+	uint32_t frame;
+	mobjtype_t targettype;  // NUMMOBJTYPES when there is no target
+	int8_t targetplayer;    // the target's player slot, -1 if none
 } diagrec_t;
 
 typedef struct
@@ -1097,6 +1108,20 @@ static void K_CaptureRecords(diagset_t *set)
 		set->recs[set->count].length = (uint32_t)wrote;
 		set->recs[set->count].num = mo->mobjnum;
 		set->recs[set->count].type = mo->type;
+		set->recs[set->count].state = (mo->state != NULL) ? (int32_t)(mo->state - states) : -1;
+		set->recs[set->count].sprite = (int32_t)mo->sprite;
+		set->recs[set->count].frame = (uint32_t)mo->frame;
+		set->recs[set->count].targettype = NUMMOBJTYPES;
+		set->recs[set->count].targetplayer = -1;
+
+		if (mo->target != NULL && P_MobjWasRemoved(mo->target) == false)
+		{
+			set->recs[set->count].targettype = mo->target->type;
+
+			if (mo->target->player != NULL)
+				set->recs[set->count].targetplayer = (int8_t)(mo->target->player - players);
+		}
+
 		set->count++;
 		used += wrote;
 	}
@@ -1126,6 +1151,36 @@ static void K_PrintRecordMasks(const char *label, const uint8_t *rec, uint32_t l
 
 	CONS_Printf("rollback_test: %s diff %08x diff2 %08x diff3 %08x\n",
 		label, diff, diff2, diff3);
+}
+
+/** A state's name, the way K_MobjTypeName gives a type's. */
+static const char *K_StateName(int32_t state)
+{
+	const char *name = NULL;
+
+	if (state >= S_FIRSTFREESLOT && state <= S_LASTFREESLOT)
+		name = FREE_STATES[state - S_FIRSTFREESLOT];
+	else if (state >= 0 && state < S_FIRSTFREESLOT)
+		name = STATE_LIST[state];
+
+	return (name != NULL) ? name : "(unnamed state)";
+}
+
+/** What a captured object was doing: its state, sprite and frame, and what it
+  * was aimed at -- which is what names an effect when its type does not. */
+static void K_PrintRecordIdentity(const char *label, const diagrec_t *rec)
+{
+	const char *sprite = (rec->sprite >= 0 && rec->sprite < NUMSPRITES)
+		? sprnames[rec->sprite] : "????";
+	char who[24] = "";
+
+	if (rec->targetplayer >= 0)
+		snprintf(who, sizeof who, " (player %d)", rec->targetplayer);
+
+	CONS_Printf("rollback_test: %s state %s, sprite %.4s frame %u, target %s%s\n",
+		label, K_StateName(rec->state), sprite, rec->frame & FF_FRAMEMASK,
+		(rec->targettype < NUMMOBJTYPES) ? K_MobjTypeName(rec->targettype) : "none",
+		who);
 }
 
 /** Names the objects whose archived record changed across a restore. */
@@ -1257,6 +1312,8 @@ static void K_ReportRecordDifferences(const char *cmd, const diagset_t *before, 
 				"mobjnum %u before and %u after\n",
 				cmd, i, K_MobjTypeName(before->recs[i].type), la, lb,
 				before->recs[i].num, after->recs[i].num);
+			K_PrintRecordIdentity("  before:", &before->recs[i]);
+			K_PrintRecordIdentity("  after: ", &after->recs[i]);
 			K_PrintRecordMasks("  before:", a, la);
 			K_PrintRecordMasks("  after: ", b, lb);
 			reported++;
