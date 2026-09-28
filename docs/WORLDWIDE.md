@@ -4564,3 +4564,56 @@ the game.
   tics.**
 - A rebuild, when one comes, costs about 8 tics and their saves, some 70
   ms: a handful of them shows as a handful of iterations past a tic.
+
+**Measured on 2026-09-28**, binary `755ea3c0c` (sha256 `11c60b35...`),
+processor at 5% before launch, the League of Legends client closed
+(`playlog_keep_RR_Opulence_20260928-235407_755ea3c.txt`). The harness's new
+line: "this machine's player entered the game". ⚠ **Written as unattended,
+it was driven**: Gibax played it ("j'ai joué, c'est pour ça"). So this is the
+driven `keep` race on Opulence, to compare with 8.74's, not with 8.77's.
+
+| | window 0 | window 1 | window 2 | 8.74, driven, `b24e0a2f2` |
+|---|---|---|---|---|
+| passes kept, of 999 | **694** | **654** | **694** | 77 |
+| ... through a correction that changed nothing | 234 | 249 | 236 | -- |
+| rebuilt: an input differed | 305 | 345 | 305 | 511 |
+| rebuilt: a correction was due | 0 | 0 | 0 | 411 |
+| pass (each save counted once) | **29.5 ms** | **33.7** | **33.9** | about 60 (8.77) |
+| ... saves / speculation (tics a pass) | 12.6 / 11.8 (3.14) | 13.7 / 13.5 (3.32) | 13.5 / 13.9 (3.19) | |
+| iterations past 50 ms | 305 | 347 | 306 | |
+| frames drawn in 1000 tics | **1852** | **1556** | **1599** | 344 |
+| drift: mean / worst / samples with a state off | 0.000 / 0.000 / 0 | 0.000 / 0.000 / 0 | 0.000 / 0.000 / 0 | |
+| inputs in flight / depth | 5.75 / 7.15 | 5.64 / 7.01 | 5.50 / 7.37 | |
+
+- **Held**: the player entered; drift 0.000 with a driver, in every field;
+  no rebuild for a due correction.
+- **Failed, 97% kept: 65 to 69%**, and with it the pass (8 to 10 ms written)
+  and the frames (more than 3000). The prediction assumed nobody drives.
+- **What the rebuilds are**: 305, 345, 305 rebuilds against 305, 347, 306
+  iterations past 50 ms -- every rebuild is a hitch. A rebuild re-runs the
+  whole speculation, 7 to 8 tics at 3.7 to 4.3 ms, and saves every one of
+  their starts, about 60 ms. The bots are guessed right (8.77: 4 rebuilds in
+  3000 passes with no local player), so these are this machine's own
+  inputs, the driver's. Not measured: `rollback_hits` does not run under
+  `rollback_keepspec`, so nothing says who or which tic.
+- **A reading, not tested**: the speculation runs 1.4 to 1.9 tics past the
+  newest local input (depth 7.0 to 7.4 against 5.5 to 5.75 in flight: the
+  lead is held at its largest over the last second, 8.41). Those head tics
+  repeat the newest input. A driver changes it, the kept tics were run with
+  the old one, and nothing checks them against the input actually made
+  until the server confirms them, about six tics later -- when the whole
+  speculation is rebuilt from the frontier. Both halves have a remedy
+  already half built: every speculated tic's start is saved, so a rebuild
+  could start from the first wrong tic instead of the frontier; and the
+  local input for a guessed tic is known one pass later, not six.
+- **Against 8.74's driven race** (same map, driven, `b24e0a2f2`): nine times
+  as many passes kept, a pass about half as dear, **five times the frames:
+  54 to 65 a second against 12**.
+- **The slow save is not the machine**: with the processor idle, a save
+  costs about 4.0 to 4.1 ms (12.6 ms of saves over about 3130 saves in
+  window 0; 13.7 over about 3320 in window 1). Every Opulence race up to
+  `5a417494f` saved in 2.2 to 2.8 ms; every one from `69e65f0ac` in 4 to
+  6.3. Between them, `ab1c24e15`, `b24e0a2f2` and `69e65f0ac`, and none
+  touches the save path (`K_WriteSnapshot`, `P_SaveNetGame`: read). Not
+  explained. The installed backups of `5a417494f` and `b24e0a2f2` can
+  bisect it without a build.
