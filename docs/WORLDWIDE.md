@@ -3397,9 +3397,14 @@ from its own value and the rider's `steering`, and the vibration sets
 `spritexoffset` from `topinfirst` and `leveltime`. The restore's own report
 lists, besides the fields every soak shows, bytes of `player_t` that are not
 put back -- at 44, 106-111 and 252 -- which the struct walker cannot name.
-Which of them the ride reads is not known. The fields that differ are drawn,
-not hashed; whether the ride's physics reads any of them has not been
-checked.
+Named afterwards from the `.pdb` (`cdb`, `dt player_t`, no launch): 44 is
+`viewz`, 106-111 are `old_drawangle` and `old_drawangle2`, 252 is
+`karthud[6]` -- the camera, drawing interpolation and the HUD, none of them
+simulation. And what the tilt reads -- `steering`, `topinfirst`,
+`topdriftheld`, `topAccel` -- is archived (`p_saveg.cpp`). So the obvious
+candidates are ruled out, and what the restore loses for a Garden Top rider
+is not found. The fields that differ are drawn, not hashed; whether the
+ride's physics reads any of them has not been checked.
 
 **The series stopped here, and partly by my error.** I committed the
 state-naming instrument to `src/` locally while it ran; the harness then saw
