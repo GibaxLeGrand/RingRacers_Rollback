@@ -3401,6 +3401,27 @@ static const char *const g_guessfieldname[NUMGUESSFIELDS] =
 	{ "forwardmove", "turning", "angle", "throwdir", "aiming", "buttons", "latency", "flags", "bot" };
 static uint32_t g_guessfield[3][NUMGUESSFIELDS];
 
+// rollback_keepspec's rebuilds for a wrong input, taken apart (WORLDWIDE.md
+// 8.78: driven on Opulence, a third of the passes rebuilt, each one a hitch,
+// and rollback_hits does not run while the speculation is kept). Who was wrong
+// on the first wrong tic, in which fields, how far past the frontier -- and for
+// this machine's own input, where the speculation had taken it from.
+enum
+{
+	KEEPSRC_RECEIVED,   // the server had already sent the tic
+	KEEPSRC_REPLAYED,   // an input sent and not yet applied (rollback_history)
+	KEEPSRC_GUESSED,    // past the newest input: the newest, repeated
+	KEEPSRC_NONE,       // no local player in the game
+	NUMKEEPSRC
+};
+static uint8_t g_keepsrc[ROLLBACK_TICS];            // where each speculated tic's local input came from
+static uint32_t g_keepmissat[5];                    // the first wrong tic, from the frontier: 0-3, 4+
+static uint32_t g_keepmisswho[3];                   // wrong inputs on it: this machine, bots, people
+static uint32_t g_keepmissfield[3][NUMGUESSFIELDS];
+static uint32_t g_keepmisssrc[NUMKEEPSRC];          // this machine's, by where they came from
+static uint32_t g_keepmissrun;                      // tics already run that the rebuilds threw away
+static uint32_t g_keepmissright;                    // ... of them before the first wrong tic
+
 // Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
 // Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
 // already (m_perfstats) and overwrites the figure every tic; these add them
@@ -3499,6 +3520,53 @@ static dboolean K_SameInput(const ticcmd_t *a, const ticcmd_t *b)
 	return (memcmp(&x, &y, sizeof (ticcmd_t)) == 0);
 }
 
+// Which fields of a guessed input g differ from the real one r.
+static void K_CountWrongFields(uint32_t *fields, const ticcmd_t *g, const ticcmd_t *r)
+{
+	if (g->forwardmove != r->forwardmove) fields[GUESSFIELD_FORWARD]++;
+	if (g->turning != r->turning) fields[GUESSFIELD_TURNING]++;
+	if (g->angle != r->angle) fields[GUESSFIELD_ANGLE]++;
+	if (g->throwdir != r->throwdir) fields[GUESSFIELD_THROWDIR]++;
+	if (g->aiming != r->aiming) fields[GUESSFIELD_AIMING]++;
+	if (g->buttons != r->buttons) fields[GUESSFIELD_BUTTONS]++;
+	if (g->latency != r->latency) fields[GUESSFIELD_LATENCY]++;
+	if ((g->flags & ~TICCMD_RECEIVED) != (r->flags & ~TICCMD_RECEIVED))
+		fields[GUESSFIELD_FLAGS]++;
+	if (memcmp(&g->bot, &r->bot, sizeof (g->bot)) != 0)
+		fields[GUESSFIELD_BOT]++;
+}
+
+// One line per who with a wrong input, naming the fields.
+static void K_PrintWrongFields(const char *prefix, const uint32_t *wrong,
+	uint32_t fields[3][NUMGUESSFIELDS])
+{
+	static const char *const whoname[3] = { "this machine", "bots", "people" };
+	int32_t who, f;
+
+	for (who = 0; who < 3; who++)
+	{
+		char line[400];
+		size_t len;
+
+		if (wrong[who] == 0)
+			continue;
+
+		len = (size_t)snprintf(line, sizeof line, "%s: %s's wrong inputs differ in --",
+			prefix, whoname[who]);
+
+		for (f = 0; f < NUMGUESSFIELDS && len < sizeof line; f++)
+		{
+			if (fields[who][f] > 0)
+			{
+				len += (size_t)snprintf(line + len, sizeof line - len, " %s %u",
+					g_guessfieldname[f], fields[who][f]);
+			}
+		}
+
+		CONS_Printf("%s\n", line);
+	}
+}
+
 // Called as a speculation is about to be built, after the confirmed loop: the
 // tics it confirmed since the last one, [from, to), are checked against the
 // inputs the last speculation guessed for them. Had every one been right and
@@ -3543,18 +3611,7 @@ static void K_CheckGuesses(tic_t from, tic_t to)
 				const ticcmd_t *g = &g_guesscmds[k][i], *r = &netcmds[t % BACKUPTICS][i];
 
 				g_guesswrong[who]++;
-
-				if (g->forwardmove != r->forwardmove) g_guessfield[who][GUESSFIELD_FORWARD]++;
-				if (g->turning != r->turning) g_guessfield[who][GUESSFIELD_TURNING]++;
-				if (g->angle != r->angle) g_guessfield[who][GUESSFIELD_ANGLE]++;
-				if (g->throwdir != r->throwdir) g_guessfield[who][GUESSFIELD_THROWDIR]++;
-				if (g->aiming != r->aiming) g_guessfield[who][GUESSFIELD_AIMING]++;
-				if (g->buttons != r->buttons) g_guessfield[who][GUESSFIELD_BUTTONS]++;
-				if (g->latency != r->latency) g_guessfield[who][GUESSFIELD_LATENCY]++;
-				if ((g->flags & ~TICCMD_RECEIVED) != (r->flags & ~TICCMD_RECEIVED))
-					g_guessfield[who][GUESSFIELD_FLAGS]++;
-				if (memcmp(&g->bot, &r->bot, sizeof (g->bot)) != 0)
-					g_guessfield[who][GUESSFIELD_BOT]++;
+				K_CountWrongFields(g_guessfield[who], g, r);
 			}
 		}
 	}
@@ -3663,6 +3720,11 @@ static void Command_RollbackKeepSpec_f(void)
 		memset(g_keepcount, 0, sizeof g_keepcount);
 		memset(g_keeptic, 0xff, sizeof g_keeptic);
 		g_keepcorrnoop = 0;
+		memset(g_keepmissat, 0, sizeof g_keepmissat);
+		memset(g_keepmisswho, 0, sizeof g_keepmisswho);
+		memset(g_keepmissfield, 0, sizeof g_keepmissfield);
+		memset(g_keepmisssrc, 0, sizeof g_keepmisssrc);
+		g_keepmissrun = g_keepmissright = 0;
 	}
 
 	CONS_Printf("rollback_keepspec: %s%s\n", g_keepspec ? "on" : "off",
@@ -3684,6 +3746,22 @@ static void Command_RollbackKeepSpec_f(void)
 		if (g_keepcount[r] > 0)
 			CONS_Printf("rollback_keepspec: rebuilt %u times because %s\n", g_keepcount[r], why[r]);
 	}
+
+	if (g_keepcount[KEEP_INPUT] == 0)
+		return;
+
+	CONS_Printf("rollback_keepspec: the first wrong tic, from the frontier -- 0: %u, 1: %u, "
+		"2: %u, 3: %u, 4 or more: %u; wrong inputs on it -- this machine %u, bots %u, people %u\n",
+		g_keepmissat[0], g_keepmissat[1], g_keepmissat[2], g_keepmissat[3], g_keepmissat[4],
+		g_keepmisswho[0], g_keepmisswho[1], g_keepmisswho[2]);
+	CONS_Printf("rollback_keepspec: this machine's were run on -- a tic already received %u, "
+		"an input replayed from the history %u, the newest input guessed past it %u\n",
+		g_keepmisssrc[KEEPSRC_RECEIVED], g_keepmisssrc[KEEPSRC_REPLAYED],
+		g_keepmisssrc[KEEPSRC_GUESSED]);
+	K_PrintWrongFields("rollback_keepspec", g_keepmisswho, g_keepmissfield);
+	CONS_Printf("rollback_keepspec: those rebuilds threw away %u tics already run; "
+		"starting from the first wrong tic would have kept %u of them\n",
+		g_keepmissrun, g_keepmissright);
 }
 
 static void Command_RollbackObjProfile_f(void)
@@ -3822,33 +3900,7 @@ static void K_ReportPassCosts(void)
 		g_guessfirstwrong[3], g_guessfirstwrong[4],
 		g_guesswrong[0], g_guesswrong[1], g_guesswrong[2]);
 
-	{
-		static const char *const whoname[3] = { "this machine", "bots", "people" };
-		int32_t who, f;
-
-		for (who = 0; who < 3; who++)
-		{
-			char line[400];
-			size_t len;
-
-			if (g_guesswrong[who] == 0)
-				continue;
-
-			len = (size_t)snprintf(line, sizeof line, "rollback_hits: %s's wrong inputs differ in --",
-				whoname[who]);
-
-			for (f = 0; f < NUMGUESSFIELDS && len < sizeof line; f++)
-			{
-				if (g_guessfield[who][f] > 0)
-				{
-					len += (size_t)snprintf(line + len, sizeof line - len, " %s %u",
-						g_guessfieldname[f], g_guessfield[who][f]);
-				}
-			}
-
-			CONS_Printf("%s\n", line);
-		}
-	}
+	K_PrintWrongFields("rollback_hits", g_guesswrong, g_guessfield);
 
 	if (g_spticcount > 0)
 	{
@@ -5181,6 +5233,34 @@ dboolean K_RollbackKeepArmed(void)
 	return g_keeparmed;
 }
 
+/** A rebuild for a wrong input: who was wrong on the first wrong tic, and how. */
+static void K_NoteKeepMiss(tic_t from, tic_t tic)
+{
+	const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
+	const int32_t at = (int32_t)(tic - from);
+	int32_t p;
+
+	g_keepmissat[(at < 4) ? at : 4]++;
+	g_keepmissright += (uint32_t)at;
+	g_keepmissrun += (uint32_t)(g_keephead - from);
+
+	for (p = 0; p < MAXPLAYERS; p++)
+	{
+		const ticcmd_t *ran = &g_keepcmds[s][p], *real = &netcmds[tic % BACKUPTICS][p];
+		int32_t who;
+
+		if (playeringame[p] == false || g_keepin[s][p] == false || K_SameInput(ran, real))
+			continue;
+
+		who = (p == g_localplayers[0]) ? 0 : (players[p].bot ? 1 : 2);
+		g_keepmisswho[who]++;
+		K_CountWrongFields(g_keepmissfield[who], ran, real);
+
+		if (who == 0 && g_keepsrc[s] < NUMKEEPSRC)
+			g_keepmisssrc[g_keepsrc[s]]++;
+	}
+}
+
 static int32_t K_KeepCheckTic(tic_t tic)
 {
 	const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
@@ -5235,7 +5315,12 @@ dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds)
 	else
 	{
 		for (t = from; t < upto && reason == KEEP_KEPT; t++)
+		{
 			reason = K_KeepCheckTic(t);
+
+			if (reason == KEEP_INPUT)
+				K_NoteKeepMiss(from, t);
+		}
 
 		// The new frontier's start has to be on file, to come back to. At the
 		// head it is the world itself, which the extension saves.
@@ -5509,6 +5594,23 @@ static void K_KeepNoteKarts(int32_t s)
 	}
 }
 
+static int32_t K_LocalInputSource(tic_t tic)
+{
+	const int32_t who = g_localplayers[0];
+	const int32_t unacked = g_histunacked[0];
+
+	if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
+		return KEEPSRC_NONE;
+
+	if (tic < D_NeededTic() && g_cleancmds)
+		return KEEPSRC_RECEIVED;
+
+	if (g_histmax > 0 && unacked > 0 && tic >= g_histbase && tic - g_histbase < (tic_t)unacked)
+		return KEEPSRC_REPLAYED;
+
+	return KEEPSRC_GUESSED;
+}
+
 static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 {
 	const tic_t tic = gametic;
@@ -5544,6 +5646,8 @@ static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 			if (playeringame[p])
 				g_keepcmds[s][p] = netcmds[tic % BACKUPTICS][p];
 		}
+
+		g_keepsrc[s] = (uint8_t)K_LocalInputSource(tic);
 	}
 	else
 	{
