@@ -218,6 +218,27 @@ void K_RollbackTraceTilt(int32_t who, uint32_t vx, uint32_t vy,
 // two passes to compare. Does nothing the rest of the time.
 void K_RollbackTraceCollide(uint32_t one, uint32_t two);
 
+// What a pass of TryRunTics spends its time on, step by step, for
+// rollback_twoclock's report (WORLDWIDE.md 8.60). Each call adds the time since
+// *since to its step and moves *since to now. Counted in a level only.
+typedef enum
+{
+	ROLLBACK_STEP_NET,          // NetUpdate and GetPackets
+	ROLLBACK_STEP_CORRECTION,   // applying a state correction
+	ROLLBACK_STEP_CONFIRMED,    // the authoritative tic loop, and what surrounds it
+	ROLLBACK_NUMSTEPS
+} rollbackstep_t;
+
+void K_RollbackNoteStep(rollbackstep_t step, precise_t *since);
+
+/** The authoritative loop of one pass ran this many tics. */
+void K_RollbackNoteConfirmedTics(int32_t tics);
+
+/** One iteration of the main loop: the work it did before any sleep, whether it
+  * ran the tic loop, whether it drew a frame, and whether it was told to skip
+  * the next one for running long. Counted in a level only. */
+void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboolean skipnext);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

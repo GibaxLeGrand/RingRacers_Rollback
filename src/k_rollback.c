@@ -3302,6 +3302,297 @@ static int32_t g_driftworst = -1;
 static uint32_t g_driftmoved;       // karts actually put back
 static uint32_t g_driftrefused;     // ... and karts the move refused to place
 
+// ----------------------------------------------------------------------------
+// What a pass costs, what a frame costs, and how often the guess was right
+// ----------------------------------------------------------------------------
+//
+// Gibax felt stutter and dropped frames (WORLDWIDE.md 8.50) and asked where they
+// come from (8.60). The pass cost above stops at the restore and the
+// speculation: nothing timed the save, the confirmed tics or the network, no log
+// holds a frame's duration, and nothing said whether rebuilding the speculation
+// was needed at all -- whether the tics the server confirmed carried the inputs
+// the speculation had guessed. Counted in a level, printed by rollback_twoclock
+// and reset with its other counts.
+static uint32_t g_saveus;                       // saving the frontier
+static uint64_t g_stepus[ROLLBACK_NUMSTEPS];    // the rest of a pass, step by step
+static uint32_t g_steppasses;                   // passes timed
+static uint32_t g_confirmedrun;                 // confirmed tics those passes ran
+
+#define ROLLBACK_FRAMEBUCKETS 6
+static const uint32_t g_framebucketus[ROLLBACK_FRAMEBUCKETS - 1] =
+	{ 8333, 16667, 28571, 33333, 50000 };
+static uint32_t g_framework[2][ROLLBACK_FRAMEBUCKETS];  // [ran the tic loop] work before the sleep
+static uint64_t g_frameworksum[2];
+static uint32_t g_frameworkmax[2];
+static uint32_t g_frameworkcount[2];
+static uint32_t g_framegap[ROLLBACK_FRAMEBUCKETS];      // from one drawn frame to the next
+static uint32_t g_framegapmax;
+static uint32_t g_framesdrawn;
+static uint32_t g_frameskips;                           // iterations that made the next frame skip
+static precise_t g_lastdrawnat;
+
+// The inputs the standing speculation ran, tic by tic, checked against what the
+// server confirms for the same tics on the next pass.
+#define ROLLBACK_GUESSMAX 32
+static ticcmd_t g_guesscmds[ROLLBACK_GUESSMAX][MAXPLAYERS];
+static dboolean g_guessin[ROLLBACK_GUESSMAX][MAXPLAYERS];
+static tic_t g_guessfrom;               // the first tic recorded
+static int32_t g_guesstics;             // how many are
+static uint32_t g_guessmovedat;         // g_driftmoved when the speculation was built
+static uint32_t g_guesspasses;          // passes that confirmed at least one guessed tic
+static uint32_t g_guessright;           // ... and every input on them was the one guessed
+static uint32_t g_guessrightmoved;      // ... right, yet a correction moved a kart
+static uint32_t g_guessfirstwrong[5];   // the first wrong tic, from the frontier: 0-3, 4+
+static uint32_t g_guesswrong[3];        // wrong inputs by who: this machine, bots, people
+
+static int32_t K_FrameBucket(uint32_t us)
+{
+	int32_t b = 0;
+
+	while (b < ROLLBACK_FRAMEBUCKETS - 1 && us >= g_framebucketus[b])
+		b++;
+
+	return b;
+}
+
+void K_RollbackNoteStep(rollbackstep_t step, precise_t *since)
+{
+	const precise_t now = I_GetPreciseTime();
+
+	if (gamestate == GS_LEVEL && step < ROLLBACK_NUMSTEPS)
+	{
+		g_stepus[step] += K_PreciseToMicros(now - *since);
+
+		if (step == ROLLBACK_STEP_CONFIRMED)
+			g_steppasses++;
+	}
+
+	*since = now;
+}
+
+void K_RollbackNoteConfirmedTics(int32_t tics)
+{
+	if (gamestate == GS_LEVEL && tics > 0)
+		g_confirmedrun += (uint32_t)tics;
+}
+
+void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboolean skipnext)
+{
+	const uint32_t us = K_PreciseToMicros(work);
+	const int32_t which = ranloop ? 1 : 0;
+
+	if (gamestate != GS_LEVEL)
+	{
+		// A gap spent in a menu or a wipe is not a frame the race drew late.
+		g_lastdrawnat = 0;
+		return;
+	}
+
+	g_framework[which][K_FrameBucket(us)]++;
+	g_frameworksum[which] += us;
+	g_frameworkcount[which]++;
+
+	if (us > g_frameworkmax[which])
+		g_frameworkmax[which] = us;
+
+	if (skipnext)
+		g_frameskips++;
+
+	if (drew)
+	{
+		const precise_t now = I_GetPreciseTime();
+
+		g_framesdrawn++;
+
+		if (g_lastdrawnat != 0)
+		{
+			const uint32_t gap = K_PreciseToMicros(now - g_lastdrawnat);
+
+			g_framegap[K_FrameBucket(gap)]++;
+
+			if (gap > g_framegapmax)
+				g_framegapmax = gap;
+		}
+
+		g_lastdrawnat = now;
+	}
+}
+
+// The flag that says an input arrived is the one difference a guess always has,
+// and it does not change what the tic does.
+static dboolean K_SameInput(const ticcmd_t *a, const ticcmd_t *b)
+{
+	ticcmd_t x = *a, y = *b;
+
+	x.flags &= ~TICCMD_RECEIVED;
+	y.flags &= ~TICCMD_RECEIVED;
+
+	return (memcmp(&x, &y, sizeof (ticcmd_t)) == 0);
+}
+
+// Called as a speculation is about to be built, after the confirmed loop: the
+// tics it confirmed since the last one, [from, to), are checked against the
+// inputs the last speculation guessed for them. Had every one been right and
+// no correction moved a kart, the last speculation's first tics would have
+// been these tics exactly, and rebuilding them was work thrown away.
+static void K_CheckGuesses(tic_t from, tic_t to)
+{
+	dboolean any = false, right = true;
+	int32_t firstwrong = -1;
+	tic_t t;
+	int32_t i;
+
+	for (t = from; t < to; t++)
+	{
+		int32_t k;
+
+		if (t < g_guessfrom)
+			continue;
+
+		k = (int32_t)(t - g_guessfrom);
+
+		if (k >= g_guesstics)
+			break;
+
+		any = true;
+
+		for (i = 0; i < MAXPLAYERS; i++)
+		{
+			if (g_guessin[k][i] == false || playeringame[i] == false)
+				continue;
+
+			if (K_SameInput(&g_guesscmds[k][i], &netcmds[t % BACKUPTICS][i]))
+				continue;
+
+			right = false;
+
+			if (firstwrong < 0)
+				firstwrong = k;
+
+			if (i == g_localplayers[0])
+				g_guesswrong[0]++;
+			else if (players[i].bot)
+				g_guesswrong[1]++;
+			else
+				g_guesswrong[2]++;
+		}
+	}
+
+	if (any == false)
+		return;
+
+	g_guesspasses++;
+
+	if (right)
+	{
+		g_guessright++;
+
+		if (g_driftmoved != g_guessmovedat)
+			g_guessrightmoved++;
+	}
+	else
+	{
+		g_guessfirstwrong[(firstwrong < 4) ? firstwrong : 4]++;
+	}
+}
+
+// The inputs one speculated tic is about to run, as G_Ticker will read them.
+static void K_RecordGuess(tic_t tic)
+{
+	int32_t k, i;
+
+	if (g_guesstics == 0)
+		g_guessfrom = tic;
+
+	k = (int32_t)(tic - g_guessfrom);
+
+	if (k < 0 || k >= ROLLBACK_GUESSMAX)
+		return;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		g_guessin[k][i] = playeringame[i];
+
+		if (playeringame[i])
+			g_guesscmds[k][i] = netcmds[tic % BACKUPTICS][i];
+	}
+
+	g_guesstics = k + 1;
+}
+
+static void K_ResetPassCosts(void)
+{
+	g_saveus = 0;
+	memset(g_stepus, 0, sizeof g_stepus);
+	g_steppasses = g_confirmedrun = 0;
+
+	memset(g_framework, 0, sizeof g_framework);
+	memset(g_frameworksum, 0, sizeof g_frameworksum);
+	memset(g_frameworkmax, 0, sizeof g_frameworkmax);
+	memset(g_frameworkcount, 0, sizeof g_frameworkcount);
+	memset(g_framegap, 0, sizeof g_framegap);
+	g_framegapmax = g_framesdrawn = g_frameskips = 0;
+	g_lastdrawnat = 0;
+
+	g_guesspasses = g_guessright = g_guessrightmoved = 0;
+	memset(g_guessfirstwrong, 0, sizeof g_guessfirstwrong);
+	memset(g_guesswrong, 0, sizeof g_guesswrong);
+}
+
+static void K_PrintBuckets(const char *what, const uint32_t *buckets)
+{
+	CONS_Printf("rollback_frames: %s -- under 8.3 ms %u, 8.3-16.7 %u, 16.7-28.6 %u, "
+		"28.6-33.3 %u, 33.3-50 %u, over 50 %u\n", what,
+		buckets[0], buckets[1], buckets[2], buckets[3], buckets[4], buckets[5]);
+}
+
+static void K_ReportPassCosts(void)
+{
+	const uint32_t passes = g_steppasses ? g_steppasses : 1;
+	const uint32_t spec = g_specpasses ? g_specpasses : 1;
+	const uint32_t restore = g_unspecus / spec, save = g_saveus / spec, forward = g_specus / spec;
+	const uint32_t net = (uint32_t)(g_stepus[ROLLBACK_STEP_NET] / passes);
+	const uint32_t corr = (uint32_t)(g_stepus[ROLLBACK_STEP_CORRECTION] / passes);
+	const uint32_t conf = (uint32_t)(g_stepus[ROLLBACK_STEP_CONFIRMED] / passes);
+	int32_t w;
+
+	CONS_Printf("rollback_cost: per pass, over %u passes -- restore %u us, network %u, "
+		"correction %u, confirmed tics %u (%u.%02u tics a pass), save %u, speculation %u "
+		"(%u.%02u tics a pass): %u us against 28571 for a whole tic\n",
+		g_steppasses, restore, net, corr, conf,
+		g_confirmedrun / passes, (g_confirmedrun * 100 / passes) % 100,
+		save, forward, g_spectics / spec, (g_spectics * 100 / spec) % 100,
+		restore + net + corr + conf + save + forward);
+
+	for (w = 1; w >= 0; w--)
+	{
+		const uint32_t n = g_frameworkcount[w] ? g_frameworkcount[w] : 1;
+
+		CONS_Printf("rollback_frames: %u loop iterations %s the tic loop -- work before "
+			"the sleep %u us on average, %u at worst\n",
+			g_frameworkcount[w], w ? "that ran" : "that did not run",
+			(uint32_t)(g_frameworksum[w] / n), g_frameworkmax[w]);
+		K_PrintBuckets(w ? "their work, with a pass" : "their work, without one",
+			g_framework[w]);
+	}
+
+	K_PrintBuckets("between two drawn frames", g_framegap);
+	CONS_Printf("rollback_frames: %u frames drawn, the longest gap %u us; %u iterations "
+		"ran past a tic, so the frame after each was skipped\n",
+		g_framesdrawn, g_framegapmax, g_frameskips);
+
+	CONS_Printf("rollback_hits: %u passes confirmed tics the speculation had guessed: "
+		"%u with every input right (%u of them with a kart moved by a correction), "
+		"%u with one wrong\n",
+		g_guesspasses, g_guessright, g_guessrightmoved, g_guesspasses - g_guessright);
+	CONS_Printf("rollback_hits: the first wrong tic, from the frontier -- 0: %u, 1: %u, "
+		"2: %u, 3: %u, 4 or more: %u; wrong inputs -- this machine %u, bots %u, "
+		"people %u\n",
+		g_guessfirstwrong[0], g_guessfirstwrong[1], g_guessfirstwrong[2],
+		g_guessfirstwrong[3], g_guessfirstwrong[4],
+		g_guesswrong[0], g_guesswrong[1], g_guesswrong[2]);
+}
+
 // Spikes.
 //
 // Five unattended races put the mean residual at 0.05 to 0.33 units and the
@@ -4548,16 +4839,28 @@ void K_RollbackSpeculate(void)
 	if (K_RollbackTwoClock() <= 0)
 		return;
 
+	// Before the frontier moves: were the tics just confirmed the ones the last
+	// speculation guessed? (see K_CheckGuesses)
+	if (gamestate == GS_LEVEL && g_guesstics > 0)
+		K_CheckGuesses(g_confirmedtic, gametic);
+
+	g_guesstics = 0;
+	g_guessmovedat = g_driftmoved;
+
 	// The frontier: the world exactly as the authoritative loop left it. Saved
 	// before a single speculative tic runs, because this is what the next pass
 	// has to come back to.
 	g_confirmedtic = gametic;
+
+	started = I_GetPreciseTime();
 
 	if (K_SaveGameState(gametic) == false)
 	{
 		g_specnosave++;
 		return;
 	}
+
+	g_saveus += K_PreciseToMicros(I_GetPreciseTime() - started);
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 		g_histunacked[i] = -1;
@@ -4657,6 +4960,7 @@ void K_RollbackSpeculate(void)
 		// predicted. Same step the old loop used, and the only part of it worth
 		// keeping.
 		K_RollbackPredictInputs(gametic, i);
+		K_RecordGuess(gametic);
 
 		// The whole tic, through the live loop's own entry point. Driving
 		// P_Ticker directly missed everything G_Ticker does around the
@@ -5460,6 +5764,7 @@ static void Command_RollbackTwoClock_f(void)
 
 		g_specpasses = g_spectics = g_specstranded = g_specnosave = g_suppressedxcmds = 0;
 		g_unspecus = g_specus = 0;
+		K_ResetPassCosts();
 	}
 
 	CONS_Printf("rollback_twoclock: %d tics of speculation on top of the confirmed world%s\n",
@@ -5476,6 +5781,8 @@ static void Command_RollbackTwoClock_f(void)
 	CONS_Printf("rollback_twoclock: %u messages were refused because a speculated "
 		"tic raised them -- the archive cannot take a sent message back\n",
 		g_suppressedxcmds);
+
+	K_ReportPassCosts();
 }
 
 /** Fills a tic's inputs with the last thing each player was known to be doing.

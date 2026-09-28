@@ -78,6 +78,7 @@
 #include "k_credits.h"
 #include "r_debug.hpp"
 #include "k_director.h"
+#include "k_rollback.h" // K_RollbackNoteFrame
 #include "m_pw.h"
 
 #ifdef HWRENDER
@@ -954,6 +955,7 @@ void D_SRB2Loop(void)
 
 		interp = R_UsingFrameInterpolation() && !dedicated;
 		doDisplay = false;
+		dboolean drewframe = false;
 
 		renderisnewtic = (realtics > 0 || singletics);
 
@@ -1023,6 +1025,8 @@ void D_SRB2Loop(void)
 
 		if ((interp || doDisplay) && !frameskip && g_fast_forward == 0)
 		{
+			drewframe = true;
+
 			if (!renderisnewtic)
 				P_ResetInterpHudRandSeed(false);
 
@@ -1141,6 +1145,10 @@ void D_SRB2Loop(void)
 			}
 		}
 
+		// For rollback_twoclock's report (WORLDWIDE.md 8.60): what this iteration
+		// cost before any sleep, whether a pass of the tic loop was in it, and
+		// whether it ran long enough that the next frame is skipped.
+		K_RollbackNoteFrame(finishprecise - enterprecise, renderisnewtic, drewframe, frameskip > 0);
 
 		if (world)
 		{

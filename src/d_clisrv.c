@@ -7208,6 +7208,11 @@ dboolean TryRunTics(tic_t realtics)
 	if (K_RollbackTwoClock() > 0)
 		K_RollbackUnspeculate();
 
+	// Where the rest of this pass spends its time, step by step (WORLDWIDE.md
+	// 8.60). The restore above and the speculation below time themselves.
+	precise_t stepat = I_GetPreciseTime();
+	const tic_t confirmedfrom = gametic;
+
 	NetUpdate();
 
 	if (demo.playback)
@@ -7221,6 +7226,8 @@ dboolean TryRunTics(tic_t realtics)
 
 	GetPackets();
 
+	K_RollbackNoteStep(ROLLBACK_STEP_NET, &stepat);
+
 	// A correction has to be measured and applied against the *confirmed* world,
 	// which exists exactly here: the speculation was undone above, GetPackets has
 	// just read whatever the server sent, and the authoritative loop below has
@@ -7228,6 +7235,8 @@ dboolean TryRunTics(tic_t realtics)
 	// anywhere later and they have already moved on.
 	if (client && gamestate == GS_LEVEL)
 		K_RollbackApplyServerState();
+
+	K_RollbackNoteStep(ROLLBACK_STEP_CORRECTION, &stepat);
 
 #ifdef DEBUGFILE
 	if (debugfile && (realtics || neededtic > gametic))
@@ -7493,6 +7502,9 @@ dboolean TryRunTics(tic_t realtics)
 	// spends it, and how many go unspent is half of the question.
 	if (client && gamestate == GS_LEVEL)
 		K_RollbackNotePass(predictedthispass);
+
+	K_RollbackNoteStep(ROLLBACK_STEP_CONFIRMED, &stepat);
+	K_RollbackNoteConfirmedTics((int32_t)(gametic - confirmedfrom));
 
 	// And rebuild the speculation on top of the confirmed world, so what the
 	// player sees and acts in is ahead of what the server has confirmed. Every
