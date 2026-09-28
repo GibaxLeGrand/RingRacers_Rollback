@@ -4377,11 +4377,48 @@ static inline void SaveDynamicVertexSlopeThinker(savebuffer_t *save, const think
 	WRITEUINT8(save->p, ht->relative);
 }
 
+// Which thinker owns a polyobject -- po->thinker -- is not archived: a load
+// nulls it (P_UnArchivePolyObj) and "the thinkers themselves will fight over
+// who gets the field when they first start to run". Until one has, the
+// polyobject looks idle, and an action that would have been refused ("Don't
+// crowd out another thinker") starts a second thinker on it. A rollback
+// restores every pass, so on Coastal Temple a leak soak saw a second fade
+// thinker start after a restore, the archive grow by exactly its 24 bytes and
+// the polyobject's translucency change (WORLDWIDE.md 8.57) -- and a fade can
+// toggle the polyobject's collision.
+//
+// So a local snapshot also records, for each polyobject thinker, whether it
+// owns its polyobject, and a local restore gives it back before anything
+// runs. Local only: a gamestate sent over the network keeps the stock format.
+static void SavePolyOwner(savebuffer_t *save, const thinker_t *th, int32_t polyObjNum)
+{
+	if (localsnapshot == false)
+		return;
+
+	polyobj_t *po = Polyobj_GetForNum(polyObjNum);
+	WRITEUINT8(save->p, (po != NULL && po->thinker == th) ? 1 : 0);
+}
+
+static void LoadPolyOwner(savebuffer_t *save, thinker_t *th, int32_t polyObjNum)
+{
+	if (localrestore == false)
+		return;
+
+	if (READUINT8(save->p) != 0)
+	{
+		polyobj_t *po = Polyobj_GetForNum(polyObjNum);
+
+		if (po != NULL)
+			po->thinker = th;
+	}
+}
+
 static inline void SavePolyrotatetThinker(savebuffer_t *save, const thinker_t *th, const uint8_t type)
 {
 	const polyrotate_t *ht = (const polyrotate_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->speed);
 	WRITEINT32(save->p, ht->distance);
 	WRITEUINT8(save->p, ht->turnobjs);
@@ -4392,6 +4429,7 @@ static void SavePolymoveThinker(savebuffer_t *save, const thinker_t *th, const u
 	const polymove_t *ht = (const polymove_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->speed);
 	WRITEFIXED(save->p, ht->momx);
 	WRITEFIXED(save->p, ht->momy);
@@ -4404,6 +4442,7 @@ static void SavePolywaypointThinker(savebuffer_t *save, const thinker_t *th, uin
 	const polywaypoint_t *ht = (const polywaypoint_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->speed);
 	WRITEINT32(save->p, ht->sequence);
 	WRITEINT32(save->p, ht->pointnum);
@@ -4418,6 +4457,7 @@ static void SavePolyslidedoorThinker(savebuffer_t *save, const thinker_t *th, co
 	const polyslidedoor_t *ht = (const polyslidedoor_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->delay);
 	WRITEINT32(save->p, ht->delayCount);
 	WRITEINT32(save->p, ht->initSpeed);
@@ -4437,6 +4477,7 @@ static void SavePolyswingdoorThinker(savebuffer_t *save, const thinker_t *th, co
 	const polyswingdoor_t *ht = (const polyswingdoor_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->delay);
 	WRITEINT32(save->p, ht->delayCount);
 	WRITEINT32(save->p, ht->initSpeed);
@@ -4451,6 +4492,7 @@ static void SavePolydisplaceThinker(savebuffer_t *save, const thinker_t *th, con
 	const polydisplace_t *ht = (const polydisplace_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEUINT32(save->p, SaveSector(ht->controlSector));
 	WRITEFIXED(save->p, ht->dx);
 	WRITEFIXED(save->p, ht->dy);
@@ -4462,6 +4504,7 @@ static void SavePolyrotdisplaceThinker(savebuffer_t *save, const thinker_t *th, 
 	const polyrotdisplace_t *ht = (const polyrotdisplace_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEUINT32(save->p, SaveSector(ht->controlSector));
 	WRITEFIXED(save->p, ht->rotscale);
 	WRITEUINT8(save->p, ht->turnobjs);
@@ -4473,6 +4516,7 @@ static void SavePolyfadeThinker(savebuffer_t *save, const thinker_t *th, const u
 	const polyfade_t *ht = (const polyfade_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->sourcevalue);
 	WRITEINT32(save->p, ht->destvalue);
 	WRITEUINT8(save->p, (uint8_t)ht->docollision);
@@ -6241,6 +6285,7 @@ static inline thinker_t* LoadPolyrotatetThinker(savebuffer_t *save, actionf_p1 t
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->speed = READINT32(save->p);
 	ht->distance = READINT32(save->p);
 	ht->turnobjs = READUINT8(save->p);
@@ -6254,6 +6299,7 @@ static thinker_t* LoadPolymoveThinker(savebuffer_t *save, actionf_p1 thinker)
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->speed = READINT32(save->p);
 	ht->momx = READFIXED(save->p);
 	ht->momy = READFIXED(save->p);
@@ -6269,6 +6315,7 @@ static inline thinker_t* LoadPolywaypointThinker(savebuffer_t *save, actionf_p1 
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->speed = READINT32(save->p);
 	ht->sequence = READINT32(save->p);
 	ht->pointnum = READINT32(save->p);
@@ -6286,6 +6333,7 @@ static inline thinker_t* LoadPolyslidedoorThinker(savebuffer_t *save, actionf_p1
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->delay = READINT32(save->p);
 	ht->delayCount = READINT32(save->p);
 	ht->initSpeed = READINT32(save->p);
@@ -6308,6 +6356,7 @@ static inline thinker_t* LoadPolyswingdoorThinker(savebuffer_t *save, actionf_p1
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->delay = READINT32(save->p);
 	ht->delayCount = READINT32(save->p);
 	ht->initSpeed = READINT32(save->p);
@@ -6325,6 +6374,7 @@ static inline thinker_t* LoadPolydisplaceThinker(savebuffer_t *save, actionf_p1 
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->controlSector = LoadSector(READUINT32(save->p));
 	ht->dx = READFIXED(save->p);
 	ht->dy = READFIXED(save->p);
@@ -6339,6 +6389,7 @@ static inline thinker_t* LoadPolyrotdisplaceThinker(savebuffer_t *save, actionf_
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->controlSector = LoadSector(READUINT32(save->p));
 	ht->rotscale = READFIXED(save->p);
 	ht->turnobjs = READUINT8(save->p);
@@ -6353,6 +6404,7 @@ static thinker_t* LoadPolyfadeThinker(savebuffer_t *save, actionf_p1 thinker)
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->sourcevalue = READINT32(save->p);
 	ht->destvalue = READINT32(save->p);
 	ht->docollision = (dboolean)READUINT8(save->p);
