@@ -3885,3 +3885,77 @@ Opulence without a driver):
 - `rollback_hits`, no driver: **90% of passes or more with every input
   right** -- the idle kart's input does not change and bots are recomputed
   from the same world. A driven race is what will say how a person fares.
+
+### 8.62 The first measurements: on Opulence a pass takes the whole tic, 12 to 17 frames a second
+
+Measured on 2026-09-28, binary `242f394f2` (sha256 `0a9b68ae...`), Gibax's
+go-ahead for the install, the three soaks and the race without a driver.
+Predictions in 8.61. Logs `soaklog_leak_RR_CoastalTemple_20260928-184530_242f394.txt`,
+`soaklog_leak_RR_Opulence_20260928-184843_242f394.txt`, `soaklog_ww_RR_Opulence_*_242f394.txt`,
+`playlog_correct_on_RR_Opulence_20260928-185445_242f394.txt`,
+`playlog_frames_off_RR_Opulence_20260928-185726_242f394.txt`.
+
+**The soaks.**
+
+- Coastal Temple, leak: **1 of 261, `itemList.cap`** -- the nine
+  polyobject failures are gone. 8.61's prediction holds; 8.59's mechanism
+  is the one.
+- Opulence, leak: 2 of 286, both `itemList.cap`. 8.61 said 0: known and
+  harmless, but not what was written. Resim: 1 of 377, the first check's
+  `chainorder_block` at leveltime 705, as set aside.
+- **The waypoint step leaves the restore profile**, which prints only steps
+  of 100 us or more: from 0.95 ms to under 0.1, as predicted. The load
+  went from 6.5 to 6.1 ms only: the purge, one sample each, read 1.75 then
+  2.2 ms.
+
+**The race: `correct_on` on Opulence, no driver, three windows of 1000
+tics** (Gibax, watching it: "injouable", 15 frames a second at most).
+
+| per pass | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| restore | 6.05 ms | 6.49 | 6.78 |
+| network, correction | 0.13 | 0.13 | 0.13 |
+| confirmed tics (1.05 - 1.13 a pass) | 6.54 | 6.37 | 7.43 |
+| save of the frontier | 2.24 | 2.28 | 2.32 |
+| 4 speculated tics | 13.61 | 12.80 | 14.20 |
+| **total, of a 28.6 ms tic** | **28.6 (100%)** | **28.1 (98%)** | **30.9 (108%)** |
+| frames drawn in 1000 tics | 502 | 452 | 346 |
+| gaps over 50 ms between two frames | 314 | 368 | 316 |
+| iterations past a tic, next frame skipped | 519 | 563 | 663 |
+
+- **A simulated tic costs 3.2 to 3.5 ms on Opulence**, 2.5 times Skyscraper
+  Leaps' 1.3, and a pass runs five of them. With the restore and the saves,
+  a pass is the whole tic; drawing a frame on top of it (about 2.4 ms, see
+  the control) pushes most iterations past a tic, and the game then skips
+  the next frame on purpose (`frameskip`, `d_main.cpp`). **12 to 17 frames a
+  second** -- Gibax's 15.
+- **The confirmed step was 6.4 to 7.4 ms for one tic because the same state
+  was saved twice**: `rollback_twoclock` turns `rollback_keep` on, so
+  `K_RollbackTicker` saved every confirmed tic, and `K_RollbackSpeculate`
+  then saved the frontier -- the same tic, the same slot. Two-clock mode
+  restores only the frontier. Found here, fixed as `487f26b4a` (not pushed).
+- **8.61's prediction fails twice.** The pass: "12 ms or more", measured 28
+  to 31. The hit rate: "90% or more", measured **48 to 53%** (473 of 980,
+  525 of 995, 513 of 991 passes with every input right), the first wrong tic
+  almost always the frontier's own (355 to 455 a window at tic 0, 51 to 123 at
+  tic 1, none later). Wrong inputs: **this machine's, about 500 a window,
+  with nobody at the wheel**, and bots', about 1550. Not explained. The
+  candidates, unread: the local input's `latency` stamp, which changes every
+  tic whatever the stick does, and the server building a bot's input from
+  another tic's world than the client does. As measured, track A would
+  rebuild from the frontier on half the passes.
+
+**The control: `frames_off`, the same race with no speculation.** 4048 to
+4077 frames in 1000 tics -- **about 142 a second**. An iteration that runs a
+tic costs 6.4 to 6.6 ms, one that only draws 2.3 to 2.4; 0 or 1 skipped
+frame a window. The two Opulence loads the harness warned about came before
+window 0: the windows are Opulence's.
+
+**So on Opulence the speculation takes the game from about 142 frames a
+second to 12 to 17.** Written, not pushed: `487f26b4a` (the double save, 2.3
+ms) and `f8e392a48` (the interpolation list emptied before the purge, part
+of up to 2.2 ms). Together about 25 ms a pass: still most of the tic. The
+largest item is now **the tics themselves: five a pass at 3.3 ms**. What
+would cut it: a depth of 2 on such maps (-6.6 ms), finding what makes an
+Opulence tic cost 3.3 ms (3700 objects; 401 gems and coins run a Lua
+`MobjThinker` every tic), and track A once the hit rate is understood.
