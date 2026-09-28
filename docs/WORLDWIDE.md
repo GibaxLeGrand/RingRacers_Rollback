@@ -4269,3 +4269,53 @@ with `rollback_history` that is 7 to 12 of them. So:
 - **Opulence, `keep`**: fewer passes kept (its drift makes the bots' inputs
   differ), rebuilds of 40 ms or more; **no better than depth 2 on
   average**, and hitchier. Opulence needs its drift found before A pays.
+
+### 8.74 Track A measured: correct and twice as cheap on Skyscraper Leaps, unusable on Opulence
+
+Measured on 2026-09-28, binary `b24e0a2f2` (sha256 `3942628d...`), Gibax's
+go-ahead, harness mode `keep` (`history_on` with `rollback_keepspec 1`).
+Predictions in 8.73.
+
+**Skyscraper Leaps, unattended** (`playlog_keep_20260928-210840_b24e0a2.txt`):
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| passes kept, of 999 | **744** | **749** | **747** |
+| rebuilt: a correction was due | 249 | 250 | 249 |
+| rebuilt: an input differed | 6 | 0 | 3 |
+| pass | 7.3 ms | 7.4 | 7.6 |
+| ... speculation (2.8 tics a pass on average) | 4.4 | 4.4 | 4.5 |
+| ... saves | 1.5 | 1.6 | 1.6 |
+| frames drawn in 1000 tics | 3680 | 3681 | 3660 |
+| drift: mean / worst / samples with a state off | 0.000 / 0.000 / 0 | 0.000 / 0.000 / 0 | 0.000 / 0.000 / 0 |
+
+- **Correct**: 0.000 units and not one state field off in 6714 samples,
+  exactly 8.44's reading -- keeping the speculation's run as the confirmed
+  one parts nothing from the server.
+- **75% of passes kept** (predicted 60% or more). The rebuilds are the
+  corrections, one pass in four exactly (`rollback_correct 4`), and a handful
+  of wrong inputs.
+- **A pass of 7.3 to 7.6 ms with `rollback_history` 12**, against 13.5 ms for
+  the same history without it (8.50): half. About 128 frames a second.
+
+**Opulence, driven** (`playlog_keep_RR_Opulence_20260928-211114_b24e0a2.txt`),
+window 0 only -- the session ended in window 1:
+
+- **77 of 999 passes kept**; rebuilt 511 times for a wrong input and 411 for
+  a due correction.
+- **A pass of 83.5 ms, three tics**: saves 23.9 ms, speculation 42.1 ms (6.2
+  tics a pass), confirmed tics 7.3 (2.1 a pass). 344 frames in 1000 passes,
+  717 iterations past a tic, gaps up to 329 ms.
+- Why: a rebuild now saves every speculated tic (2.5 ms each on Opulence),
+  with history 12 that is six a pass; the bots' inputs differ (8.67's
+  drift: 71 STATE lines, all `speed`), so most passes rebuild; a pass longer
+  than a tic confirms two tics the next time, so a correction falls due more
+  often (41%, not 25%), and it feeds on itself.
+- 8.73 said "no better than depth 2 on average, and hitchier": far worse
+  than that.
+
+**So:** A works, and on a map where client and server agree it halves the
+cost of the history window. On Opulence it needs, in this order: the drift
+found (the bots' inputs), a due correction that changes nothing not to force
+a rebuild (on Skyscraper Leaps that alone would take it from 75% toward all
+passes kept), and cheaper saves (B2) before rebuilding stops hurting.
