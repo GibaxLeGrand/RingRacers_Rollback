@@ -3227,6 +3227,9 @@ static ticcmd_t g_keepcmds[ROLLBACK_TICS][MAXPLAYERS];   // the inputs it ran
 static dboolean g_keepin[ROLLBACK_TICS][MAXPLAYERS];
 static int16_t g_keepafter[ROLLBACK_TICS];  // Consistancy() after it
 static dboolean g_keeptaint[ROLLBACK_TICS]; // it ran something only the loop may run
+static struct rollbackkart_t g_keepkart[ROLLBACK_TICS][MAXPLAYERS];   // the karts at its start,
+static dboolean g_keepkartok[ROLLBACK_TICS][MAXPLAYERS];              // in a correction's terms
+static uint32_t g_keepcorrnoop;             // corrections due that changed nothing
 static tic_t g_soundhorizon;                // the first tic this machine has not run yet
 
 enum
@@ -3339,6 +3342,7 @@ static uint64_t g_driftmax;
 static int32_t g_driftworst = -1;
 static uint32_t g_driftmoved;       // karts actually put back
 static uint32_t g_driftrefused;     // ... and karts the move refused to place
+static uint32_t g_driftsame;        // ... and karts already where the server had them
 
 // ----------------------------------------------------------------------------
 // What a pass costs, what a frame costs, and how often the guess was right
@@ -3658,6 +3662,7 @@ static void Command_RollbackKeepSpec_f(void)
 		g_keepspec = (atoi(COM_Argv(1)) != 0);
 		memset(g_keepcount, 0, sizeof g_keepcount);
 		memset(g_keeptic, 0xff, sizeof g_keeptic);
+		g_keepcorrnoop = 0;
 	}
 
 	CONS_Printf("rollback_keepspec: %s%s\n", g_keepspec ? "on" : "off",
@@ -3670,8 +3675,9 @@ static void Command_RollbackKeepSpec_f(void)
 	for (r = 0; r < KEEP_NUMREASONS; r++)
 		armed += g_keepcount[r];
 
-	CONS_Printf("rollback_keepspec: %u passes left the speculation standing, %u kept it\n",
-		armed, g_keepcount[KEEP_KEPT]);
+	CONS_Printf("rollback_keepspec: %u passes left the speculation standing, %u kept it "
+		"(%u of them through a correction that changed nothing)\n",
+		armed, g_keepcount[KEEP_KEPT], g_keepcorrnoop);
 
 	for (r = 1; r < KEEP_NUMREASONS; r++)
 	{
@@ -5144,6 +5150,8 @@ static const ticcmd_t *K_RollbackLocalCmdFor(uint8_t ss, tic_t tic)
 static int32_t K_SpeculationDepth(int32_t ahead, tic_t frontier);
 static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart);
 static void K_NoteDrawnOffset(void);
+static dboolean K_KeepUseCorrection(tic_t frontier);
+static void K_KeepNoteKarts(int32_t s);
 
 dboolean K_RollbackKeepArm(void)
 {
@@ -5218,10 +5226,10 @@ dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds)
 
 	if (leveltime <= 1)
 		reason = KEEP_LEVELSTART;
-	else if (g_correctpending && g_correcttic <= (uint32_t)from)
-		reason = KEEP_CORRECTION;   // due now, against the frontier's world
 	else if (upto > g_keephead)
 		reason = KEEP_AHEAD;        // the server confirmed past what was run
+	else if (K_KeepUseCorrection(from) == false)
+		reason = KEEP_CORRECTION;   // due now, and it moves a kart
 	else if (textcmds)
 		reason = KEEP_TEXTCMD;
 	else
@@ -5296,6 +5304,7 @@ static void K_KeepExtend(void)
 		g_keeptic[s] = frontier;
 		g_keeplevel[s] = leveltime;
 		g_keeptaint[s] = false;
+		K_KeepNoteKarts(s);
 	}
 
 	g_speculated = true;
@@ -5468,6 +5477,23 @@ static int32_t K_SpeculationDepth(int32_t ahead, tic_t frontier)
 /** One speculated tic, from a frontier. With rollback_keepspec, also what a
   * later pass needs to keep it: its start saved (when asked), the leveltime and
   * inputs it ran from, and the checksum after it. */
+static void K_KartFromWorld(int32_t slot, struct rollbackkart_t *k);
+
+/** The karts at the start of a speculated tic, in a correction's terms. */
+static void K_KeepNoteKarts(int32_t s)
+{
+	int32_t p;
+
+	for (p = 0; p < MAXPLAYERS; p++)
+	{
+		g_keepkartok[s][p] = (playeringame[p] && players[p].mo != NULL
+			&& P_MobjWasRemoved(players[p].mo) == false);
+
+		if (g_keepkartok[s][p])
+			K_KartFromWorld(p, &g_keepkart[s][p]);
+	}
+}
+
 static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 {
 	const tic_t tic = gametic;
@@ -5489,6 +5515,7 @@ static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 		g_keeptic[s] = tic;
 		g_keeplevel[s] = leveltime;
 		g_keeptaint[s] = false;
+		K_KeepNoteKarts(s);
 	}
 
 	K_RollbackPredictInputs(tic, (int32_t)(tic - frontier));
@@ -5880,10 +5907,11 @@ static uint64_t K_FracError(int32_t a, int32_t b)
 
 static const char *K_DescribeFrac(uint64_t frac, char *buf, size_t len);
 
+static void K_UseCorrection(const struct rollbackkart_t *noted, const dboolean *notedok);
+static const char *K_DescribeFrac(uint64_t frac, char *buf, size_t len);
+
 void K_RollbackApplyServerState(void)
 {
-	uint8_t k;
-
 	if (g_correctpending == false)
 		return;
 
@@ -5919,6 +5947,66 @@ void K_RollbackApplyServerState(void)
 	}
 
 	g_correctused++;
+
+	K_UseCorrection(NULL, NULL);
+}
+
+/** A kart as a correction describes it, taken from this machine's world. */
+static void K_KartFromWorld(int32_t slot, struct rollbackkart_t *k)
+{
+	const player_t *p = &players[slot];
+
+	memset(k, 0, sizeof (*k));
+	k->slot = (uint8_t)slot;
+	k->x = p->mo->x;
+	k->y = p->mo->y;
+	k->z = p->mo->z;
+	k->momx = p->mo->momx;
+	k->momy = p->mo->momy;
+	k->momz = p->mo->momz;
+	k->angle = p->mo->angle;
+	k->hitlag = p->mo->hitlag;
+	k->rings = p->rings;
+	k->itemtype = p->itemtype;
+	k->itemamount = p->itemamount;
+	k->spinouttimer = p->spinouttimer;
+	k->nocontrol = p->nocontrol;
+	k->flashing = p->flashing;
+	k->spinouttype = p->spinouttype;
+	k->tumbleBounces = p->tumbleBounces;
+	k->wipeoutslow = p->wipeoutslow;
+	k->justbumped = p->justbumped;
+	k->offroad = p->offroad;
+	k->speed = p->speed;
+}
+
+/** Every field a correction carries, the slot aside. */
+static dboolean K_KartSame(const struct rollbackkart_t *a, const struct rollbackkart_t *b)
+{
+	return (a->x == b->x && a->y == b->y && a->z == b->z
+		&& a->momx == b->momx && a->momy == b->momy && a->momz == b->momz
+		&& a->angle == b->angle && a->hitlag == b->hitlag
+		&& a->rings == b->rings && a->itemtype == b->itemtype && a->itemamount == b->itemamount
+		&& a->spinouttimer == b->spinouttimer && a->nocontrol == b->nocontrol
+		&& a->flashing == b->flashing && a->spinouttype == b->spinouttype
+		&& a->tumbleBounces == b->tumbleBounces && a->wipeoutslow == b->wipeoutslow
+		&& a->justbumped == b->justbumped && a->offroad == b->offroad && a->speed == b->speed);
+}
+
+/** What a correction does once it lands on its own tic: the baselines, the
+  * measurement against the world it names, and putting back the karts that are
+  * not where the server has them.
+  *
+  * \param noted NULL for the live world. Otherwise the karts a speculation
+  *        kept across the pass noted at the start of that tic (the world itself
+  *        is further on): measured, never applied -- the caller only passes
+  *        them when every kart matches.
+  */
+static void K_UseCorrection(const struct rollbackkart_t *noted, const dboolean *notedok)
+{
+	const dboolean applying = (noted == NULL && g_correctapply);
+	uint8_t k;
+
 
 	// The first correction that lands on its own tic sets the baseline.
 	//
@@ -5967,12 +6055,13 @@ void K_RollbackApplyServerState(void)
 	//
 	// Only around the applying path: the measuring path touches nothing, and the
 	// drift figures already taken with it should stay comparable.
-	if (g_correctapply)
+	if (applying)
 		P_MapStart();
 
 	for (k = 0; k < g_correctn; k++)
 	{
 		const struct rollbackkart_t *c = &g_correctkart[k];
+		struct rollbackkart_t here;
 		player_t *p;
 		uint64_t err;
 		char e[64];
@@ -5983,12 +6072,24 @@ void K_RollbackApplyServerState(void)
 
 		p = &players[c->slot];
 
-		if (p->mo == NULL || P_MobjWasRemoved(p->mo))
-			continue;
+		if (noted != NULL)
+		{
+			if (notedok[c->slot] == false)
+				continue;
 
-		err = K_FracError(p->mo->x, c->x)
-			+ K_FracError(p->mo->y, c->y)
-			+ K_FracError(p->mo->z, c->z);
+			here = noted[c->slot];
+		}
+		else
+		{
+			if (p->mo == NULL || P_MobjWasRemoved(p->mo))
+				continue;
+
+			K_KartFromWorld(c->slot, &here);
+		}
+
+		err = K_FracError(here.x, c->x)
+			+ K_FracError(here.y, c->y)
+			+ K_FracError(here.z, c->z);
 
 		g_driftsamples++;
 		g_driftsum += err;
@@ -6006,17 +6107,17 @@ void K_RollbackApplyServerState(void)
 		// sample now, not only past a spike (see g_driftstates).
 		st[0] = 0;
 
-		K_NoteDiff(st, sizeof st, "spinout", p->spinouttimer, c->spinouttimer);
-		K_NoteDiff(st, sizeof st, "spintype", p->spinouttype, c->spinouttype);
-		K_NoteDiff(st, sizeof st, "noctl", p->nocontrol, c->nocontrol);
-		K_NoteDiff(st, sizeof st, "flash", p->flashing, c->flashing);
-		K_NoteDiff(st, sizeof st, "tumble", p->tumbleBounces, c->tumbleBounces);
-		K_NoteDiff(st, sizeof st, "wipeout", p->wipeoutslow, c->wipeoutslow);
-		K_NoteDiff(st, sizeof st, "bumped", p->justbumped, c->justbumped);
-		K_NoteDiff(st, sizeof st, "offroad", p->offroad, c->offroad);
-		K_NoteDiff(st, sizeof st, "speed", p->speed, c->speed);
-		K_NoteDiff(st, sizeof st, "hitlag", p->mo->hitlag, c->hitlag);
-		K_NoteDiff(st, sizeof st, "item", p->itemtype, c->itemtype);
+		K_NoteDiff(st, sizeof st, "spinout", here.spinouttimer, c->spinouttimer);
+		K_NoteDiff(st, sizeof st, "spintype", here.spinouttype, c->spinouttype);
+		K_NoteDiff(st, sizeof st, "noctl", here.nocontrol, c->nocontrol);
+		K_NoteDiff(st, sizeof st, "flash", here.flashing, c->flashing);
+		K_NoteDiff(st, sizeof st, "tumble", here.tumbleBounces, c->tumbleBounces);
+		K_NoteDiff(st, sizeof st, "wipeout", here.wipeoutslow, c->wipeoutslow);
+		K_NoteDiff(st, sizeof st, "bumped", here.justbumped, c->justbumped);
+		K_NoteDiff(st, sizeof st, "offroad", here.offroad, c->offroad);
+		K_NoteDiff(st, sizeof st, "speed", here.speed, c->speed);
+		K_NoteDiff(st, sizeof st, "hitlag", here.hitlag, c->hitlag);
+		K_NoteDiff(st, sizeof st, "item", here.itemtype, c->itemtype);
 
 		if (st[0] != 0)
 		{
@@ -6035,7 +6136,7 @@ void K_RollbackApplyServerState(void)
 				"differs:%s" "\n",
 				g_correcttic, (int32_t)c->slot,
 				K_DescribeFrac(err, e, sizeof e),
-				p->mo->momx, p->mo->momy, p->mo->momz,
+				here.momx, here.momy, here.momz,
 				c->momx, c->momy, c->momz,
 				g_livedamages, g_srvdamages,
 				(st[0] != 0 ? st : " nothing -- kinematics only"));
@@ -6048,8 +6149,20 @@ void K_RollbackApplyServerState(void)
 				K_DescribeFrac(err, e, sizeof e), st);
 		}
 
-		if (g_correctapply == false)
+		if (applying == false)
 			continue;
+
+		// A kart already exactly where the server has it is left alone. Putting
+		// it back anyway was not free: P_MoveOrigin re-runs P_CheckPosition and
+		// relinks the kart at the head of its blockmap and sector chains, which
+		// the server -- never moving a kart -- does not do, every kart every
+		// correction. Collision order then differs between the two machines
+		// (WORLDWIDE.md 8.75).
+		if (K_KartSame(&here, c))
+		{
+			g_driftsame++;
+			continue;
+		}
 
 		// P_MoveOrigin rather than P_SetOrigin: it keeps the interpolation
 		// origin, so the kart is drawn sliding to where the server says rather
@@ -6076,8 +6189,51 @@ void K_RollbackApplyServerState(void)
 		p->itemamount = c->itemamount;
 	}
 
-	if (g_correctapply)
+	if (applying)
 		P_MapEnd();
+}
+
+/** For a speculation kept across a pass: a correction due at the frontier,
+  * against the karts the speculation noted at the start of that tic. Consumed
+  * if every kart already matches -- measured, nothing to put back, nothing to
+  * rebuild. False if one differs: the pass rebuilds and the correction lands on
+  * the live world as usual. A correction for a tic already passed is dropped,
+  * as the loop would. */
+static dboolean K_KeepUseCorrection(tic_t frontier)
+{
+	const int32_t s = (int32_t)(frontier % ROLLBACK_TICS);
+	uint8_t k;
+
+	if (g_correctpending == false || g_correcttic > (uint32_t)frontier)
+		return true;    // nothing due
+
+	if (g_correcttic < (uint32_t)frontier)
+	{
+		g_correctpending = false;
+		g_correctmissed++;
+		return true;
+	}
+
+	if (g_keeptic[s] != frontier)
+		return false;
+
+	for (k = 0; k < g_correctn; k++)
+	{
+		const struct rollbackkart_t *c = &g_correctkart[k];
+
+		if (c->slot >= MAXPLAYERS || playeringame[c->slot] == false)
+			continue;
+
+		if (g_keepkartok[s][c->slot] == false || K_KartSame(&g_keepkart[s][c->slot], c) == false)
+			return false;
+	}
+
+	g_correctpending = false;
+	g_correctused++;
+	g_keepcorrnoop++;
+
+	K_UseCorrection(g_keepkart[s], g_keepkartok[s]);
+	return true;
 }
 
 /** Prints a frac count as units with three decimals, into a caller's buffer. */
@@ -6188,7 +6344,7 @@ static void Command_RollbackDrift_f(void)
 		g_driftstates = g_driftstatefirst = 0;
 		g_driftsum = g_driftmax = 0;
 		g_driftworst = -1;
-		g_driftmoved = g_driftrefused = 0;
+		g_driftmoved = g_driftrefused = g_driftsame = 0;
 	}
 
 	// Who was on the grid, and how each kart's input is obtained.
@@ -6281,7 +6437,8 @@ static void Command_RollbackDrift_f(void)
 	if (g_correctapply)
 	{
 		CONS_Printf("rollback_drift: %u karts put back, %u refused because the "
-			"destination was blocked\n", g_driftmoved, g_driftrefused);
+			"destination was blocked, %u already where the server had them\n",
+			g_driftmoved, g_driftrefused, g_driftsame);
 	}
 }
 
