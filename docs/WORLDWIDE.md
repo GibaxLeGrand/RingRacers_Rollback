@@ -4111,3 +4111,45 @@ first three by time, **about 1 ms a tic**; the Lua gems and coins
 (`MT_TUMBLEGEM`, `MT_OPULENCECOIN`, 401 together) **0.5 ms a tic or more**,
 their hook being the cost; the eight `MT_PLAYER` dearest each, **0.3 to 0.6
 ms a tic** together.
+
+### 8.69 What an Opulence tic spends its time on: the map's decorations, not the karts
+
+Measured on 2026-09-28, binary `5a417494f` (sha256 `c27af9d6...`),
+`playtest.sh objprofile map=RR_Opulence`
+(`playlog_objprofile_RR_Opulence_20260928-193348_5a41749.txt`). Prediction in
+8.68. Figures a tic, over about 5000 tics a window (confirmed and speculated).
+
+| type | objects | window 0 | window 1 | window 2 | each |
+|---|---|---|---|---|---|
+| `TUMBLEGEM` (Lua hook) | 219 | 347 us | 370 | 345 | 1.6 us |
+| `OPULENCECOIN` (Lua hook) | 182 | 271 | 268 | 267 | 1.5 |
+| `OPULENCECHAIN` (mace chains) | 304 | 428 | 325 | 134 | 0.4 - 1.4 |
+| `OPULENCEBRAZIER` | 55 | 116 | 114 | 99 | 2 |
+| `MT_SIGNSPARKLE` | 72 - 135 | 132 | 74 | 97 | 1 |
+| `MT_FLINGRING` | 26 - 58 | 85 | 171 | 145 | 3 |
+| `MT_FASTLINE` | 15 - 25 | 68 | 103 | 138 | 5 |
+| `MT_CUSTOMMACEPOINT` | 9 | 96 | 84 | 54 | 6 - 11 |
+| `MT_PLAYER` | 9 | 52 | 71 | 78 | 6 - 9 |
+| `MT_RING` | 2138 - 2174 | 22 | 40 | 62 | 0.01 - 0.02 |
+| timed, every type | | 1961 | 2141 | 1955 | |
+
+- **The karts are cheap** (52 to 78 us a tic for nine) and **the rings are
+  nearly free** (0.01 us each: they return early). 8.68 said rings about 1 ms
+  and karts 0.3 to 0.6: both wrong.
+- **The map's decorations are the cost**: the Lua gems and coins 0.61 to 0.64
+  ms a tic (predicted 0.5 or more: holds), the swinging maces -- chains,
+  maces, mace points -- 0.2 to 0.55, the braziers 0.1, the sign's sparkles
+  0.1. **No single type is most of it**; the largest, the gems, is under a
+  fifth of a tic.
+- The timed total is 2.0 to 2.1 ms against the list's 2.8 to 3.0 (8.66, and
+  `rollback_tic` in this race): **0.8 ms of the list is not inside an
+  object's thinker** -- removals (`P_RemoveThinkerDelayed`) and the walk
+  itself. Not placed yet. 8.68 said "a little above": wrong.
+- This race: 26 to 27 ms a pass, 28, 21 and 22 frames a second; 351, 644
+  and 242 passes of about 995 with every input right.
+
+**What it says for the cost:** on this map a tic stays about 3.4 ms, spread
+over decorations that behave the same in every tic; making one type cheaper
+takes a tenth of it at best. The number of tics a pass runs -- five -- is the
+lever: a shallower speculation now, track A later, which needs the drift
+(8.67) and the latency stamp settled first.
