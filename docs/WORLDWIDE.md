@@ -4020,3 +4020,44 @@ race on Opulence, written before it runs:**
 - This machine's wrong inputs differ in **`latency`**, the stamp that moves
   every tic whatever the stick does. The bots' in **`turning`** and the
   `bot` fields, from an input the server built off another tic's world.
+
+### 8.66 The profile of a speculated tic: 83% in the objects' thinker list, and bots wrong on one field
+
+Measured on 2026-09-28, binary `0baa0e7df` (sha256 `5aa87901...`), the same
+race as 8.64 (`playlog_correct_on_RR_Opulence_20260928-191845_0baa0e7.txt`).
+Predictions in 8.65.
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| pass | 27.2 ms | 28.8 | 31.8 |
+| frames drawn in 1000 tics | 602 | 422 | 299 |
+| **a speculated tic** | **3.55 ms** | **3.64** | **4.09** |
+| ... objects' thinker list | 2.90 | 3.08 | 3.41 |
+| ... player thinks | 0.38 | 0.27 | 0.39 |
+| ... the rest of G_Ticker | 0.24 | 0.25 | 0.25 |
+| ... slopes, main list, ACS, Lua ThinkFrame | 0.03 | 0.03 | 0.04 |
+| Lua mobj hook calls a tic | 427 | 445 | 435 |
+| `P_CheckPosition` calls a tic | 1583 | 1829 | 1900 |
+| passes with every input right | 430 of 992 | 345 of 994 | 613 of 986 |
+| this machine's wrong inputs: `latency` / `angle` / `turning` / `buttons` | 565 / 451 / 305 / 91 | 657 / 518 / 350 / 120 | 402 / 295 / 182 / 55 |
+| bots' wrong inputs: `angle` / `turning` | 821 / 16 | 1189 / 23 | 769 / 55 |
+
+- **The run itself moved**: the same code as 8.64 plus a few reads a tic, and
+  a pass 2 to 4 ms dearer, 10 to 21 frames a second against 23 to 33. 8.65
+  said "within 1 ms": wrong. Race-to-race spread is larger than the effects
+  being measured; one race per build is not enough to rank builds.
+- **A speculated tic is 83 to 84% the objects' thinker list** (predicted:
+  more than half), 427 to 445 Lua mobj hooks a tic (predicted: 400 or
+  more), player thinks 0.27 to 0.39 ms (predicted 0.5 to 1: wrong). Which
+  objects is the next question: 2199 rings, 401 Lua gems and coins, the
+  karts, the effects -- and 1600 to 1900 `P_CheckPosition` calls a tic.
+- **This machine's wrong inputs all differ in `latency`**, as predicted -- but
+  also in `turning` and `buttons`, which an idle kart should not change. Either
+  someone was at the wheel, or the idle input is not constant; to settle.
+- **The bots' wrong inputs differ in `angle`, almost only** (predicted:
+  `turning` and the `bot` fields: wrong). For a bot `angle` carries its
+  prediction error, `|destangle - moveangle|` (`k_bot.cpp`, `K_HandleBotTrack`),
+  which the game turns into friction (`p_user.c`, `k_kart.c`) -- a real input.
+  A value that moves every tic while the steering it comes with rarely
+  changes reads like the server building it from a world one tic older than
+  the client's guess. A candidate, not read yet in the server's loop.
