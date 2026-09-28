@@ -4364,6 +4364,79 @@ static void SavePlaneDisplaceThinker(savebuffer_t *save, const thinker_t *th, co
 	WRITEUINT8(save->p, ht->type);
 }
 
+// A dynamic slope's plane is recomputed by its thinker, in THINK_DYNSLOPE, the
+// first list P_RunThinkers runs. But P_PlayerThink runs before P_RunThinkers,
+// and P_3dMovement reads the plane under the kart -- zdelta, xydirection, the
+// normal -- to direct its thrust. Nothing archived the plane itself, only the
+// thinker that recomputes it, so the first tic after a restore read whatever
+// the tics run before the restore had left there: a floor mover's slope some
+// tics ahead of the snapshot. Opulence has 41 of them over its bouncing
+// floors, and its leak and resim soaks failed 37 times each on kart speed and
+// angle (WORLDWIDE.md 8.58).
+//
+// So a local snapshot also records the plane, and a local restore puts it
+// back. Local only: a gamestate sent over the network keeps the stock format.
+static void SaveSlopePlane(savebuffer_t *save, const pslope_t *slope)
+{
+	size_t i;
+
+	if (localsnapshot == false)
+		return;
+
+	WRITEUINT8(save->p, slope != NULL);
+	if (slope == NULL)
+		return;
+
+	WRITEFIXED(save->p, slope->o.x);
+	WRITEFIXED(save->p, slope->o.y);
+	WRITEFIXED(save->p, slope->o.z);
+	WRITEFIXED(save->p, slope->normal.x);
+	WRITEFIXED(save->p, slope->normal.y);
+	WRITEFIXED(save->p, slope->normal.z);
+	WRITEFIXED(save->p, slope->d.x);
+	WRITEFIXED(save->p, slope->d.y);
+	WRITEFIXED(save->p, slope->zdelta);
+	WRITEANGLE(save->p, slope->zangle);
+	WRITEANGLE(save->p, slope->xydirection);
+	WRITEFIXED(save->p, slope->lowz);
+	WRITEFIXED(save->p, slope->highz);
+	for (i = 0; i < 4; i++)
+		WRITEFIXED(save->p, slope->constants[i]);
+	WRITESINT8(save->p, slope->lightOffset);
+	WRITEINT16(save->p, slope->hwLightOffset);
+}
+
+static void LoadSlopePlane(savebuffer_t *save, pslope_t *slope)
+{
+	pslope_t unknown;
+	size_t i;
+
+	if (localrestore == false || READUINT8(save->p) == 0)
+		return;
+
+	// Read past it all the same if the id named no slope here.
+	if (slope == NULL)
+		slope = &unknown;
+
+	slope->o.x = READFIXED(save->p);
+	slope->o.y = READFIXED(save->p);
+	slope->o.z = READFIXED(save->p);
+	slope->normal.x = READFIXED(save->p);
+	slope->normal.y = READFIXED(save->p);
+	slope->normal.z = READFIXED(save->p);
+	slope->d.x = READFIXED(save->p);
+	slope->d.y = READFIXED(save->p);
+	slope->zdelta = READFIXED(save->p);
+	slope->zangle = READANGLE(save->p);
+	slope->xydirection = READANGLE(save->p);
+	slope->lowz = READFIXED(save->p);
+	slope->highz = READFIXED(save->p);
+	for (i = 0; i < 4; i++)
+		slope->constants[i] = READFIXED(save->p);
+	slope->lightOffset = READSINT8(save->p);
+	slope->hwLightOffset = READINT16(save->p);
+}
+
 static inline void SaveDynamicLineSlopeThinker(savebuffer_t *save, const thinker_t *th, const uint8_t type)
 {
 	const dynlineplanethink_t* ht = (const dynlineplanethink_t*)th;
@@ -4373,6 +4446,7 @@ static inline void SaveDynamicLineSlopeThinker(savebuffer_t *save, const thinker
 	WRITEUINT32(save->p, SaveSlope(ht->slope));
 	WRITEUINT32(save->p, SaveLine(ht->sourceline));
 	WRITEFIXED(save->p, ht->extent);
+	SaveSlopePlane(save, ht->slope);
 }
 
 static inline void SaveDynamicVertexSlopeThinker(savebuffer_t *save, const thinker_t *th, const uint8_t type)
@@ -4388,6 +4462,7 @@ static inline void SaveDynamicVertexSlopeThinker(savebuffer_t *save, const think
 	WRITEMEM(save->p, ht->origsecheights, sizeof(ht->origsecheights));
 	WRITEMEM(save->p, ht->origvecheights, sizeof(ht->origvecheights));
 	WRITEUINT8(save->p, ht->relative);
+	SaveSlopePlane(save, ht->slope);
 }
 
 // Which thinker owns a polyobject -- po->thinker -- is not archived: a load
@@ -6270,6 +6345,7 @@ static inline thinker_t* LoadDynamicLineSlopeThinker(savebuffer_t *save, actionf
 	ht->slope = LoadSlope(READUINT32(save->p));
 	ht->sourceline = LoadLine(READUINT32(save->p));
 	ht->extent = READFIXED(save->p);
+	LoadSlopePlane(save, ht->slope);
 	return &ht->thinker;
 }
 
@@ -6288,6 +6364,7 @@ static inline thinker_t* LoadDynamicVertexSlopeThinker(savebuffer_t *save, actio
 	READMEM(save->p, ht->origsecheights, sizeof(ht->origsecheights));
 	READMEM(save->p, ht->origvecheights, sizeof(ht->origvecheights));
 	ht->relative = READUINT8(save->p);
+	LoadSlopePlane(save, ht->slope);
 	return &ht->thinker;
 }
 
