@@ -103,8 +103,10 @@ Every piece is behind a switch that is off by default, except
    unlock a can for good -- and a player's reference count goes negative,
    not explained. Fixes proposed, not coded. Labyrinth's leak soak (8.55):
    15 failures in 267, all on pairs of visual `MT_THOK` objects after an
-   honest pass -- not identified. The series stopped there; Coastal Temple,
-   Death Egg and Opulence are not run.
+   honest pass -- not identified. Resim soaks (8.56): Labyrinth 0 of 312;
+   Carnival Night 2 of 347, a player riding a Garden Top whose restore loses
+   something the ride reads. Coastal Temple, Death Egg and Opulence are not
+   run.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE

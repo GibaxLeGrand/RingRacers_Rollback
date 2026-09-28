@@ -128,8 +128,11 @@ asked for first.**
      The series of the other five (2026-09-28) stopped twice: Carnival
      Night's leak soak (8.54: a spray can re-derived from `gamedata` at every
      load, and a player's reference count) and Labyrinth's (8.55: 15
-     failures on pairs of `MT_THOK`). Not run yet: the resim soaks of both,
-     and Coastal Temple, Death Egg and Opulence.
+     failures on pairs of `MT_THOK`), then Carnival Night's resim soak
+     (8.56: a player riding a Garden Top). Labyrinth's resim soak holds. Not
+     run yet: Coastal Temple, Death Egg and Opulence. Before more soaks, the
+     open items want the state-naming instrument (built, not pushed, branch
+     `wip/leak-identity`).
 7. **Depending on 6:**
    - `correct_on` reads like `nospec` (it did, 8.44) and the control shows
      the instruments see a divergence (it did, 8.45): **Phase A's mechanism
