@@ -34,6 +34,7 @@
 /// round-trip and verifies it byte for byte.
 
 #include "k_rollback.h"
+#include "m_perfstats.h" // ps_thlist_times and the rest, summed over speculated tics
 
 #include "command.h"
 #include "d_clisrv.h" // Consistancy(), playerdelaytable
@@ -3345,6 +3346,33 @@ static uint32_t g_guessrightmoved;      // ... right, yet a correction moved a k
 static uint32_t g_guessfirstwrong[5];   // the first wrong tic, from the frontier: 0-3, 4+
 static uint32_t g_guesswrong[3];        // wrong inputs by who: this machine, bots, people
 
+// Which fields a wrong guess got wrong, by who (WORLDWIDE.md 8.62: half the
+// passes had one, this machine's idle kart and the bots alike, and the
+// candidates -- the latency stamp, a bot input built from another tic's
+// world -- differ in which field they touch).
+enum
+{
+	GUESSFIELD_FORWARD, GUESSFIELD_TURNING, GUESSFIELD_ANGLE, GUESSFIELD_THROWDIR,
+	GUESSFIELD_AIMING, GUESSFIELD_BUTTONS, GUESSFIELD_LATENCY, GUESSFIELD_FLAGS,
+	GUESSFIELD_BOT, NUMGUESSFIELDS
+};
+static const char *const g_guessfieldname[NUMGUESSFIELDS] =
+	{ "forwardmove", "turning", "angle", "throwdir", "aiming", "buttons", "latency", "flags", "bot" };
+static uint32_t g_guessfield[3][NUMGUESSFIELDS];
+
+// Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
+// Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
+// already (m_perfstats) and overwrites the figure every tic; these add them
+// up over the speculated tics only.
+static uint64_t g_spticus;                              // whole G_Ticker
+static uint64_t g_spplayerus;                           // P_PlayerThink for everyone
+static uint64_t g_splistus[NUM_ACTIVETHINKERLISTS];     // each thinker list
+static uint64_t g_spacsus;                              // ACS
+static uint64_t g_spluathinkus;                         // Lua ThinkFrame
+static uint64_t g_spluahooks;                           // Lua mobj hook calls
+static uint64_t g_spcheckpos;                           // P_CheckPosition calls
+static uint32_t g_spticcount;
+
 static int32_t K_FrameBucket(uint32_t us)
 {
 	int32_t b = 0;
@@ -3469,12 +3497,24 @@ static void K_CheckGuesses(tic_t from, tic_t to)
 			if (firstwrong < 0)
 				firstwrong = k;
 
-			if (i == g_localplayers[0])
-				g_guesswrong[0]++;
-			else if (players[i].bot)
-				g_guesswrong[1]++;
-			else
-				g_guesswrong[2]++;
+			{
+				const int32_t who = (i == g_localplayers[0]) ? 0 : (players[i].bot ? 1 : 2);
+				const ticcmd_t *g = &g_guesscmds[k][i], *r = &netcmds[t % BACKUPTICS][i];
+
+				g_guesswrong[who]++;
+
+				if (g->forwardmove != r->forwardmove) g_guessfield[who][GUESSFIELD_FORWARD]++;
+				if (g->turning != r->turning) g_guessfield[who][GUESSFIELD_TURNING]++;
+				if (g->angle != r->angle) g_guessfield[who][GUESSFIELD_ANGLE]++;
+				if (g->throwdir != r->throwdir) g_guessfield[who][GUESSFIELD_THROWDIR]++;
+				if (g->aiming != r->aiming) g_guessfield[who][GUESSFIELD_AIMING]++;
+				if (g->buttons != r->buttons) g_guessfield[who][GUESSFIELD_BUTTONS]++;
+				if (g->latency != r->latency) g_guessfield[who][GUESSFIELD_LATENCY]++;
+				if ((g->flags & ~TICCMD_RECEIVED) != (r->flags & ~TICCMD_RECEIVED))
+					g_guessfield[who][GUESSFIELD_FLAGS]++;
+				if (memcmp(&g->bot, &r->bot, sizeof (g->bot)) != 0)
+					g_guessfield[who][GUESSFIELD_BOT]++;
+			}
 		}
 	}
 
@@ -3520,6 +3560,26 @@ static void K_RecordGuess(tic_t tic)
 	g_guesstics = k + 1;
 }
 
+static void K_NoteSpeculatedTic(precise_t whole)
+{
+	int32_t i;
+
+	if (gamestate != GS_LEVEL)
+		return;
+
+	g_spticus += K_PreciseToMicros(whole);
+	g_spplayerus += K_PreciseToMicros(ps_playerthink_time);
+
+	for (i = 0; i < NUM_ACTIVETHINKERLISTS; i++)
+		g_splistus[i] += K_PreciseToMicros(ps_thlist_times[i]);
+
+	g_spacsus += K_PreciseToMicros(ps_acs_time);
+	g_spluathinkus += K_PreciseToMicros(ps_lua_thinkframe_time);
+	g_spluahooks += (uint64_t)ps_lua_mobjhooks;
+	g_spcheckpos += (uint64_t)ps_checkposition_calls;
+	g_spticcount++;
+}
+
 static void K_ResetPassCosts(void)
 {
 	g_saveus = 0;
@@ -3537,6 +3597,12 @@ static void K_ResetPassCosts(void)
 	g_guesspasses = g_guessright = g_guessrightmoved = 0;
 	memset(g_guessfirstwrong, 0, sizeof g_guessfirstwrong);
 	memset(g_guesswrong, 0, sizeof g_guesswrong);
+	memset(g_guessfield, 0, sizeof g_guessfield);
+
+	g_spticus = g_spplayerus = g_spacsus = g_spluathinkus = 0;
+	g_spluahooks = g_spcheckpos = 0;
+	memset(g_splistus, 0, sizeof g_splistus);
+	g_spticcount = 0;
 }
 
 static void K_PrintBuckets(const char *what, const uint32_t *buckets)
@@ -3591,6 +3657,55 @@ static void K_ReportPassCosts(void)
 		g_guessfirstwrong[0], g_guessfirstwrong[1], g_guessfirstwrong[2],
 		g_guessfirstwrong[3], g_guessfirstwrong[4],
 		g_guesswrong[0], g_guesswrong[1], g_guesswrong[2]);
+
+	{
+		static const char *const whoname[3] = { "this machine", "bots", "people" };
+		int32_t who, f;
+
+		for (who = 0; who < 3; who++)
+		{
+			char line[400];
+			size_t len;
+
+			if (g_guesswrong[who] == 0)
+				continue;
+
+			len = (size_t)snprintf(line, sizeof line, "rollback_hits: %s's wrong inputs differ in --",
+				whoname[who]);
+
+			for (f = 0; f < NUMGUESSFIELDS && len < sizeof line; f++)
+			{
+				if (g_guessfield[who][f] > 0)
+				{
+					len += (size_t)snprintf(line + len, sizeof line - len, " %s %u",
+						g_guessfieldname[f], g_guessfield[who][f]);
+				}
+			}
+
+			CONS_Printf("%s\n", line);
+		}
+	}
+
+	if (g_spticcount > 0)
+	{
+		const uint64_t n = g_spticcount;
+		const uint64_t lists = g_splistus[THINK_DYNSLOPE] + g_splistus[THINK_POLYOBJ]
+			+ g_splistus[THINK_MAIN] + g_splistus[THINK_MOBJ] + g_splistus[THINK_DYNSLOPEDEMO];
+		const uint64_t named = g_spplayerus + lists + g_spacsus + g_spluathinkus;
+
+		CONS_Printf("rollback_tic: per speculated tic, over %u -- the whole tic %u us: "
+			"player thinks %u, thinker lists %u (slopes %u, polyobjects %u, main %u, "
+			"objects %u), ACS %u, Lua ThinkFrame %u, the rest %u\n",
+			g_spticcount, (uint32_t)(g_spticus / n), (uint32_t)(g_spplayerus / n),
+			(uint32_t)(lists / n), (uint32_t)(g_splistus[THINK_DYNSLOPE] / n),
+			(uint32_t)(g_splistus[THINK_POLYOBJ] / n), (uint32_t)(g_splistus[THINK_MAIN] / n),
+			(uint32_t)(g_splistus[THINK_MOBJ] / n), (uint32_t)(g_spacsus / n),
+			(uint32_t)(g_spluathinkus / n),
+			(uint32_t)((g_spticus > named ? g_spticus - named : 0) / n));
+		CONS_Printf("rollback_tic: %u Lua mobj hook calls and %u P_CheckPosition calls "
+			"a speculated tic\n",
+			(uint32_t)(g_spluahooks / n), (uint32_t)(g_spcheckpos / n));
+	}
 }
 
 // Spikes.
@@ -4972,7 +5087,12 @@ void K_RollbackSpeculate(void)
 		// The whole tic, through the live loop's own entry point. Driving
 		// P_Ticker directly missed everything G_Ticker does around the
 		// simulation, and that cost four separate bug hunts to learn once.
-		G_Ticker(true);
+		{
+			const precise_t ticat = I_GetPreciseTime();
+
+			G_Ticker(true);
+			K_NoteSpeculatedTic(I_GetPreciseTime() - ticat);
+		}
 
 		gametic++;
 		g_spectics++;
