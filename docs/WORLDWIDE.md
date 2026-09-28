@@ -97,7 +97,12 @@ Every piece is behind a switch that is off by default, except
    times -- read as an ACS thread releasing a `mo` from before a restore. Its
    resim soak holds, with no such warning (8.52). **The guard (`src/acs/`,
    `9652ccc7c`) is measured: the same soak prints 0 such warnings instead of
-   6 (8.53).** Next: the soaks of the other five maps of the shortlist.
+   6 (8.53).** Carnival Night's leak soak (8.54): a spray can's look is
+   re-derived at every load from `gamedata`, this install's unlock progress,
+   which a grab inside a tic changes and saves -- so a speculated grab would
+   unlock a can for good -- and a player's reference count goes negative,
+   not explained. Fixes proposed, not coded. The other four maps' soaks are
+   running.
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -3254,3 +3259,60 @@ such a leak. It is still not measured.
 and Death Egg (3132) run far more ACS than Northern District's 861. They
 now go through their soaks on a build where an ACS thread cannot take a
 reference off freed memory at a restore.
+
+### 8.54 Carnival Night: a spray can re-derived from gamedata at every load, and a player's reference count
+
+Measured on 2026-09-28: binary `9652ccc7c`, `soak.sh leak
+map=RR_CarnivalNight`, unattended, the first of a series of ten soaks
+Gibax approved to stop at the first problem. It stopped there. Log kept as
+`soaklog_leak_RR_CarnivalNight_20260928-134215_9652ccc.txt`. 263 checks, 2
+failures, and the round trip after the soak identical.
+
+**Failure 1 (leveltime 1760): `itemList.cap`**, the known case -- a players
+block byte `00`->`20`, 1012 bytes into the record. The struct walker's twelve
+shown runs cut off the 672 line this time, so the series' checker now
+accepts the archive-side signature as well.
+
+**Failure 2 (leveltime 2040): a spray can, and the cause is in the load
+path.** An honest pass ("a pass on the REAL inputs already changed the tic
+that followed it"): object 1238, `MT_SPRAYCAN`, gains `MD2_RENDERFLAGS` in
+`diff2` (`08008008` -> `08018008`), 4 more bytes, the one object of 1924 that
+differs. Read in the code and the log:
+
+- `P_NetUnArchiveThinkers` calls `P_SprayCanInit` on every spray can it loads
+  (`p_saveg.cpp`). `P_SprayCanInit` sets the can's `renderflags` -- 50%
+  translucent if this machine has already grabbed it -- from **`gamedata`**:
+  the unlock progress of this install, saved to disk, and neither archived
+  nor restored.
+- Grabbing a can (`P_TouchSpecialThing`, party players only, never a bot)
+  updates `gamedata` and saves it. This log has three "Gamedata saved"
+  lines; every other soak log has two, at the start and the end. The third
+  comes just before this failure.
+- So the local kart grabbed the can during the soak. The next restore
+  re-derived the can's look from the new `gamedata`: translucent. The
+  reference had been archived before: opaque. That is the difference.
+
+What it means for a race is larger than the soak. `renderflags` is drawn, not
+simulated, and not in the checksum. But **grabbing a can is a persistent side
+effect -- an unlock saved to disk -- run inside whatever tic grabs it**. On a
+client, a speculated tic that grabs a can the confirmed world never reaches
+unlocks it anyway, and keeps it. The same goes for anything else that writes
+`gamedata` from a tic; which other paths do has not been read yet.
+
+**New PARANOIA, not explained:** twice, between the 90th and 100th checks
+(leveltime about 2480 to 2680),
+`P_SetTarget: ... MT_PLAYER P_RemoveThinkerDelayed references=-1` from
+`p_mobj.c:10827` -- `P_MobjThinker` dropping a target that was removed, here
+a player's kart object, whose count was already 0. Not ACS (the guard of
+8.52 is in this build). Seen on this map only so far.
+
+**Proposed, not coded:**
+
+- On a rollback restore (a local snapshot), keep the archived `renderflags`
+  of a spray can instead of re-deriving them from `gamedata`.
+- Keep speculated tics from writing `gamedata`: an unlock belongs to the
+  confirmed timeline. Which paths write it during a tic is to be read first.
+
+**The series goes on** with the four other maps (Labyrinth, Coastal Temple,
+Death Egg, Opulence), with both cases above as known -- reported, not a stop
+-- at Gibax's choice. Carnival Night's resim soak (`ww`) waits for them.
