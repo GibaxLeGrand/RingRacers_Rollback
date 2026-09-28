@@ -8553,8 +8553,17 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 		P_NetUnArchiveColormaps(save);
 		P_ProfileStep("colormaps");
 
+		// Both waypoint steps find their objects through P_FindNewPosition,
+		// which walks every mobj per lookup unless the relink index is built --
+		// and only P_RelinkPointers, the step after them, built it: about 150
+		// waypoints times 3700 objects on Opulence, a millisecond of every
+		// restore, and 1.5 on Death Egg (WORLDWIDE.md 8.60). Nothing between
+		// here and the relink adds or renumbers an object; P_RelinkPointers
+		// still builds its own.
+		P_BuildRelinkIndex();
 		P_NetUnArchiveTubeWaypoints(save);
 		P_NetUnArchiveWaypoints(save);
+		relinkindexlen = 0;
 		P_ProfileStep("waypoints");
 
 		P_RelinkPointers();
