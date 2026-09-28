@@ -115,6 +115,15 @@ public:
 
 	ThreadInfo &operator = (const ThreadInfo &info)
 	{
+		// A mo from an older era was freed with its thinkers -- and a rollback
+		// client rebuilds them, bumping thinker_era, on every restore. Forget it,
+		// as the destructor does, rather than take a reference off memory that
+		// may hold another object by now (WORLDWIDE.md 8.51).
+		if (thread_era != thinker_era)
+		{
+			mo = nullptr;
+		}
+
 		thread_era = thinker_era;
 		P_SetTarget(&mo, info.mo);
 		line = info.line;

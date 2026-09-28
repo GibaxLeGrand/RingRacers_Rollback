@@ -67,6 +67,19 @@ void Thread::loadState(ACSVM::Serial &serial)
 {
 	ACSVM::Thread::loadState(serial);
 
+	// A load rebuilds every thinker first, bumping thinker_era, so a mo this
+	// info still holds is from before it: forget it rather than keep it -- a
+	// thread saved with no mo would otherwise come back with the stale one.
+	// Then stamp the era the new mo comes from, or the destructor and the
+	// assignment would forget that one too and its reference would never be
+	// given back (WORLDWIDE.md 8.51).
+	if (info.thread_era != thinker_era)
+	{
+		info.mo = nullptr;
+	}
+
+	info.thread_era = thinker_era;
+
 	uint32_t temp = static_cast<uint32_t>(ACSVM::ReadVLN<size_t>(serial));
 
 	if (temp != 0)
