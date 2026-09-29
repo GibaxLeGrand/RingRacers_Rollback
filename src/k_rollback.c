@@ -3617,6 +3617,20 @@ static uint32_t g_samplelatetics;   // ... the tics that got no sample of their 
 static uint32_t g_samplesamestamp;  // ... with the same stamp as the one before
 static uint32_t g_anchorambiguous;  // anchors that matched more than one sample
 
+// R1 (WORLDWIDE.md 8.87, 8.89): the replay follows the server's filing. A
+// sample made after k real tics leaves the tics in between to the one before
+// it -- the server repeats a sample on a tic that got none of its own
+// (SV_Maketic), or files the next one a tic later -- so each sample owns as
+// many tics as real tics passed before the next one was made. The replay used
+// to give every sample one tic, and ran one sample ahead after each late
+// frame: 165 of 165 of this machine's wrong inputs in 8.87. Recorded beside
+// the local history, one entry a sample, aged by the same NetUpdate calls.
+static dboolean g_histreal = true;  // rollback_histreal; 0 is the control
+static int32_t g_samplerealtics[MAXGENTLEMENDELAY];
+static uint32_t g_samplehead;
+static int32_t g_histheld[MAXSPLITSCREENPLAYERS]; // confirmed tics already holding the applied sample
+static uint32_t g_histstretched;    // passes R1 laid out differently from one sample a tic
+
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
 // lands on moves with the delay the server files this machine's inputs with --
@@ -5791,25 +5805,69 @@ void K_RollbackUnspeculate(void)
   */
 /** The age in a local player's history of the newest sample, from age from on,
   * that the anchor would take for cmd; -1 when none. */
+/** Whether two samples are the same to the anchor. Not the angle:
+  * D_ResetTiccmdAngle rewrites it across the whole history. */
+static dboolean K_SameSample(const ticcmd_t *a, const ticcmd_t *b)
+{
+	return (a->latency == b->latency
+		&& a->forwardmove == b->forwardmove
+		&& a->turning == b->turning
+		&& a->buttons == b->buttons);
+}
+
 static int32_t K_HistoryAgeOf(uint8_t ss, const ticcmd_t *cmd, int32_t from)
 {
 	int32_t age;
 
-	// Not the angle: D_ResetTiccmdAngle rewrites it across the whole history.
 	for (age = (from > 0 ? from : 0); age < MAXGENTLEMENDELAY; age++)
 	{
-		const ticcmd_t *sent = D_LocalTiccmdAge(ss, age);
-
-		if (sent->latency == cmd->latency
-			&& sent->forwardmove == cmd->forwardmove
-			&& sent->turning == cmd->turning
-			&& sent->buttons == cmd->buttons)
-		{
+		if (K_SameSample(D_LocalTiccmdAge(ss, age), cmd))
 			return age;
-		}
 	}
 
 	return -1;
+}
+
+/** R1: how many real tics passed before the sample of this age was made, so how
+  * many tics the sample before it owns at the server. 1 when unknown. */
+static int32_t K_SampleRealtics(int32_t age)
+{
+	int32_t k;
+
+	if (age < 0 || age >= MAXGENTLEMENDELAY)
+		return 1;
+
+	k = g_samplerealtics[(g_samplehead - (uint32_t)age) % MAXGENTLEMENDELAY];
+	return (k > 0) ? k : 1;
+}
+
+/** R1: the age of the sample the server will have applied `d` tics past the
+  * first tic it has not sent. The applied sample (age `unacked`) owns as many
+  * tics as real tics passed before the next one, of which it has already had
+  * `held` among the tics received; each sample after it owns the real tics of
+  * the one after that; the newest owns every tic past them. */
+static int32_t K_HistoryAgeForTic(int32_t unacked, int32_t held, tic_t d)
+{
+	int32_t age = unacked;
+	int32_t own = K_SampleRealtics(age - 1) - held;
+
+	for (;;)
+	{
+		if (own > 0)
+		{
+			if (d < (tic_t)own)
+				return age;
+
+			d -= (tic_t)own;
+		}
+
+		age--;
+
+		if (age <= 0)
+			return 0;
+
+		own = K_SampleRealtics(age - 1);
+	}
 }
 
 static void K_RollbackMapHistory(void)
@@ -5820,7 +5878,10 @@ static void K_RollbackMapHistory(void)
 	g_histbase = base;
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
+	{
 		g_histunacked[i] = -1;
+		g_histheld[i] = 1;
+	}
 
 	if (base == 0)
 		return;
@@ -5838,6 +5899,34 @@ static void K_RollbackMapHistory(void)
 		age = K_HistoryAgeOf((uint8_t)i, applied, 0);
 		g_histunacked[i] = age;
 
+		// R1: the received tics just before, still holding the same sample --
+		// ones the server filled by repeating it -- are tics it already owned.
+		// netcmds keeps a received tic until its slot comes round again.
+		{
+			int32_t held = 1;
+
+			while (held < MAXGENTLEMENDELAY && base > (tic_t)held + 1
+				&& K_SameSample(&netcmds[(base - 1 - (tic_t)held) % BACKUPTICS][who], applied))
+			{
+				held++;
+			}
+
+			g_histheld[i] = held;
+		}
+
+		// Counted: a pass R1 lays out differently from one sample a tic.
+		if (i == 0 && g_histreal && age > 0)
+		{
+			int32_t a;
+			dboolean stretched = (K_SampleRealtics(age - 1) - g_histheld[0] > 0);
+
+			for (a = age - 1; a > 0 && stretched == false; a--)
+				stretched = (K_SampleRealtics(a - 1) != 1);
+
+			if (stretched)
+				g_histstretched++;
+		}
+
 		// Another sample the anchor cannot tell from it: the newer was taken.
 		if (i == 0 && age >= 0 && K_HistoryAgeOf(0, applied, age + 1) >= 0)
 			g_anchorambiguous++;
@@ -5852,10 +5941,12 @@ static const ticcmd_t *K_RollbackLocalCmdFor(uint8_t ss, tic_t tic)
 	const int32_t unacked = g_histunacked[ss];
 	int32_t age = 0;
 
-	if (g_speculating && g_histmax > 0 && unacked > 0 && tic >= g_histbase
-		&& tic - g_histbase < (tic_t)unacked)
+	if (g_speculating && g_histmax > 0 && unacked > 0 && tic >= g_histbase)
 	{
-		age = unacked - 1 - (int32_t)(tic - g_histbase);
+		if (g_histreal)
+			age = K_HistoryAgeForTic(unacked, g_histheld[ss], tic - g_histbase);
+		else if (tic - g_histbase < (tic_t)unacked)
+			age = unacked - 1 - (int32_t)(tic - g_histbase);
 	}
 
 	return D_LocalTiccmdAge(ss, age);
@@ -6557,6 +6648,11 @@ void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash)
 void K_RollbackNoteSample(int32_t realtics)
 {
 	const ticcmd_t *now, *before;
+
+	// R1: every sample, in a level or not, so the ring keeps step with the
+	// history's ages (CreateNewLocalCMD ages it once a call).
+	g_samplehead++;
+	g_samplerealtics[g_samplehead % MAXGENTLEMENDELAY] = (realtics > 1) ? realtics : 1;
 
 	if (gamestate != GS_LEVEL)
 		return;
@@ -7545,6 +7641,7 @@ static void K_SetHistory(int32_t want)
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
 	g_anchorambiguous = 0;
+	g_histstretched = 0;
 }
 
 static void Command_RollbackHistory_f(void)
@@ -7586,6 +7683,8 @@ static void Command_RollbackHistory_f(void)
 
 	CONS_Printf("rollback_history: the anchor matched more than one sample on %u of %u "
 		"passes\n", g_anchorambiguous, g_histpasses);
+	CONS_Printf("rollback_history: R1 %s -- %u passes laid out differently from one "
+		"sample a tic\n", (g_histreal ? "on" : "off"), g_histstretched);
 
 	CONS_Printf("rollback_history: %u passes, the applied input found in %u (%u%%)\n",
 		g_histpasses, g_histmatched,
@@ -8068,6 +8167,28 @@ void K_WorldwideLeave(void)
 		K_WorldwideClientOff();
 }
 
+/** Console command: rollback_histreal [0/1]
+  *
+  * Client side, with rollback_history. On (the default): the replay gives each
+  * sample in flight as many tics as real tics passed before the next one was
+  * made, as the server files them (R1, WORLDWIDE.md 8.87, 8.89). Off: one tic
+  * each, as before -- the control. */
+static void Command_RollbackHistReal_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_histreal = (atoi(COM_Argv(1)) != 0);
+		g_histstretched = 0;
+	}
+
+	CONS_Printf("rollback_histreal: %s\n",
+		(g_histreal
+			? "on -- each sample in flight is replayed on as many tics as real tics passed before the next"
+			: "off -- each sample in flight is replayed on one tic, as before R1"));
+	CONS_Printf("rollback_histreal: %u passes laid out differently from one sample a tic\n",
+		g_histstretched);
+}
+
 /** Console command: rollback_vanillajoin [0/1]
   *
   * Client side, for testing the refusal with a WORLDWIDE build: with 1, the
@@ -8117,4 +8238,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
+	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);
 }
