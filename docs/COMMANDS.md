@@ -176,6 +176,12 @@ split the packets: **host or remote client**, **during a race or outside
 one**. Hypothesis to test (`WORLDWIDE.md` 8.32): the `+2` cluster comes from
 the host **outside a race**, where the delay exemption does not apply.
 
+From `4adeea840` (`WORLDWIDE.md` 8.86, 8.87), one line per player: samples
+filed, filed a tic later than they arrived because the slot was taken, filed
+over one already there, and tics that got none and repeated the one before
+(`SV_Maketic`). In a level only; cumulative, never reset -- read a window by
+the difference between two reports.
+
 ### `rollback_objprofile [0|1]`
 Off by default. Times the objects' thinker list **object by object** and adds
 the time up by object type (`p_tick.c`, `WORLDWIDE.md` 8.68, 8.69). Built to
@@ -454,6 +460,11 @@ jitter (`WORLDWIDE.md` 8.40, 8.41).
   found the applied input; the inputs in flight on average (the round trip,
   in tics); the average depth, with how often the cap cut it short; and how
   many times the lead was raised and lowered.
+- From `4adeea840` (`WORLDWIDE.md` 8.86, 8.87), also: how many samples
+  `NetUpdate` made, how many after more than one real tic (and the tics that
+  got no sample of their own -- each leaves its tic to the sample before at
+  the server), how many carry the same stamp as the one before, and on how
+  many passes the anchor matched more than one sample.
 - Setting it resets those counts, so the same race can be read off then on.
 - Suggested value: `12`.
 
@@ -493,14 +504,24 @@ and the whole speculation again.
   this machine's, whether the speculation had run it from a tic already
   received, from the history, or as the newest input repeated past it; and
   how many of the tics thrown away a rebuild from the first wrong tic would
-  have kept.
+  have kept. From `4adeea840` (8.86): where the sample the server applied on
+  that tic sits in the history against the one replayed -- newer (a sample
+  lost at the server) or older (a tic it filled by repeating).
+- From `072542eb2` (8.92, 8.93), this machine's own inputs are compared with
+  `TICCMD_RECEIVED`, which the kart's steering reads, and R1 clears the flag
+  on the tics it gives a sample past its first, as the server does. Other
+  players' are compared without it: a guess about them is unreceived on
+  purpose. The field lists (here and in `rollback_hits`) name the flag as
+  `received`.
 - Setting it resets the counts.
 - Measured on Skyscraper Leaps with `rollback_history 12`: 99 to 100% of
   passes kept, a pass of 1.9 to 2.4 ms (each save counted once), as many
   frames as with no speculation, drift 0.000 (8.76, 8.77). Driven on
   Opulence (8.78): 65 to 69% kept, 54 to 65 frames a second against 12
-  before, each rebuild a hitch of about 60 ms, the camera stuttering:
-  **leave it off** outside a test.
+  before, each rebuild a hitch of about 60 ms, the camera stuttering. With
+  R1 (8.92), driven on Opulence: 99.4 to 100% kept, a pass of 7.3 to 8.6 ms,
+  121 to 129 frames a second all race long. Still off by default: **leave it
+  off** outside a test until it is judged in a real network.
 
 ### `rollback_nullspec [0|1]`
 Saves and restores the frontier on **every pass** without speculating

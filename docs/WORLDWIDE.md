@@ -5731,3 +5731,8 @@ place is reported by the compiler.
 - **`keep` on Opulence, driven**: **no `STATE` line on this machine's kart**
   in three windows (1 or 2 a window since 8.84); passes kept as in 8.92
   (99% or more); `received` in no wrong input.
+
+⚠ Pushed on Gibax's go-ahead ("oui, pousse, installe et lance tout"), one by
+one: `072542eb2`, `492118879`, `e2da72742`, `cc6ca1c0e` (the four above,
+put on top of the docs); the build to install is `cc6ca1c0e`'s, CI run
+36629162827.
