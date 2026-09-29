@@ -3546,6 +3546,16 @@ static uint32_t g_specus;           // and running the speculation forward
 // raised and had refused, or a gamedata guard that changed what the tic did.
 // Each of those rebuilds, and the loop runs the tic for real.
 static dboolean g_keepspec;                 // the switch
+
+// rollback_keepearly (WORLDWIDE.md 8.97, 8.98): a tic the standing speculation
+// ran on this machine's input is checked again as soon as that input is known
+// -- the pass after the sample is made -- instead of when the server confirms
+// the tic, a round trip later. Driven in WORLDWIDE mode, 469 of 488 rebuilds
+// were a tic run on a guess past the history, each one the whole depth and a
+// longer frame about four times a second. On by default; 0 is the control.
+static dboolean g_keepearly = true;
+static uint32_t g_keepearlyn;               // standing speculations run again from a tic past the frontier
+static uint32_t g_keepearlytics;            // ... the tics they ran again
 static dboolean g_keeparmed;                // this pass left the speculation standing
 static dboolean g_keepkept;                 // and it was kept
 static tic_t g_keephead;                    // the tic the standing speculation reached
@@ -4167,6 +4177,7 @@ static void K_SetKeepSpec(dboolean on)
 	memset(g_keepmisssrc, 0, sizeof g_keepmisssrc);
 	memset(g_keepmissshift, 0, sizeof g_keepmissshift);
 	g_keepmissrun = g_keepmissright = 0;
+	g_keepearlyn = g_keepearlytics = 0;
 }
 
 static void Command_RollbackKeepSpec_f(void)
@@ -4202,6 +4213,10 @@ static void Command_RollbackKeepSpec_f(void)
 			CONS_Printf("rollback_keepspec: rebuilt %u times because %s\n", g_keepcount[r], why[r]);
 	}
 
+	CONS_Printf("rollback_keepspec: rollback_keepearly %s -- %u standing speculations run "
+		"again from a tic this machine's newest input changed, %u tics in all\n",
+		g_keepearly ? "on" : "off", g_keepearlyn, g_keepearlytics);
+
 	if (g_keepcount[KEEP_INPUT] == 0)
 		return;
 
@@ -4223,6 +4238,24 @@ static void Command_RollbackKeepSpec_f(void)
 	CONS_Printf("rollback_keepspec: those rebuilds threw away %u tics already run; "
 		"starting from the first wrong tic would have kept %u of them\n",
 		g_keepmissrun, g_keepmissright);
+}
+
+/** Console command: rollback_keepearly [0|1]
+  *
+  * Client side, with rollback_keepspec and rollback_history. On (the default): a
+  * tic the standing speculation ran on this machine's input is run again from
+  * its saved start as soon as the input R1 gives it changes (WORLDWIDE.md 8.98).
+  * Off: only when the server confirms it -- the control. */
+static void Command_RollbackKeepEarly_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_keepearly = (atoi(COM_Argv(1)) != 0);
+		g_keepearlyn = g_keepearlytics = 0;
+	}
+
+	CONS_Printf("rollback_keepearly: %s -- %u standing speculations run again early, "
+		"%u tics in all\n", g_keepearly ? "on" : "off", g_keepearlyn, g_keepearlytics);
 }
 
 static void Command_RollbackObjProfile_f(void)
@@ -6185,6 +6218,54 @@ static uint32_t K_SpeculationMicros(precise_t started, uint32_t savedbefore)
 	return (all > saves) ? all - saves : 0;
 }
 
+/** rollback_keepearly: the first tic of the standing speculation, past what the
+  * server has sent, whose input for this machine R1 now gives otherwise than
+  * the speculation ran it; its saved start is put back, so the extension below
+  * runs again from there. Nothing when every one still stands. */
+static void K_KeepEarlyCheck(tic_t frontier)
+{
+	const int32_t who = g_localplayers[0];
+	const tic_t head = gametic;
+	const tic_t base = D_NeededTic();
+	tic_t tic;
+
+	if (g_keepearly == false || g_histmax <= 0
+		|| who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
+		return;
+
+	for (tic = (frontier > base) ? frontier : base; tic < head; tic++)
+	{
+		const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
+		dboolean received;
+		ticcmd_t now;
+
+		// No record of it: the server's confirmation will judge it.
+		if (g_keeptic[s] != tic || g_keepin[s][who] == false)
+			return;
+
+		// What K_RollbackPredictInputs would give this tic now.
+		g_speculating = true;
+		now = *K_RollbackLocalCmdFor(0, tic, &received);
+		g_speculating = false;
+
+		if (received)
+			now.flags |= TICCMD_RECEIVED;
+		else
+			now.flags &= ~TICCMD_RECEIVED;
+
+		if (K_KeepSameInput(who, &g_keepcmds[s][who], &now))
+			continue;
+
+		if (K_LoadGameState(tic) == false)
+			return;
+
+		gametic = tic;
+		g_keepearlyn++;
+		g_keepearlytics += (uint32_t)(head - tic);
+		return;
+	}
+}
+
 /** A kept pass: the frontier has moved on, the world is still at the head, and
   * only the tics the clock now asks for beyond it are run. */
 static void K_KeepExtend(void)
@@ -6198,6 +6279,11 @@ static void K_KeepExtend(void)
 	g_keepkept = false;
 
 	started = I_GetPreciseTime();
+
+	// The sample made this pass may land on a tic run on a guess: run again
+	// from there now, rather than the whole depth when it is confirmed.
+	K_KeepEarlyCheck(frontier);
+
 	g_speculating = true;
 
 	while (gametic < frontier + (tic_t)ahead)
@@ -8278,6 +8364,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_twoclock", Command_RollbackTwoClock_f);
 	COM_AddDebugCommand("rollback_objprofile", Command_RollbackObjProfile_f);
 	COM_AddDebugCommand("rollback_keepspec", Command_RollbackKeepSpec_f);
+	COM_AddDebugCommand("rollback_keepearly", Command_RollbackKeepEarly_f);
 	COM_AddDebugCommand("rollback_nullspec", Command_RollbackNullSpec_f);
 	COM_AddDebugCommand("rollback_cleancmds", Command_RollbackCleanCmds_f);
 	COM_AddDebugCommand("rollback_history", Command_RollbackHistory_f);
