@@ -4,9 +4,7 @@
 An unofficial fork, maintained by Gibax, on the branch `rollback-netcode`.
 
 <p align="center">
-  <a href="https://www.kartkrew.org">
-    <img src="docs/logo.png" width="404" style="image-rendering:pixelated" alt="Dr. Robotnik's Ring Racers logo">
-  </a>
+  <img src="docs/RRW_logo.png" width="476" style="image-rendering:pixelated" alt="Ring Racers Worldwide logo">
 </p>
 
 > **Experimental, not ready for public play.** Every feature below sits behind
