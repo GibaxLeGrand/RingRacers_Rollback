@@ -15888,6 +15888,20 @@ dboolean P_MobjCanChangeFlip(mobj_t *mobj)
 #define TID_HASH_CHAINS (131)
 static mobj_t *TID_Hash[TID_HASH_CHAINS];
 
+// The heads of two lists this file keeps to itself, for the raw snapshots of
+// rollback_rawsnap: the objects are put back at their own addresses, and
+// these heads point into them (WORLDWIDE.md 8.83, 8.88).
+mobj_t **P_TIDHashChains(size_t *count)
+{
+	*count = TID_HASH_CHAINS;
+	return TID_Hash;
+}
+
+mobj_t **P_OverlayCapHead(void)
+{
+	return &overlaycap;
+}
+
 //
 // P_InitTIDHash
 // Initializes mobj tag hash array
@@ -16026,15 +16040,23 @@ void P_DeleteMobjStringArgs(mobj_t *mobj)
 {
 	size_t i = SIZE_MAX;
 
+	// Under rollback_rawsnap a restore can bring a removed object back at its
+	// own address, string pointers and all (WORLDWIDE.md 8.83, 8.88): the
+	// strings have to still be there. Kept, then -- a few bytes for each
+	// map-placed object removed during a level, freed with the level.
+	const dboolean keep = K_RollbackRawSnapshots();
+
 	for (i = 0; i < NUM_MAPTHING_STRINGARGS; i++)
 	{
-		Z_Free(mobj->thing_stringargs[i]);
+		if (keep == false)
+			Z_Free(mobj->thing_stringargs[i]);
 		mobj->thing_stringargs[i] = NULL;
 	}
 
 	for (i = 0; i < NUM_SCRIPT_STRINGARGS; i++)
 	{
-		Z_Free(mobj->script_stringargs[i]);
+		if (keep == false)
+			Z_Free(mobj->script_stringargs[i]);
 		mobj->script_stringargs[i] = NULL;
 	}
 }
