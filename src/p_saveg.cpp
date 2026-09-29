@@ -8459,6 +8459,79 @@ static const char *const rawlistname[NUM_THINKERLISTS] = {
 	"thinkers: objects", "thinkers: slopes (demo)", "thinkers: precipitation"
 };
 
+// The dynamic slopes' planes are not in the pools -- P_MakeSlope allocates them
+// with Z_Calloc -- while their thinkers are. So the raw copy brought the
+// thinkers back and left each plane as the tics after the snapshot had made
+// it: 8.58's leak, back through the raw path, on every restore on Opulence
+// (WORLDWIDE.md 8.90, 8.91). The raw archive keeps them as the network one
+// does (SaveSlopePlane), in thinker list order, which the raw copy of the
+// lists keeps for the reading.
+static const int32_t rawslopelists[2] = { THINK_DYNSLOPE, THINK_DYNSLOPEDEMO };
+
+static dboolean P_RawSlopeThinker(thinker_t *th, pslope_t **slope)
+{
+	if (th->function.acp1 == (actionf_p1)T_DynamicSlopeLine)
+		*slope = ((dynlineplanethink_t *)th)->slope;
+	else if (th->function.acp1 == (actionf_p1)T_DynamicSlopeVert)
+		*slope = ((dynvertexplanethink_t *)th)->slope;
+	else
+		return false;
+
+	return true;
+}
+
+static void P_ArchiveRawSlopePlanes(savebuffer_t *save)
+{
+	uint8_t *countat = save->p;
+	uint32_t count = 0;
+	thinker_t *th;
+	pslope_t *slope;
+	size_t l;
+
+	WRITEUINT32(save->p, 0); // the count, written below
+
+	for (l = 0; l < sizeof rawslopelists / sizeof rawslopelists[0]; l++)
+	{
+		for (th = thlist[rawslopelists[l]].next; th != &thlist[rawslopelists[l]]; th = th->next)
+		{
+			if (P_RawSlopeThinker(th, &slope))
+			{
+				SaveSlopePlane(save, slope);
+				count++;
+			}
+		}
+	}
+
+	WRITEUINT32(countat, count);
+}
+
+static void P_UnArchiveRawSlopePlanes(savebuffer_t *save)
+{
+	uint32_t count = READUINT32(save->p);
+	thinker_t *th;
+	pslope_t *slope;
+	size_t l;
+
+	for (l = 0; l < sizeof rawslopelists / sizeof rawslopelists[0]; l++)
+	{
+		for (th = thlist[rawslopelists[l]].next; th != &thlist[rawslopelists[l]] && count > 0; th = th->next)
+		{
+			if (P_RawSlopeThinker(th, &slope))
+			{
+				LoadSlopePlane(save, slope);
+				count--;
+			}
+		}
+	}
+
+	// None left when the lists came back as they were saved; read past any.
+	while (count > 0)
+	{
+		LoadSlopePlane(save, NULL);
+		count--;
+	}
+}
+
 static void P_NetArchiveThinkersRaw(savebuffer_t *save)
 {
 	uint32_t i;
@@ -8466,6 +8539,8 @@ static void P_NetArchiveThinkersRaw(savebuffer_t *save)
 	WRITEUINT32(save->p, ARCHIVEBLOCK_THINKERS);
 	P_SaveMobjPointers(WriteMobjPointer);
 	P_SaveProfileStep(save, "thinkers: object pointers");
+	P_ArchiveRawSlopePlanes(save);
+	P_SaveProfileStep(save, "thinkers: slope planes");
 
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 		P_SaveProfileStep(save, rawlistname[i]); // in the pools
@@ -8479,6 +8554,7 @@ static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
 		I_Error("Bad $$$.sav at archive block Thinkers");
 
 	P_LoadMobjPointers(ReadMobjPointer);
+	P_UnArchiveRawSlopePlanes(save);
 
 	// players[].mo: LoadMobjThinker gives each loaded object's player back its
 	// body. The raw copy put the objects back instead; each synced one that
