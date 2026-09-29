@@ -5807,3 +5807,40 @@ tout"). Processor at 17%. Predictions in 8.93.
 **So:** B2 is exact enough on Opulence to measure its cost in a race --
 **`keepraw` can run**. Still open: the double claim, the players-block
 difference, `floorspriteslope`.
+
+### 8.95 `keepraw` driven on Opulence: the save to 1.1 ms, the pass 1.3 ms cheaper, still exact
+
+Measured on 2026-09-29, binary `cc6ca1c0e` (8.94), **driven by Gibax**
+("oui, lance keepraw, je pilote"); processor at 5%; the player entered
+(`playlog_keepraw_RR_Opulence_20260929-231149_cc6ca1c.txt`). `keep` with
+`rollback_rawsnap 1`: raw snapshots, not verified. Predictions in 8.88; the
+same build's `keep` race (8.94) is the control, driven too, 12 minutes before.
+
+| | `keepraw`: w0 / w1 / w2 | `keep` (8.94): w0 / w1 / w2 |
+|---|---|---|
+| passes kept, of 999 | 990 / 999 / 999 | 993 / 999 / 999 |
+| kart samples with a state field off | **0 / 0 / 0** | 0 / 0 / 0 |
+| pass | **5.8 / 5.6 / 6.4 ms** | 7.1 / 6.9 / 7.6 ms |
+| ... saves a pass | **1.20 / 1.16 / 1.19 ms** | 2.84 / 2.89 / 2.89 ms |
+| a save | **1.12 to 1.14 ms** (the network part 0.75 to 0.82, 26 KB; the pools 0.35 to 0.42, 4.2 MB) | 2.5 to 2.9 ms (8.84, 8.87) |
+| a restore (rebuilds: 9, 1, 1) | **1.9 ms** | about 6.5 ms (8.60) |
+| frames drawn in 1000 tics | **3901 / 3891 / 3794** | 3753 / 3702 / 3637 |
+| longest gap between frames | 145 / **19** / 39 ms | 131 / 22 / 21 ms |
+
+- **Holds: the save** -- 1.12 to 1.14 ms, just under 8.88's 1.2 to 1.6: the
+  pools 0.35 to 0.42 ms, and what stays in the network format (players,
+  world, specials, Lua, ACS, the slope planes) 0.75 to 0.82 ms for 26 KB.
+- **Holds: the restore** -- 1.9 ms, inside 1.5 to 2.5, against about 6.5
+  for the network one: a rebuild's restore is a third of what it was.
+- **The pass is 1.3 ms cheaper** (5.6 to 6.4 against 6.9 to 7.6), all of it
+  the save; **133 to 137 frames a second, driven, on Opulence**.
+- **Exact in a race**: no kart state off in 6696 samples, no kart put back,
+  no `PARANOIA` line; this machine's wrong inputs 4 in window 0 (three older
+  by one, one newer by one), none after.
+- What a kept pass costs now: a tic (about 4.2 ms) and a save (1.1): the
+  tic is most of it. The next lever is the tic itself -- Opulence's
+  decorations, 83% of it (8.66, 8.69) -- or making the save rarer.
+
+**So B2 does what it was for**, on the map that needed it. `rollback_rawsnap`
+stays off by default until the players-block difference (8.90, 8.94) and the
+double claim are understood.
