@@ -5263,3 +5263,41 @@ chain; if they follow the ambiguous anchors, the second.
 **Recommended:** the instrument first (it decides which chain), then R2 --
 the only one exact on a real network, and the WORLDWIDE switch now exists to
 carry it -- with R1 as a stopgap if R2 takes long.
+
+### 8.86 An instrument for 8.85's two chains
+
+Written on 2026-09-29 on Gibax's go-ahead ("oui, écris l'instrument"):
+`f719868f8`, on the local branch `wip/filing`, **not pushed**. Syntax
+checked on `k_rollback.c`, `d_clisrv.c` and a C++ file that includes the
+header, with no warning; an error injected at each of the fifteen changed
+places is reported by the compiler.
+
+- **Client**, in `rollback_history`'s report (reset with it): samples made
+  after more than one real tic, and the tics that got no sample of their
+  own; samples with the same stamp as the one before; passes whose anchor
+  matched more than one sample.
+- **Server**, in `rollback_relabel`'s report, per player (never reset, like
+  its histogram): samples filed a tic late because the slot was taken,
+  filed over one already there, and tics that got none and repeated the one
+  before.
+- **`rollback_keepspec`**, for this machine's wrong inputs: where the sample
+  the server applied sits in the history against the one replayed -- newer
+  (the replay fell behind: a sample lost at the server) or older (it ran
+  ahead: a repeated tic, or an anchor that took a newer twin).
+- The anchor's matching moved into a helper; what it matches on is
+  unchanged.
+
+**Predictions, for a driven `keep` race on Opulence:**
+
+- **The replay runs ahead**: 80% or more of this machine's wrong inputs have
+  the server's sample **older by one**; newer ones a handful.
+- **The first chain**: the client's late samples about as many as the
+  iterations past a tic, and the server's repeated tics for this machine's
+  player within 10% of the client's tics without a sample of their own;
+  samples filed late or over another, a handful -- the server's frames are
+  rarely late.
+- **Not the second**: ambiguous anchors on fewer than 10% of passes, samples
+  with a shared stamp a few percent.
+- If instead the misses follow the ambiguous anchors, the anchor is the
+  thing to fix first (count the samples since the last anchor rather than
+  take the newest match), before R2.
