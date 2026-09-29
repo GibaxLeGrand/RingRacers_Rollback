@@ -5599,3 +5599,44 @@ Next, reading the code, no launch: where the raw path leaves the slope planes;
 which holder of a kart `P_CountRawReferences` misses; what a sign piece's
 counted pointer is. The R1 races (`keep`, `keepnor1`) do not use raw
 snapshots and can go ahead.
+
+### 8.91 The three differences of 8.90, read in the code
+
+Read on 2026-09-29 while the R1 races ran; nothing changed.
+
+1. **The slope planes.** A dynamic slope's plane (`pslope_t`) is allocated
+   with `Z_Calloc(..., PU_LEVEL)` (`p_slopes.c:349`), not from the level
+   pools, so the raw copy never puts it back; the network path does, through
+   `SaveSlopePlane`/`LoadSlopePlane` in the slope thinkers' archive
+   (`8749842d6`, 8.58), which the raw path no longer writes
+   (`P_NetArchiveThinkersRaw` writes only the object pointers). So after a
+   raw restore every dynamic slope keeps the plane the tics after the
+   snapshot left: **8.58's bug, back through the raw path** -- Opulence's
+   byte 14942 and its kart-field failures. `mobj_t::floorspriteslope`
+   (`p_mobj.c:12081`) is the same kind of allocation, held by a pooled
+   object: after a raw restore it can point at a plane freed since.
+   **Remedy**: the raw archive keeps the planes of the dynamic slope
+   thinkers (`SaveSlopePlane` over `THINK_DYNSLOPE` and `THINK_DYNSLOPEDEMO`
+   in list order, read back in the same order), and the floor-sprite slopes
+   go the same way or are checked for.
+2. **A kart's missing reference.** A player's body is held with a counted
+   reference -- `P_SetTarget(&p->mo, mobj)` at spawn (`p_mobj.c:12850`),
+   `P_SetTarget(&player->mo, NULL)` when let go (`g_game.c:3271`) -- but
+   both loaders give it back by plain assignment: `mobj->player->mo = mobj`
+   in the network load (`p_saveg.cpp:5631`), `mo->player->mo = mo` in the
+   raw one (8494), and `P_CountRawReferences` does not count it. **One
+   reference short per kart after every restore**, as measured (live 15,
+   rebuilt 14). The network path has done this since before this branch;
+   the count then reaches -1 when the body is let go -- **8.54's unexplained
+   "`MT_PLAYER` references=-1" after restores.** **Remedy**: count
+   `players[].mo` in both loaders.
+3. **The sign's pieces.** Stock code chains them with plain assignments --
+   `cur->hnext = P_SpawnMobjFromMobj(sign, ..., MT_SIGN_PIECE)`
+   (`p_spec.c:4658` to `4702`) -- so the live game holds no reference for
+   them, while the recount, and the network load's relink, counts one for
+   each `hnext`. Harmless (a piece freed later than it could be) but a real
+   difference. **Remedy**: `P_SetTarget` in those five lines, so the live
+   count is what a load rebuilds.
+
+The players block difference on Skyscraper Leaps (8.90, 3) is not explained
+by any of these; 2 may be part of it, if a player field reads a count.
