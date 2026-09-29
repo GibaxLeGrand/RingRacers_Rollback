@@ -5545,3 +5545,57 @@ which. The same machine had written R1 separately (local branch
 `wip/histgaps`, never pushed), with the lead taken from what the samples
 cover and the source read the same way; it stays a reference, not a
 candidate.
+
+### 8.90 B2 step 3's raw snapshots, soaked: exact enough on Skyscraper Leaps, not on Opulence
+
+Measured on 2026-09-29, binary `decbe360a` (sha256 `9e403fef...`, CI run
+36589172001; R1 on the merge of B2 step 3), both copies checked, the
+previous exe kept as `.bak_4adeea8`. Gibax's go-ahead ("réessaie donc, et
+lance"), unattended; processor at 40% at launch. Predictions in 8.88. Logs
+`soaklog_{leakraw,wwraw}[_RR_Opulence]_20260929-22*_decbe36.txt`.
+
+| `rollback_rawsnap 2` | leakraw, Skyscraper | wwraw, Skyscraper | leakraw, Opulence | wwraw, Opulence |
+|---|---|---|---|---|
+| soak failures | **0 of 260** | **0 of 347** | **19 of 280** | **23 of 377** |
+| same soak, network restore | 1 of 260 (8.34) | -- | 0 of 292 (8.59) | 1 of 386 (8.59) |
+| restores verified | 1560 | 1041 | 1680 | 1131 |
+| ... the archive differing after | 252 | 141 | **1400** | **1131** |
+| ... first difference | players block | players block | **thinkers block, byte 14942** | **thinkers block, byte 14942** |
+| ... reference counts rebuilt differently | 12 | 6 | 6 | 3 |
+| raw save / raw restore (verified) | 278 / 670 us | 241 / 698 us | 842 / 1628 us | 905 / 1832 us |
+| pools / heads / archive per save | 1512 / 44 / 14 KB | 1539 / 44 / 14 KB | 4112 / 157 / 16 KB | 4074 / 157 / 16 KB |
+
+- **Fails, three ways** (8.88 said: no archive difference but `itemList.cap`,
+  no count rebuilt differently):
+  1. **Opulence: the raw restore does not give back the world at the start
+     of the thinkers block** -- byte 14942, on 1400 of 1680 and 1131 of 1131
+     restores, from the first check (tic 701). The block's first list is the
+     dynamic slopes' (8.58: 41 of them on Opulence). And the soaks fail again
+     where the network restore held: the leak soak's failures are kart
+     fields ("8 players examined -- 7 runs differ as fields"), 8.58's shape,
+     when a slope's plane was left from the tics before a restore. **A
+     reading, not checked: the raw path does not restore the slope planes
+     that `LoadSlopePlane` restores in the network path** (8749842d6), or
+     puts them back before the thinkers that recompute them. On Skyscraper
+     Leaps, which has no dynamic slope, nothing of the kind.
+  2. **Reference counts**: `MT_PLAYER` always one higher live than rebuilt
+     (for example live 15, rebuilt 14; 8 counts off at the first check, as
+     many as there are karts) -- **a holder of a kart
+     the recount misses**; `MT_SIGN_PIECE` live 0, rebuilt 1 or 2 -- **a
+     pointer the recount counts that never took a reference**. The report
+     prints the first few; 3 to 12 restores in each soak.
+  3. **Skyscraper Leaps: the players block differs after 13 to 16% of raw
+     restores** (bytes 4125 to 9917), with no soak failure. The players stay
+     in the network format, so this is the network section reading back a
+     world the raw part put back differently -- not identified; `itemList.cap`
+     is one candidate, at a rate far above the stock soaks' (1 check in 260).
+- **Holds, the cost**: a raw save 0.24 to 0.28 ms on Skyscraper Leaps and
+  **0.84 to 0.91 ms on Opulence** (4.1 MB of pools), against a local save of
+  2.5 to 2.9 ms there (8.84, 8.87); a verified restore 1.6 to 1.8 ms on
+  Opulence, the check included. The save is below 8.88's 1.2 to 1.6 ms.
+
+**So:** not yet safe on a map with dynamic slopes -- **`keepraw` waits**.
+Next, reading the code, no launch: where the raw path leaves the slope planes;
+which holder of a kart `P_CountRawReferences` misses; what a sign piece's
+counted pointer is. The R1 races (`keep`, `keepnor1`) do not use raw
+snapshots and can go ahead.
