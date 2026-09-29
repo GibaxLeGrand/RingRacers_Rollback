@@ -711,6 +711,93 @@ void Z_LevelPoolInfo(levelpoolinfo_t out[Z_LEVELPOOLS])
 	}
 }
 
+// Each pool's snapshot, after its length: large, medium, small, tiny.
+static srb2::PoolAllocator* const g_level_pools[Z_LEVELPOOLS] = {
+	&g_level_large_pool, &g_level_med_pool, &g_level_small_pool, &g_level_tiny_pool
+};
+
+size_t Z_LevelPoolSnapshotSize(void)
+{
+	size_t size = 0;
+	for (size_t i = 0; i < Z_LEVELPOOLS; i++)
+	{
+		size += sizeof(uint64_t) + g_level_pools[i]->snapshot_size();
+	}
+	return size;
+}
+
+size_t Z_LevelPoolSnapshot(void* dst, size_t capacity)
+{
+	uint8_t* p = (uint8_t*)dst;
+	size_t left = capacity;
+
+	if (Z_LevelPoolSnapshotSize() > capacity)
+	{
+		return 0;
+	}
+
+	for (size_t i = 0; i < Z_LEVELPOOLS; i++)
+	{
+		const size_t n = g_level_pools[i]->snapshot(p + sizeof(uint64_t), left - sizeof(uint64_t));
+		const uint64_t len = n;
+
+		memcpy(p, &len, sizeof len);
+		p += sizeof(uint64_t) + n;
+		left -= sizeof(uint64_t) + n;
+	}
+
+	return capacity - left;
+}
+
+dboolean Z_LevelPoolRestore(const void* src, size_t length)
+{
+	const uint8_t* part[Z_LEVELPOOLS];
+	size_t partlen[Z_LEVELPOOLS];
+	const uint8_t* p = (const uint8_t*)src;
+	size_t left = length;
+
+	if (src == nullptr)
+	{
+		return false;
+	}
+
+	for (size_t i = 0; i < Z_LEVELPOOLS; i++)
+	{
+		uint64_t len;
+
+		if (left < sizeof len)
+		{
+			return false;
+		}
+
+		memcpy(&len, p, sizeof len);
+		p += sizeof len;
+		left -= sizeof len;
+
+		if (len > left || g_level_pools[i]->can_restore(p, (size_t)len) == false)
+		{
+			return false;
+		}
+
+		part[i] = p;
+		partlen[i] = (size_t)len;
+		p += len;
+		left -= (size_t)len;
+	}
+
+	if (left != 0)
+	{
+		return false;
+	}
+
+	for (size_t i = 0; i < Z_LEVELPOOLS; i++)
+	{
+		g_level_pools[i]->restore(part[i], partlen[i]);
+	}
+
+	return true;
+}
+
 void* Z_LevelPoolMalloc(size_t size)
 {
 	void* p = nullptr;

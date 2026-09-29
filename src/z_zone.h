@@ -167,6 +167,18 @@ typedef struct levelpoolinfo_s
 #define Z_LEVELPOOLS 4
 void Z_LevelPoolInfo(levelpoolinfo_t out[Z_LEVELPOOLS]);
 
+// A raw snapshot of the four level pools (WORLDWIDE.md 8.82): every block
+// each has ever handed out, as it stands, and the pool's own state. Restored,
+// every pooled thing is back at its own address with its own contents --
+// removed ones included, ones made since gone -- so pointers between pooled
+// things need no relinking. What points into the pools from outside them is
+// not in it. Z_LevelPoolSnapshot returns the bytes written, 0 if they do not
+// fit; Z_LevelPoolRestore checks all four pools before writing any of them,
+// and returns false, touching nothing, for a snapshot of other chunks.
+size_t Z_LevelPoolSnapshotSize(void);
+size_t Z_LevelPoolSnapshot(void *dst, size_t capacity);
+dboolean Z_LevelPoolRestore(const void *src, size_t length);
+
 void *Z_LevelPoolMalloc(size_t size);
 void *Z_LevelPoolCalloc(size_t size);
 void Z_LevelPoolFree(void *p, size_t size);

@@ -3934,6 +3934,87 @@ static void K_ResetPassCosts(void)
 	P_ResetSaveProfile();
 }
 
+/** Copies the level pools `times` times into a scratch buffer and says what a
+  * copy weighs and costs (WORLDWIDE.md 8.82) -- the raw snapshot's save half,
+  * measured on the world as it stands. With `roundtrip`, also restores the
+  * last copy onto the world it was taken from, which changes nothing, times
+  * that, and copies again to check the two copies match byte for byte. Only in
+  * a level. Returns false if nothing could be measured. */
+static dboolean K_TimePoolCopy(uint32_t times, dboolean roundtrip,
+	size_t *bytes, uint32_t *saveus, uint32_t *restoreus, dboolean *same)
+{
+	const size_t size = Z_LevelPoolSnapshotSize();
+	uint8_t *copy, *again = NULL;
+	precise_t at;
+	uint64_t ticks = 0;
+	uint32_t t;
+
+	*bytes = size;
+	*saveus = *restoreus = 0;
+	*same = false;
+
+	if (gamestate != GS_LEVEL || times == 0)
+		return false;
+
+	copy = (uint8_t *)Z_Malloc(size, PU_STATIC, NULL);
+	if (roundtrip)
+		again = (uint8_t *)Z_Malloc(size, PU_STATIC, NULL);
+
+	for (t = 0; t < times; t++)
+	{
+		at = I_GetPreciseTime();
+		Z_LevelPoolSnapshot(copy, size);
+		ticks += I_GetPreciseTime() - at;
+	}
+
+	*saveus = (uint32_t)((ticks * 1000000) / I_GetPrecisePrecision() / times);
+
+	if (roundtrip)
+	{
+		dboolean restored;
+
+		at = I_GetPreciseTime();
+		restored = Z_LevelPoolRestore(copy, size);
+		*restoreus = K_PreciseToMicros(I_GetPreciseTime() - at);
+
+		*same = (restored
+			&& Z_LevelPoolSnapshotSize() == size
+			&& Z_LevelPoolSnapshot(again, size) == size
+			&& memcmp(copy, again, size) == 0);
+
+		Z_Free(again);
+	}
+
+	Z_Free(copy);
+	return true;
+}
+
+/** Console command: rollback_poolcopy [times]
+  *
+  * Diagnostic, in a level. Times a copy of the four level pools -- what a raw
+  * snapshot (track B2) would save in place of the network archive's thinker
+  * and sector-node sections -- then restores it onto the unchanged world and
+  * checks the round trip is exact. Changes nothing: the world is put back as
+  * it already was. */
+static void Command_RollbackPoolCopy_f(void)
+{
+	const uint32_t times = (COM_Argc() > 1 && atoi(COM_Argv(1)) > 0) ? (uint32_t)atoi(COM_Argv(1)) : 10;
+	size_t bytes;
+	uint32_t saveus, restoreus;
+	dboolean same;
+
+	if (K_TimePoolCopy(times, true, &bytes, &saveus, &restoreus, &same) == false)
+	{
+		CONS_Printf("rollback_poolcopy: only in a level\n");
+		return;
+	}
+
+	CONS_Printf("rollback_poolcopy: the level pools are %s KB; a copy takes %u us "
+		"(mean of %u), putting it back %u us; the round trip is %s\n",
+		sizeu1(bytes / 1024), saveus, times, restoreus,
+		(same ? "exact" : "NOT EXACT -- the pool snapshot is broken"));
+}
+
 /** A local save, step by step (WORLDWIDE.md 8.81): the mean time and size of
   * each step over every local save since the counts were reset, the rollback
   * tests' own included. Printed four steps a line; a step under 5 us and 1 KB
@@ -4009,6 +4090,20 @@ static void K_ReportSaveProfile(void)
 				(uint32_t)((pools[p].allocated * pools[p].blocksize) / 1024),
 				(uint32_t)pools[p].chunks, (uint32_t)pools[p].blocksperchunk,
 				(uint32_t)((pools[p].chunks * pools[p].blocksperchunk * pools[p].blocksize) / 1024));
+		}
+	}
+
+	// And what copying them costs here, now: the raw snapshot's save half
+	// (WORLDWIDE.md 8.82), set against the save above. A copy only.
+	{
+		size_t bytes;
+		uint32_t saveus, restoreus;
+		dboolean same;
+
+		if (K_TimePoolCopy(5, false, &bytes, &saveus, &restoreus, &same))
+		{
+			CONS_Printf("rollback_save: a raw copy of the level pools -- %s KB, %u us\n",
+				sizeu1(bytes / 1024), saveus);
 		}
 	}
 }
@@ -7537,4 +7632,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_inputlog", Command_RollbackInputLog_f);
 	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
 	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
+	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 }
