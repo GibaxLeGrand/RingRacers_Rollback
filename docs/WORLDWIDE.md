@@ -6071,3 +6071,9 @@ mostly in frames that carried a pass; backwards steps rare (under 1% of
 frames) but not zero. If the view is regular where the kart is not, the
 kart's interpolation is what Gibax sees; if both are irregular together, it
 is the frame pacing.
+
+⚠ Pushed on Gibax's go-ahead ("oui pousse"), one by one: `e5fb1c61a` (the
+instrument) and `771bec680` (`rollback_keepearly` off) -- the two above,
+put on top of the docs; the build to install is `771bec680`'s, CI run
+36637283049. Not installed, not run. With them, the root README now shows
+Gibax's Ring Racers Worldwide logo (`docs/RRW_logo.png`, `97eb69218`).
