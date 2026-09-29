@@ -12,13 +12,14 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-29** — 28 commands, checked against
+**Up to date as of 2026-09-29** — 29 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
 `rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80);
 `rollback_poolcopy` from `df8ed24e9` (8.82); `rollback_rawsnap` from
-`371ca7419`, on `feature-b2` (8.88, not yet pushed).
+`371ca7419` (8.88, merged as `49daf1196`); `rollback_histreal` from
+`7a455f6fe` (8.89, not yet pushed).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -188,8 +189,8 @@ coins, mace chains, braziers), not the karts.
 - Setting it resets the counts.
 
 ### `rollback_rawsnap [0|1|2]`
-**Client side, and the tests** (`WORLDWIDE.md` 8.88; on `feature-b2`, not
-yet in a build). How snapshots are taken:
+**Client side, and the tests** (`WORLDWIDE.md` 8.88; merged as
+`49daf1196`). How snapshots are taken:
 - `0` (default): network snapshots, as before.
 - `1`: **raw snapshots** -- the level pools copied whole, the heads pointing
   into them, and an archive of the rest (players, world, ACS, Lua...).
@@ -455,6 +456,16 @@ jitter (`WORLDWIDE.md` 8.40, 8.41).
   many times the lead was raised and lowered.
 - Setting it resets those counts, so the same race can be read off then on.
 - Suggested value: `12`.
+
+### `rollback_histreal [0|1]`
+**Client side, with `rollback_history`** (`WORLDWIDE.md` 8.89). On by default:
+the replay gives each of this machine's samples in flight as many tics as real
+tics passed before the next one was made -- as the server files them, a tic
+with no sample of its own going to the sample before -- less the tics already
+received for the applied one (R1). `0`: one tic a sample, as before, for a
+control (`playtest.sh keepnor1`). No argument: the state, and how many passes
+R1 laid out differently from one sample a tic; `rollback_history`'s report
+prints the same count.
 
 ### `rollback_keepspec [0|1]`
 **Client side, two-clock mode. Off by default.** Track A (`WORLDWIDE.md`

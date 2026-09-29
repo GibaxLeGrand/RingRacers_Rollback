@@ -101,10 +101,12 @@ not yet run).
    is now timed step by step (`ba1e43523`), and every thinker turns out
    to live in four fixed-block pools, which a raw snapshot can copy whole;
    they snapshot and restore themselves in `df8ed24e9` (8.82): a copy is
-   0.4 ms against a 2.9 ms save, round trip exact (8.84). **Step 3 written
-   (8.88, `371ca7419` on `feature-b2`, not pushed)**: `rollback_rawsnap`,
-   raw snapshots with every reference count rebuilt (choice E2), and a
-   verify mode.
+   0.4 ms against a 2.9 ms save, round trip exact (8.84). **Step 3 merged**
+   (8.88, `371ca7419`, merge `49daf1196`): `rollback_rawsnap`, raw snapshots
+   with every reference count rebuilt (choice E2), and a verify mode -- not
+   yet run. **The rebuilds of a driven race** are the history replayed one
+   sample ahead after each late frame (8.87); **R1** (8.89, `7a455f6fe`, not
+   pushed) replays each sample on the tics the server gives it.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
    8.28 is fixed in code (8.29), never checked against a stock build. **WORLDWIDE
    mode written (8.80), pushed as `51ba899d6` (CI green), not yet run**: one server switch,
@@ -5459,3 +5461,67 @@ with `rollback_rawsnap 2`, and its report at the end; `playtest.sh keepraw`
 - If the verify mode finds nothing on the seven maps' soaks, mode 1 can be
   trusted in races; if it finds counts off, the missing holder goes into
   `P_CountRawReferences` before anything else.
+
+⚠ Pushed on Gibax's word ("pousse aussi feature-b2, et vois pour la fusionner
+si ça change pas trop") -- `feature-b2` pushed, then merged into
+`rollback-netcode` as `49daf1196` (a merge commit, so `371ca7419` stands):
+with `rollback_rawsnap 0` the snapshot paths are the ones before -- the
+default write is unchanged, the rest applies in raw mode only, and the relink
+index's treating 0 as blank changes nothing a network load does. CI run
+36588490220: the first compile of this code.
+
+### 8.89 R1: the replay gives each sample the tics the server gives it
+
+Written on 2026-09-29 on Gibax's go-ahead ("écris-le"), `7a455f6fe` on
+`rollback-netcode`, **not pushed**. What 8.87 asked for.
+
+**The fault (8.85, 8.87):** `rollback_history` replayed the samples in flight
+one per tic. `NetUpdate` makes one sample a call however many real tics went
+by; the server gives a tic that got no sample of its own to the sample
+before -- a repeat (`SV_Maketic`) or its "one tic later" filing. After every
+late frame the replay ran one sample ahead: 165 of 165 of this machine's
+wrong inputs in 8.87, and the loop -- a rebuild makes the next frame late.
+
+**R1, client only:**
+
+- every sample's real tics (`realtics`, capped at 5 by `NetUpdate`) are kept
+  in a ring beside the local history, filled by `K_RollbackNoteSample` for
+  every sample, in a level or not, so the ring ages with the history;
+- the anchor also counts how many received tics, ending at the last one,
+  still hold the applied sample -- tics the server already gave it by
+  repeating it;
+- the replay then gives each sample as many tics as real tics passed before
+  the next one was made, less the ones already received for the applied
+  sample; the newest owns every tic past them (`K_HistoryAgeForTic`).
+
+Exact while the path to the server does not jitter (the harness: the
+client's samples reach the server over the loopback when sent, 8.85);
+approximate on a real network, where R2 (samples filed by sequence, WORLDWIDE
+mode) stays the remedy. Blind to the server's own late frames, which 8.87's
+server side shows are rare against the client's (39 repeats against 678
+shifted filings).
+
+**`rollback_histreal 0|1`**, on by default -- it only changes what
+`rollback_history` replays, itself off by default and on in WORLDWIDE mode.
+0 gives the old layout back, for a control. `rollback_history`'s report adds
+how many passes R1 laid out differently from one sample a tic.
+
+**Harness:** `playtest.sh keepnor1` -- `keep` with `rollback_histreal 0`,
+the same-session control.
+
+**Predictions** (on a build with R1; `keep map=RR_Opulence` driven, then
+`keepnor1` in the same session):
+
+- **`keep`**: this machine's wrong inputs **from about 165 to 10 or fewer**
+  over the three windows, with the late samples about as many as before --
+  R1 does not make frames less late, it stops a late frame from costing a
+  rebuild; **no window falls into the loop**: 97% or more of passes kept in
+  every window, a pass around 7 ms, 120 frames a second or more, drift
+  0.000. The history's report shows R1 laying out about as many passes
+  differently as there were late samples.
+- **`keepnor1`**: 8.87 again -- this machine's wrong inputs following the
+  late samples one for one, older by one, and the loop in at least one
+  window.
+- If `keep` still misses after late samples, the misses' direction says
+  where: older by one again -- the held count is short (a repeat not seen as
+  one); newer -- R1 gives a sample a tic the server did not.

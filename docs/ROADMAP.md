@@ -197,11 +197,16 @@ correction channel's put-back and fixed. **Every launch is asked for first.**
      census is done (8.83): about twenty small heads and arrays to save
      beside the pools, the string arguments, and the reference counts.
      Step 2 measured (8.84): a copy 0.4 ms against a 2.9 ms save, round
-     trip exact. **Step 3 written** (8.88, `371ca7419` on `feature-b2`, not
-     pushed): `rollback_rawsnap`, E2 (every count rebuilt), with a verify
-     mode. **Next, each asked for:** a build of `feature-b2`, then `soak.sh
-     leakraw` and `wwraw` on Skyscraper Leaps and Opulence (mode 2), then
-     `playtest.sh keepraw map=RR_Opulence` driven, for the cost.
+     trip exact. **Step 3 merged** (8.88, `371ca7419`, merge `49daf1196`):
+     `rollback_rawsnap`, E2 (every count rebuilt), with a verify mode.
+     **Next, each asked for:** `soak.sh leakraw` and `wwraw` on Skyscraper
+     Leaps and Opulence (mode 2), then `playtest.sh keepraw
+     map=RR_Opulence` driven, for the cost.
+   - **The rebuilds of a driven race** (8.84-8.87): the history replayed one
+     sample ahead after each late frame. **R1** (8.89, `7a455f6fe`, to
+     push): each sample on the tics the server gives it. Next: `keep` on
+     Opulence driven, with `keepnor1` (R1 off) as its control. R2 (samples
+     filed by sequence, WORLDWIDE mode) for a real network, later.
    - Open: a sound cut when an object is removed in a speculated tic (8.73);
      the slow save -- 4 ms from `69e65f0ac` against 2.5 up to `5a417494f`,
      not the machine (8.78), to bisect with the kept exes; the camera
