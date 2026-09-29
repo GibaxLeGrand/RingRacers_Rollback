@@ -5174,3 +5174,92 @@ it back 192 us, **the round trip exact**.
 first: how the client builds and labels its samples when a frame is late,
 and how the server fills a tic that has none); then B2's step 3, whose raw
 copy is measured at a seventh of the save; the world's 0.45 ms after that.
+- **Gibax's feel**: "au début très fluide, aucun souci ; vers la fin par
+  contre ça laggait un peu plus" -- the windows' figures, felt.
+
+### 8.85 Where the history loses its place: read in the code
+
+Read on 2026-09-29 on Gibax's go-ahead ("oui, commence la lecture pour
+l'historique"); nothing launched. `rollback_history`'s replay
+(`K_RollbackLocalCmdFor`) assumes that the server applies this machine's
+samples **one per tic, in order**, starting from the one it applied last. What
+the code does instead:
+
+1. **One sample per `NetUpdate`, whatever the time elapsed.** `NetUpdate` is
+   called once per `TryRunTics`, returns when no real tic has passed, and
+   otherwise builds exactly one sample (`Local_Maketic`, `CreateNewLocalCMD`)
+   -- also when two to five tics have passed (`realtics`, capped at 5 on a
+   client). `CL_SendClientCmd` sends that one sample, with no tic number of
+   its own.
+2. **The server files a sample by when it arrives, not by its rank**
+   (`HandlePacketFromPlayer`, `PT_CLIENTCMD`): at `faketic = maketic` (plus
+   the wanted delay, zero here), or one tic later if that slot already holds
+   a received sample -- once; a third sample in the same slot overwrites the
+   second.
+3. **A tic with no sample repeats the previous one** (`SV_Maketic`): same
+   input, same stamp, `TICCMD_RECEIVED` cleared.
+4. **`rollback_lag` delays on reception only** (`d_net.cpp`): in the harness
+   the client's samples reach the server over the loopback the moment they
+   are sent. The server's placement follows the client's sending pace
+   exactly.
+
+**The chain this gives, not measured:** a client frame longer than a tic
+makes one sample for two tics; the server finds a tic with nothing and
+repeats the previous sample; every sample still in flight then lands one tic
+later than the replay assumed; the kept speculation's replayed tics hold the
+neighbouring sample -- a different `latency` stamp every time, a different
+`angle` and `turning` while steering, exactly 8.84's fields -- and are
+rebuilt at the frontier. A rebuild costs about two tics, so the next frame is
+late too. 8.84: 35, 172 and 282 iterations past a tic, against 34, 168 and
+279 rebuilds.
+
+The other way round: when the server's own frame is late, two or three
+client samples reach one `GetPackets`; the first goes to `maketic`, the
+second to the tic after, a third overwrites it -- a sample lost, and the
+replay one tic early. Here the server is the same machine, on the same map,
+with a window and a host player.
+
+**A second candidate, on the client: the anchor.** `K_RollbackMapHistory`
+finds the sample the server applied last by its stamp, forward move, turning
+and buttons, newest match first. The stamp is `leveltime & 0xFF` when the
+sample is built, and in two-clock mode that is the **frontier's** leveltime
+(`K_RollbackKeepArm` hands it over; the restore gives the same without
+`rollback_keepspec`). The frontier moves by the tics confirmed in the pass
+before: 1.03 to 1.30 a pass in 8.84, so some passes confirm two and others
+none. **After a pass that confirmed none, two consecutive samples carry the
+same stamp**; with the same buttons and turning -- a keyboard held full
+left, or straight ahead -- they are the same to the anchor, the newer is
+taken, and the inputs in flight are undercounted by one: the same slip.
+
+Why it barely showed on Skyscraper Leaps (99 to 100% kept, 8.76): a pass
+there is 2 ms, so frames are almost never late and passes rarely confirm
+two tics or none.
+
+**To tell the candidates apart, an instrument** (client and server,
+`rollback_keepspec`'s report and the relabel report):
+- client: samples made after more than one real tic (`realtics` 2 or more);
+  anchors that matched more than one sample in the history;
+- server: per player, tics filled by a repeat, and samples overwritten.
+If the rebuilds follow the late samples and the repeats, it is the first
+chain; if they follow the ambiguous anchors, the second.
+
+**Remedies, by reach:**
+- **R1, client only**: the replay follows the server's rule -- a sample
+  made after `k` real tics is preceded, in the replay, by `k - 1` repeats of
+  the one before it, as `SV_Maketic` will do; and the anchor, when
+  ambiguous, is placed by the count of samples since, not by the newest
+  match. Exact while the client-to-server path has no jitter (the harness);
+  approximate on a real network, and blind to the server's own late frames.
+- **R2, WORLDWIDE mode, server and client**: every sample carries its own
+  sequence number, and the server files a WORLDWIDE client's samples by it,
+  at a fixed offset from the first -- the input buffer of ordinary
+  client-side prediction. A tic still repeats when a sample is really late,
+  and only then. Exact on any network but for true lateness; vanilla
+  clients untouched, since the mode (8.80) decides who is WORLDWIDE. A
+  change to the packet and to the server's filing.
+- R3, client: after a late frame, send one sample per elapsed tic -- the
+  stock "+1 once" rule absorbs two, not three. Half a remedy.
+
+**Recommended:** the instrument first (it decides which chain), then R2 --
+the only one exact on a real network, and the WORLDWIDE switch now exists to
+carry it -- with R1 as a stopgap if R2 takes long.
