@@ -105,6 +105,11 @@ dboolean K_RollbackCorrectSuppress(void);
   * that do not declare themselves WORLDWIDE. */
 dboolean K_WorldwideServer(void);
 
+/** True while rollback_rawsnap takes raw snapshots (WORLDWIDE.md 8.88): a
+  * restore may then bring a removed object back at its own address, so what
+  * it points to must outlive its removal. */
+dboolean K_RollbackRawSnapshots(void);
+
 /** Whether this client's join declares it WORLDWIDE. True unless
   * rollback_vanillajoin asks it to join as a stock client would. */
 dboolean K_WorldwideDeclare(void);

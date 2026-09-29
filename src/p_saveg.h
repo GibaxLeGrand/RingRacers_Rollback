@@ -115,6 +115,50 @@ struct savestep_t
 size_t P_GetSaveProfile(const savestep_t **steps, uint32_t *saves);
 void P_ResetSaveProfile(void);
 
+// Raw local snapshots (rollback_rawsnap, WORLDWIDE.md 8.83, 8.88). A raw
+// snapshot is three parts: this archive without what the level pools hold
+// (P_SaveNetGameRaw), the pools themselves (Z_LevelPoolSnapshot), and the
+// pointers into the pools held outside them (P_SaveRawHeads). Restored in the
+// other order -- pools, heads, then P_LoadNetGameRaw -- after checking that
+// every part fits this level (Z_LevelPoolRestore checks the pools,
+// P_RawHeadsFit the heads). P_LoadNetGameRaw rebuilds every reference count
+// from zero (choice E2, 8.83).
+void P_SaveNetGameRaw(savebuffer_t *save);
+dboolean P_LoadNetGameRaw(savebuffer_t *save);
+
+// Called just before the pools are put back: which thinkers are alive now, so
+// P_LoadNetGameRaw can make Lua forget the ones the restore takes away.
+void P_NoteRawLiving(void);
+
+size_t P_RawHeadsSize(void);
+size_t P_SaveRawHeads(uint8_t *dst, size_t capacity);
+dboolean P_RawHeadsFit(const uint8_t *src, size_t length);
+dboolean P_RestoreRawHeads(const uint8_t *src, size_t length);
+
+// Verify mode: while on, each P_LoadNetGameRaw compares the counts the raw copy
+// brought back -- the live game's own -- with the ones it rebuilt.
+#define RAWCOUNT_SHOWN 8
+
+typedef struct rawcountmiss_s
+{
+	int32_t list;       // thinklistnum_t
+	int32_t mobjtype;   // -1 when not an object
+	uint32_t mobjnum;
+	int32_t was, now;   // the live count, the recount
+} rawcountmiss_t;
+
+typedef struct rawcountcheck_s
+{
+	uint32_t thinkers;
+	uint32_t mismatched;
+	dboolean listschanged; // the lists moved during the load: nothing compared past that
+	uint32_t shown;
+	rawcountmiss_t miss[RAWCOUNT_SHOWN];
+} rawcountcheck_t;
+
+void P_RawCountCheck(dboolean on);
+const rawcountcheck_t *P_GetRawCountCheck(void);
+
 // Archives one mobj on its own, so the same object can be compared before and
 // after a state restore. Diagnostic aid, see p_saveg.cpp.
 size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj);

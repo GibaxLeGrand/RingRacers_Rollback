@@ -70,6 +70,12 @@ static dboolean localsnapshot;
 // alone instead of being torn down and rebuilt.
 static dboolean localrestore;
 
+// Set for the length of a raw local save or load (rollback_rawsnap,
+// WORLDWIDE.md 8.88). The level pools -- every thinker and sector node -- and
+// the heads that point into them are copied raw beside the archive, so the
+// archive leaves out what they hold: the thinker lists, the chain stamp.
+static dboolean rawsnapshot;
+
 // Defined further down, next to the object archiver it was written for. The
 // players archiver needs it too: a player's pointer to an object is written
 // under the same rule as an object's pointer to another one.
@@ -5352,7 +5358,9 @@ static void P_BuildRelinkIndex(void)
 		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
 			continue;
 
-		if (relinkindex[mobj->mobjnum] == NULL)
+		// 0 is a blank pointer: an object numbered 0 -- one never archived,
+		// which a raw restore brings back -- must not answer for it.
+		if (mobj->mobjnum != 0 && relinkindex[mobj->mobjnum] == NULL)
 			relinkindex[mobj->mobjnum] = mobj;
 	}
 
@@ -5367,6 +5375,9 @@ mobj_t *P_FindNewPosition(uint32_t oldposition)
 {
 	thinker_t *th;
 	mobj_t *mobj;
+
+	if (oldposition == 0)
+		return NULL; // a blank pointer, not the first object numbered 0
 
 	if (relinkindexlen != 0)
 	{
@@ -6929,7 +6940,10 @@ static inline void P_UnArchivePolyObj(savebuffer_t *save, polyobj_t *po)
 	// nullify all polyobject thinker pointers;
 	// the thinkers themselves will fight over who gets the field
 	// when they first start to run.
-	po->thinker = NULL;
+	// Not in a raw restore: the thinkers were never taken away, and the owner
+	// came back with the raw heads (P_RestoreRawHeads).
+	if (rawsnapshot == false)
+		po->thinker = NULL;
 
 	id = READINT32(save->p);
 
@@ -7029,7 +7043,10 @@ static void P_RelinkPointers(void)
 	}
 
 	// use info field (value = oldposition) to relink mobjs
-	for (currentthinker = thlist[THINK_MOBJ].next; currentthinker != &thlist[THINK_MOBJ];
+	// -- not in a raw restore, where the objects came back with real pointers,
+	// which P_LoadNetGameRaw counts instead of relinking.
+	for (currentthinker = (rawsnapshot ? &thlist[THINK_MOBJ] : thlist[THINK_MOBJ].next);
+		currentthinker != &thlist[THINK_MOBJ];
 		currentthinker = currentthinker->next)
 	{
 		if (currentthinker->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
@@ -8416,6 +8433,68 @@ void P_SaveGame(savebuffer_t *save)
 	P_ArchiveLuabanksAndConsistency(save);
 }
 
+// ----------------------------------------------------------------------------
+// Raw local snapshots (rollback_rawsnap, WORLDWIDE.md 8.82, 8.83, 8.88)
+//
+// The thinkers live in the level pools, which the caller copies raw beside
+// this archive (Z_LevelPoolSnapshot), with the heads outside the pools that
+// point into them (P_SaveRawHeads). The archive keeps everything else --
+// players, world, polyobjects, specials, waypoints, ACS, Lua, RNG -- in the
+// network format, and of the thinker section only the global object links,
+// which are not pooled.
+//
+// The reference counts (8.83, choice E2, Gibax): a raw copy brings every count
+// back as the snapshot had it, references from outside the pools included,
+// and the network loaders that follow count theirs again. So the load sets
+// every count to zero first, lets the loaders count, then counts what the
+// pooled things and the raw heads hold (P_CountRawReferences) -- the same
+// rebuild from zero as a network load does, with the objects left where they
+// are.
+// ----------------------------------------------------------------------------
+
+// Named as P_NetArchiveThinkers names its steps, so a profile that mixes raw
+// and network saves keeps each step under its own name.
+static const char *const rawlistname[NUM_THINKERLISTS] = {
+	"thinkers: slopes", "thinkers: polyobjects", "thinkers: main",
+	"thinkers: objects", "thinkers: slopes (demo)", "thinkers: precipitation"
+};
+
+static void P_NetArchiveThinkersRaw(savebuffer_t *save)
+{
+	uint32_t i;
+
+	WRITEUINT32(save->p, ARCHIVEBLOCK_THINKERS);
+	P_SaveMobjPointers(WriteMobjPointer);
+	P_SaveProfileStep(save, "thinkers: object pointers");
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		P_SaveProfileStep(save, rawlistname[i]); // in the pools
+}
+
+static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
+{
+	thinker_t *th;
+
+	if (READUINT32(save->p) != ARCHIVEBLOCK_THINKERS)
+		I_Error("Bad $$$.sav at archive block Thinkers");
+
+	P_LoadMobjPointers(ReadMobjPointer);
+
+	// players[].mo: LoadMobjThinker gives each loaded object's player back its
+	// body. The raw copy put the objects back instead; each synced one that
+	// carries a player claims it again, in list order, as the load would.
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mo = (mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->player != NULL && TypeIsNetSynced(mo->type))
+			mo->player->mo = mo;
+	}
+}
+
 void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 {
 	TracyCZone(__zone, true);
@@ -8444,13 +8523,21 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 
 			mobj = (mobj_t *)th;
 			if (TypeIsNetSynced(mobj->type) == false)
+			{
+				// Never archived, so never looked up -- except that a raw
+				// restore brings them back, and a stale number would then
+				// answer for a synced object's in the relink index.
+				if (rawsnapshot)
+					mobj->mobjnum = 0;
 				continue;
+			}
 			mobj->mobjnum = i++;
 		}
 	}
 
-	// After the numbering above, which the stamp indexes by.
-	if (local)
+	// After the numbering above, which the stamp indexes by. Not in a raw
+	// snapshot: the chains come back raw, in their order.
+	if (local && rawsnapshot == false)
 		P_StampChainOrder();
 	P_SaveProfileStep(save, "numbering/chain stamp");
 
@@ -8470,7 +8557,10 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 		P_SaveProfileStep(save, "world");
 		P_ArchivePolyObjects(save);
 		P_SaveProfileStep(save, "polyobjects");
-		P_NetArchiveThinkers(save);   // profiles each of its lists
+		if (rawsnapshot)
+			P_NetArchiveThinkersRaw(save);
+		else
+			P_NetArchiveThinkers(save);   // profiles each of its lists
 		P_NetArchiveSpecials(save);
 		P_NetArchiveColormaps(save);
 		P_SaveProfileStep(save, "specials/colormaps");
@@ -8634,7 +8724,7 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 	if (local == false)
 		netloadcount++;
 
-	if (local)
+	if (local && rawsnapshot == false)
 	{
 		memset(chainorder_block, 0, sizeof (chainorder_block));
 		memset(chainorder_sector, 0, sizeof (chainorder_sector));
@@ -8670,11 +8760,15 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 		P_ProfileStep("polyobjects");
 
 		// Which object each playing sound comes from, before the purge frees
-		// them all (S_NoteChannelOrigins, WORLDWIDE.md 8.73).
-		if (local)
+		// them all (S_NoteChannelOrigins, WORLDWIDE.md 8.73). A raw restore's
+		// caller notes them before the pools are put back.
+		if (local && rawsnapshot == false)
 			S_NoteChannelOrigins();
 
-		P_NetUnArchiveThinkers(save);
+		if (rawsnapshot)
+			P_NetUnArchiveThinkersRaw(save);
+		else
+			P_NetUnArchiveThinkers(save);
 		P_ProfileStep("thinkers");
 
 		P_NetUnArchiveSpecials(save);
@@ -8705,7 +8799,7 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 		P_RelinkPointers();
 		P_ProfileStep("relink pointers");
 
-		if (local)
+		if (local && rawsnapshot == false)
 		{
 			P_RestoreChainOrder();
 			P_ProfileStep("chain order");
@@ -8729,6 +8823,488 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 	P_ProfileStep("rng/luabanks");
 
 	TracyCZoneEnd(__zone);
+	return ret;
+}
+
+// ----------------------------------------------------------------------------
+// Raw snapshots: the heads outside the pools, the load, and the recount
+// (WORLDWIDE.md 8.83, 8.88)
+// ----------------------------------------------------------------------------
+
+// The pointers into the pools held outside them, in the order written:
+// thinker list heads; per sector, its object chain, its sector-node and
+// precipitation-node lists and its four thinker slots; each FOF's fade
+// thinker; the blockmap heads and the precipitation blockmap's; each
+// polyobject's owner; the TID chains; the three caps; the skybox points.
+#define RAWHEADS_MAGIC 0x48574152 // "RAWH"
+#define RAWHEADS_SECTORPTRS 7
+#define RAWHEADS_SKYBOXES 16
+
+struct rawheadsheader_t
+{
+	uint32_t magic;
+	uint32_t sectors;
+	uint32_t ffloors;
+	uint32_t blocks;
+	uint32_t precipblocks;
+	uint32_t polyobjects;
+	uint32_t tidchains;
+	uint32_t reserved;
+};
+
+static uint32_t P_CountFFloors(void)
+{
+	uint32_t n = 0;
+	size_t i;
+
+	for (i = 0; i < numsectors; i++)
+	{
+		for (const ffloor_t *rover = sectors[i].ffloors; rover != NULL; rover = rover->next)
+			n++;
+	}
+
+	return n;
+}
+
+static void P_RawHeadsDescribe(rawheadsheader_t *h)
+{
+	size_t tidchains;
+	const size_t blocks = (size_t)bmapwidth * (size_t)bmapheight;
+
+	P_TIDHashChains(&tidchains);
+
+	memset(h, 0, sizeof *h);
+	h->magic = RAWHEADS_MAGIC;
+	h->sectors = (uint32_t)numsectors;
+	h->ffloors = P_CountFFloors();
+	h->blocks = (blocklinks != NULL) ? (uint32_t)blocks : 0;
+	h->precipblocks = (precipblocklinks != NULL) ? (uint32_t)blocks : 0;
+	h->polyobjects = (uint32_t)numPolyObjects;
+	h->tidchains = (uint32_t)tidchains;
+}
+
+static size_t P_RawHeadsBytes(const rawheadsheader_t *h)
+{
+	return sizeof *h
+		+ sizeof (thinker_t) * NUM_THINKERLISTS
+		+ (size_t)h->sectors * RAWHEADS_SECTORPTRS * sizeof (void *)
+		+ (size_t)h->ffloors * sizeof (void *)
+		+ ((size_t)h->blocks + (size_t)h->precipblocks) * sizeof (void *)
+		+ (size_t)h->polyobjects * sizeof (void *)
+		+ (size_t)h->tidchains * sizeof (void *)
+		+ (3 + 2 * RAWHEADS_SKYBOXES) * sizeof (void *);
+}
+
+size_t P_RawHeadsSize(void)
+{
+	rawheadsheader_t h;
+	P_RawHeadsDescribe(&h);
+	return P_RawHeadsBytes(&h);
+}
+
+static uint8_t *RawPut(uint8_t *p, const void *src, size_t n)
+{
+	memcpy(p, src, n);
+	return p + n;
+}
+
+static const uint8_t *RawGet(const uint8_t *p, void *dst, size_t n)
+{
+	memcpy(dst, p, n);
+	return p + n;
+}
+
+size_t P_SaveRawHeads(uint8_t *dst, size_t capacity)
+{
+	rawheadsheader_t h;
+	uint8_t *p = dst;
+	size_t i, tidchains;
+	mobj_t **tid = P_TIDHashChains(&tidchains);
+
+	P_RawHeadsDescribe(&h);
+
+	if (P_RawHeadsBytes(&h) > capacity)
+		return 0;
+
+	p = RawPut(p, &h, sizeof h);
+	p = RawPut(p, thlist, sizeof (thinker_t) * NUM_THINKERLISTS);
+
+	for (i = 0; i < numsectors; i++)
+	{
+		const sector_t *sec = &sectors[i];
+		const void *ptrs[RAWHEADS_SECTORPTRS] = {
+			sec->thinglist, sec->touching_thinglist, sec->touching_preciplist,
+			sec->floordata, sec->ceilingdata, sec->lightingdata, sec->fadecolormapdata
+		};
+
+		p = RawPut(p, ptrs, sizeof ptrs);
+	}
+
+	for (i = 0; i < numsectors; i++)
+	{
+		for (const ffloor_t *rover = sectors[i].ffloors; rover != NULL; rover = rover->next)
+			p = RawPut(p, &rover->fadingdata, sizeof (void *));
+	}
+
+	if (h.blocks)
+		p = RawPut(p, blocklinks, (size_t)h.blocks * sizeof (mobj_t *));
+	if (h.precipblocks)
+		p = RawPut(p, precipblocklinks, (size_t)h.precipblocks * sizeof (precipmobj_t *));
+
+	for (i = 0; i < h.polyobjects; i++)
+		p = RawPut(p, &PolyObjects[i].thinker, sizeof (void *));
+
+	p = RawPut(p, tid, tidchains * sizeof (mobj_t *));
+
+	p = RawPut(p, &waypointcap, sizeof (mobj_t *));
+	p = RawPut(p, &trackercap, sizeof (mobj_t *));
+	p = RawPut(p, P_OverlayCapHead(), sizeof (mobj_t *));
+	p = RawPut(p, skyboxviewpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+	p = RawPut(p, skyboxcenterpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+
+	return (size_t)(p - dst);
+}
+
+dboolean P_RawHeadsFit(const uint8_t *src, size_t length)
+{
+	rawheadsheader_t now, then;
+
+	if (src == NULL || length < sizeof then)
+		return false;
+
+	memcpy(&then, src, sizeof then);
+	P_RawHeadsDescribe(&now);
+
+	// The same level, laid out the same way: same sectors, FOFs, blockmap,
+	// polyobjects and chains, or the pointers name other things.
+	return (memcmp(&now, &then, sizeof now) == 0 && P_RawHeadsBytes(&now) == length);
+}
+
+dboolean P_RestoreRawHeads(const uint8_t *src, size_t length)
+{
+	rawheadsheader_t h;
+	const uint8_t *p = src;
+	size_t i, tidchains;
+	mobj_t **tid = P_TIDHashChains(&tidchains);
+
+	if (P_RawHeadsFit(src, length) == false)
+		return false;
+
+	p = RawGet(p, &h, sizeof h);
+	p = RawGet(p, thlist, sizeof (thinker_t) * NUM_THINKERLISTS);
+
+	for (i = 0; i < numsectors; i++)
+	{
+		sector_t *sec = &sectors[i];
+		void *ptrs[RAWHEADS_SECTORPTRS];
+
+		p = RawGet(p, ptrs, sizeof ptrs);
+		sec->thinglist = (mobj_t *)ptrs[0];
+		sec->touching_thinglist = (msecnode_t *)ptrs[1];
+		sec->touching_preciplist = (mprecipsecnode_t *)ptrs[2];
+		sec->floordata = ptrs[3];
+		sec->ceilingdata = ptrs[4];
+		sec->lightingdata = ptrs[5];
+		sec->fadecolormapdata = ptrs[6];
+	}
+
+	for (i = 0; i < numsectors; i++)
+	{
+		for (ffloor_t *rover = sectors[i].ffloors; rover != NULL; rover = rover->next)
+			p = RawGet(p, &rover->fadingdata, sizeof (void *));
+	}
+
+	if (h.blocks)
+		p = RawGet(p, blocklinks, (size_t)h.blocks * sizeof (mobj_t *));
+	if (h.precipblocks)
+		p = RawGet(p, precipblocklinks, (size_t)h.precipblocks * sizeof (precipmobj_t *));
+
+	for (i = 0; i < h.polyobjects; i++)
+		p = RawGet(p, &PolyObjects[i].thinker, sizeof (void *));
+
+	p = RawGet(p, tid, tidchains * sizeof (mobj_t *));
+
+	p = RawGet(p, &waypointcap, sizeof (mobj_t *));
+	p = RawGet(p, &trackercap, sizeof (mobj_t *));
+	p = RawGet(p, P_OverlayCapHead(), sizeof (mobj_t *));
+	p = RawGet(p, skyboxviewpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+	p = RawGet(p, skyboxcenterpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+
+	return true;
+}
+
+void P_SaveNetGameRaw(savebuffer_t *save)
+{
+	rawsnapshot = true;
+	P_SaveNetGame(save, true, true);
+	rawsnapshot = false;
+}
+
+static inline void P_CountReference(mobj_t *mo)
+{
+	if (mo != NULL)
+		mo->thinker.references++;
+}
+
+/** Counts every reference held by the pooled things and the raw heads: the
+  * ones no network loader counts during a raw restore. Every counted pointer
+  * an object holds (the eight P_RelinkPointers relinks), removed objects
+  * included -- P_RemoveMobj gives back all of them but terrainOverlay, which
+  * the live count therefore still holds; the caller of a delayed linedef
+  * executor, which p_spec.c counts (the network load does not, 8.88); the
+  * caps and the skybox points, which the object loader counts. */
+static void P_CountRawReferences(void)
+{
+	thinker_t *th;
+	int32_t i;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mo = (mobj_t *)th;
+
+		P_CountReference(mo->target);
+		P_CountReference(mo->tracer);
+		P_CountReference(mo->hnext);
+		P_CountReference(mo->hprev);
+		P_CountReference(mo->itnext);
+		P_CountReference(mo->terrainOverlay);
+		P_CountReference(mo->punt_ref);
+		P_CountReference(mo->owner);
+	}
+
+	for (th = thlist[THINK_MAIN].next; th != &thlist[THINK_MAIN]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)T_ExecutorDelay)
+			P_CountReference(((executor_t *)th)->caller);
+	}
+
+	P_CountReference(waypointcap);
+	P_CountReference(trackercap);
+	P_CountReference(*P_OverlayCapHead());
+
+	for (i = 0; i < RAWHEADS_SKYBOXES; i++)
+	{
+		P_CountReference(skyboxviewpnts[i]);
+		P_CountReference(skyboxcenterpnts[i]);
+	}
+}
+
+// Verify mode: the counts a raw copy brought back are the live game's own,
+// kept up to date by P_SetTarget as it ran. The recount must land on exactly
+// those, or it misses a holder -- or counts one twice.
+static rawcountcheck_t g_rawcount;
+static dboolean g_rawcounton;
+static thinker_t **g_rawcountwho;
+static int32_t *g_rawcountwas;
+static size_t g_rawcountcap;
+
+void P_RawCountCheck(dboolean on)
+{
+	g_rawcounton = on;
+}
+
+const rawcountcheck_t *P_GetRawCountCheck(void)
+{
+	return &g_rawcount;
+}
+
+static size_t P_RecordRawCounts(void)
+{
+	thinker_t *th;
+	size_t n = 0;
+	uint32_t i;
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			n++;
+
+	if (n > g_rawcountcap)
+	{
+		g_rawcountcap = n + n / 4;
+		g_rawcountwho = (thinker_t **)Z_Realloc(g_rawcountwho, g_rawcountcap * sizeof (thinker_t *), PU_STATIC, NULL);
+		g_rawcountwas = (int32_t *)Z_Realloc(g_rawcountwas, g_rawcountcap * sizeof (int32_t), PU_STATIC, NULL);
+	}
+
+	n = 0;
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+	{
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+		{
+			g_rawcountwho[n] = th;
+			g_rawcountwas[n] = th->references;
+			n++;
+		}
+	}
+
+	return n;
+}
+
+static void P_CompareRawCounts(size_t recorded)
+{
+	thinker_t *th;
+	size_t n = 0;
+	uint32_t i;
+
+	memset(&g_rawcount, 0, sizeof g_rawcount);
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+	{
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next, n++)
+		{
+			if (n >= recorded || g_rawcountwho[n] != th)
+			{
+				g_rawcount.listschanged = true;
+				return;
+			}
+
+			g_rawcount.thinkers++;
+
+			if (th->references == g_rawcountwas[n])
+				continue;
+
+			g_rawcount.mismatched++;
+
+			if (g_rawcount.shown < RAWCOUNT_SHOWN)
+			{
+				rawcountmiss_t *m = &g_rawcount.miss[g_rawcount.shown++];
+
+				m->list = (int32_t)i;
+				m->mobjtype = (i == THINK_MOBJ) ? (int32_t)((mobj_t *)th)->type : -1;
+				m->mobjnum = (i == THINK_MOBJ) ? ((mobj_t *)th)->mobjnum : 0;
+				m->was = g_rawcountwas[n];
+				m->now = th->references;
+			}
+		}
+	}
+
+	if (n != recorded)
+		g_rawcount.listschanged = true;
+}
+
+// The thinkers alive before a raw restore, sorted, so the ones it took away
+// can be named afterwards. A network load deallocates every object, and each
+// deallocation makes Lua forget it (LUA_InvalidateUserdata); a raw copy frees
+// nothing one block at a time, so an object born after the snapshot would stay
+// valid to a script still holding it, on a block that is free again.
+static thinker_t **g_rawliving;
+static size_t g_rawlivingn, g_rawlivingcap;
+static thinker_t **g_rawnow;
+static size_t g_rawnowcap;
+
+static int P_ComparePointers(const void *a, const void *b)
+{
+	const uintptr_t x = (uintptr_t)*(thinker_t *const *)a;
+	const uintptr_t y = (uintptr_t)*(thinker_t *const *)b;
+	return (x > y) - (x < y);
+}
+
+static size_t P_ListLiving(thinker_t ***out, size_t *cap)
+{
+	thinker_t *th;
+	size_t n = 0;
+	uint32_t i;
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			n++;
+
+	if (n > *cap)
+	{
+		*cap = n + n / 4;
+		*out = (thinker_t **)Z_Realloc(*out, *cap * sizeof (thinker_t *), PU_STATIC, NULL);
+	}
+
+	n = 0;
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			(*out)[n++] = th;
+
+	qsort(*out, n, sizeof (thinker_t *), P_ComparePointers);
+	return n;
+}
+
+void P_NoteRawLiving(void)
+{
+	g_rawlivingn = P_ListLiving(&g_rawliving, &g_rawlivingcap);
+}
+
+/** After the pools are back: Lua forgets every thinker noted alive before the
+  * restore that no list holds now. */
+static void P_ForgetRawDead(void)
+{
+	const size_t now = P_ListLiving(&g_rawnow, &g_rawnowcap);
+	size_t a = 0, b = 0;
+
+	while (a < g_rawlivingn)
+	{
+		const uintptr_t was = (uintptr_t)g_rawliving[a];
+		const uintptr_t is = (b < now) ? (uintptr_t)g_rawnow[b] : 0;
+
+		if (b < now && is < was)
+		{
+			b++;
+		}
+		else if (b < now && is == was)
+		{
+			a++;
+			b++;
+		}
+		else
+		{
+			LUA_InvalidateUserdata(g_rawliving[a]);
+			a++;
+		}
+	}
+
+	g_rawlivingn = 0;
+}
+
+dboolean P_LoadNetGameRaw(savebuffer_t *save)
+{
+	thinker_t *th;
+	size_t recorded = 0;
+	uint32_t i;
+	dboolean ret;
+
+	// Lua forgets the objects this restore took away, as a network load's
+	// purge makes it forget every object (P_NoteRawLiving, called before the
+	// pools were put back).
+	P_ForgetRawDead();
+
+	// ACS threads and activators forget the objects they held before this
+	// restore without giving their references back -- the thinker_era guard
+	// (8.51, 8.52), which a network load trips through P_InitThinkers. Every
+	// count is rebuilt from zero here anyway.
+	P_InvalidateThinkersWithoutInit();
+
+	if (g_rawcounton)
+		recorded = P_RecordRawCounts();
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			th->references = 0;
+
+	// The renderer's interpolation list held the objects there were before
+	// the restore; it gets the ones there are now, below.
+	R_InitMobjInterpolators();
+
+	rawsnapshot = true;
+	ret = P_LoadNetGame(save, true, true);
+	rawsnapshot = false;
+
+	// The loaders counted the players', waypoints', links' and ACS's
+	// references as they relinked them; the rest are held in the pools.
+	P_CountRawReferences();
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 != (actionf_p1)P_RemoveThinkerDelayed)
+			R_AddMobjInterpolator((mobj_t *)th);
+	}
+
+	if (g_rawcounton)
+		P_CompareRawCounts(recorded);
+
 	return ret;
 }
 

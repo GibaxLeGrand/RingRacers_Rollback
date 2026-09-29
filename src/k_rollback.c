@@ -58,6 +58,7 @@
 #include "p_tick.h" // leveltime
 #include "r_state.h" // sectors
 #include "z_zone.h"
+#include "s_sound.h" // S_NoteChannelOrigins, for a raw restore
 
 // Nominal snapshot size. NETSAVEGAMESIZE, which the netcode uses, is 768 KiB
 // and sized for the worst a netgame savegame can be. Measured snapshots of a
@@ -116,9 +117,63 @@ typedef struct
 	tic_t tic;
 	int16_t gamemap;
 	dboolean valid;
+
+	// rollback_rawsnap (WORLDWIDE.md 8.88): a raw snapshot, in one buffer grown
+	// as needed -- the archive without what the pools hold, the level pools,
+	// the heads that point into them. `buffer` above then holds the full
+	// archive only in verify mode (2), for the comparison; `used` is 0 in
+	// mode 1. A slot made with Z_Malloc must start zeroed (Z_Calloc).
+	uint8_t *raw;
+	size_t rawcap;
+	size_t rawnet, rawpools, rawheads;
+	dboolean israw;
 } rollbackslot_t;
 
 static rollbackslot_t *rollbackring = NULL;
+
+// rollback_rawsnap (WORLDWIDE.md 8.82, 8.83, 8.88): 0 network snapshots, as
+// ever; 1 raw ones; 2 raw ones checked after every restore against the full
+// archive of the same tic, byte for byte and reference count by count.
+static int32_t g_rawsnap;
+static int16_t g_rawmap = -1;       // the level raw snapshots were last taken in
+static uint32_t g_rawsaves, g_rawrestores, g_rawrefused;
+static uint64_t g_rawsaveus, g_rawrestoreus;
+static uint64_t g_rawnetbytes, g_rawpoolbytes, g_rawheadbytes;
+static uint32_t g_rawverified, g_rawbytesoff, g_rawcountchecks, g_rawcountbad;
+static uint8_t *g_rawverifybuf;
+
+static dboolean K_WriteRawSnapshot(rollbackslot_t *slot);
+static dboolean K_ReadRawSnapshot(rollbackslot_t *slot);
+
+dboolean K_RollbackRawSnapshots(void)
+{
+	// Also while a raw snapshot of this level may still be restored after the
+	// switch went off: what it would bring back must still be there.
+	return (g_rawsnap > 0 || g_rawmap == gamemap);
+}
+
+/** A slot's raw buffer, then the slot. */
+static void K_FreeSlot(rollbackslot_t *slot)
+{
+	if (slot == NULL)
+		return;
+
+	if (slot->raw != NULL)
+		Z_Free(slot->raw);
+
+	Z_Free(slot);
+}
+
+/** The tests compare archives, which rollback_rawsnap 1 does not write. */
+static dboolean K_RawSnapBlocksTests(const char *cmd)
+{
+	if (g_rawsnap != 1)
+		return false;
+
+	CONS_Printf("%s: compares archives, which rollback_rawsnap 1 does not write -- "
+		"use rollback_rawsnap 2 (raw snapshots, verified) or 0\n", cmd);
+	return true;
+}
 
 // What the tests last measured on this machine, so rollback_delay can price a
 // rollback from real figures rather than from memory. Zero until then.
@@ -143,8 +198,16 @@ void K_InitRollback(void)
 
 void K_ClearRollback(void)
 {
+	int32_t i;
+
 	if (!rollbackring)
 		return;
+
+	for (i = 0; i < ROLLBACK_TICS; i++)
+	{
+		if (rollbackring[i].raw != NULL)
+			Z_Free(rollbackring[i].raw);
+	}
 
 	Z_Free(rollbackring);
 	rollbackring = NULL;
@@ -163,17 +226,36 @@ static dboolean K_WriteSnapshot(rollbackslot_t *slot, tic_t tic)
 		return false;
 
 	slot->valid = false; // in case the write below never completes
+	slot->israw = false;
 
-	if (P_SaveBufferFromExisting(&save, slot->buffer, sizeof (slot->buffer)) == false)
-		return false;
+	// rollback_rawsnap: the raw snapshot first -- its numbering is the one the
+	// full archive below repeats, for synced objects -- then, in verify mode,
+	// the full archive beside it.
+	if (g_rawsnap > 0)
+	{
+		if (K_WriteRawSnapshot(slot) == false)
+			return false;
 
-	// resending, so that gametic goes into the archive. K_LoadGameState reads
-	// it back, and the reader only looks for it when the writer wrote it.
-	// local, because this snapshot is restored on the machine that took it:
-	// the per-viewport visibility flags are worth keeping and must round-trip.
-	P_SaveNetGame(&save, true, true);
+		slot->israw = true;
+	}
 
-	slot->used = (size_t)(save.p - save.buffer);
+	if (g_rawsnap == 1)
+	{
+		slot->used = 0;
+	}
+	else
+	{
+		if (P_SaveBufferFromExisting(&save, slot->buffer, sizeof (slot->buffer)) == false)
+			return false;
+
+		// resending, so that gametic goes into the archive. K_LoadGameState reads
+		// it back, and the reader only looks for it when the writer wrote it.
+		// local, because this snapshot is restored on the machine that took it:
+		// the per-viewport visibility flags are worth keeping and must round-trip.
+		P_SaveNetGame(&save, true, true);
+
+		slot->used = (size_t)(save.p - save.buffer);
+	}
 
 	// Deliberately not P_SaveBufferFree: that would Z_Free the ring slot out
 	// from under us. The savebuffer_t is a view onto storage this module owns.
@@ -218,6 +300,9 @@ static dboolean K_ReadSnapshot(rollbackslot_t *slot)
 
 	if (slot == NULL || slot->valid == false)
 		return false;
+
+	if (slot->israw)
+		return K_ReadRawSnapshot(slot);
 
 	if (P_SaveBufferFromExisting(&save, slot->buffer, slot->used) == false)
 		return false;
@@ -289,6 +374,239 @@ static const char *K_MobjTypeName(mobjtype_t type)
 	}
 
 	return (name != NULL) ? name : "(unnamed type)";
+}
+
+// ----------------------------------------------------------------------------
+// rollback_rawsnap: raw snapshots (WORLDWIDE.md 8.82, 8.83, 8.88)
+// ----------------------------------------------------------------------------
+
+/** Takes a raw snapshot into the slot's raw buffer: the archive without what
+  * the pools hold, the level pools, the heads pointing into them. */
+static dboolean K_WriteRawSnapshot(rollbackslot_t *slot)
+{
+	const size_t netroom = ROLLBACK_BUFSIZE + ROLLBACK_SLACK;
+	const size_t need = netroom + Z_LevelPoolSnapshotSize() + P_RawHeadsSize();
+	const precise_t at = I_GetPreciseTime();
+	savebuffer_t net = {0};
+
+	if (slot->rawcap < need)
+	{
+		if (slot->raw != NULL)
+			Z_Free(slot->raw);
+
+		// With room to grow: the pools grow with the race (8.60), and a slot
+		// reallocated every few tics would cost what the copy saves.
+		slot->rawcap = need + need / 8;
+		slot->raw = (uint8_t *)Z_Malloc(slot->rawcap, PU_STATIC, NULL);
+	}
+
+	if (P_SaveBufferFromExisting(&net, slot->raw, netroom) == false)
+		return false;
+
+	P_SaveNetGameRaw(&net);
+	slot->rawnet = (size_t)(net.p - net.buffer);
+
+	if (slot->rawnet > ROLLBACK_BUFSIZE)
+		I_Error("K_WriteRawSnapshot: the archive part of a raw snapshot is %s bytes "
+			"(caught in slack, nothing corrupted -- raise ROLLBACK_BUFSIZE)",
+			sizeu1(slot->rawnet));
+
+	slot->rawpools = Z_LevelPoolSnapshot(slot->raw + slot->rawnet, slot->rawcap - slot->rawnet);
+	slot->rawheads = (slot->rawpools != 0)
+		? P_SaveRawHeads(slot->raw + slot->rawnet + slot->rawpools, slot->rawcap - slot->rawnet - slot->rawpools)
+		: 0;
+
+	if (slot->rawpools == 0 || slot->rawheads == 0)
+		return false;
+
+	g_rawmap = gamemap;
+	g_rawsaves++;
+	g_rawsaveus += K_PreciseToMicros(I_GetPreciseTime() - at);
+	g_rawnetbytes += slot->rawnet;
+	g_rawpoolbytes += slot->rawpools;
+	g_rawheadbytes += slot->rawheads;
+	return true;
+}
+
+/** Verify mode: the archive of the world a raw restore made, against the full
+  * archive taken beside the raw snapshot; and the recount against the counts
+  * the copy brought back. Prints the first few of each kind of failure. */
+static void K_VerifyRawRestore(const rollbackslot_t *slot)
+{
+	const rawcountcheck_t *c = P_GetRawCountCheck();
+	savebuffer_t save = {0};
+	size_t used, at;
+
+	if (slot->used == 0)
+		return;
+
+	if (g_rawverifybuf == NULL)
+		g_rawverifybuf = (uint8_t *)Z_Malloc(ROLLBACK_BUFSIZE + ROLLBACK_SLACK, PU_STATIC, NULL);
+
+	if (P_SaveBufferFromExisting(&save, g_rawverifybuf, ROLLBACK_BUFSIZE + ROLLBACK_SLACK) == false)
+		return;
+
+	P_SaveNetGame(&save, true, true);
+	used = (size_t)(save.p - save.buffer);
+	g_rawverified++;
+
+	if (used != slot->used || memcmp(g_rawverifybuf, slot->buffer, used) != 0)
+	{
+		g_rawbytesoff++;
+
+		for (at = 0; at < used && at < slot->used; at++)
+		{
+			if (g_rawverifybuf[at] != slot->buffer[at])
+				break;
+		}
+
+		if (g_rawbytesoff <= 5)
+		{
+			CONS_Printf("rollback_rawsnap: VERIFY tic %u -- after a raw restore the archive "
+				"differs from the snapshot's at byte %s (%s against %s bytes), in the %s block\n",
+				(uint32_t)slot->tic, sizeu1(at), sizeu2(used), sizeu3(slot->used),
+				P_LocateSnapshotBlock(slot->buffer, slot->used, at));
+		}
+	}
+
+	g_rawcountchecks++;
+
+	if (c->mismatched > 0 || c->listschanged)
+	{
+		uint32_t m;
+
+		g_rawcountbad++;
+
+		if (g_rawcountbad <= 5)
+		{
+			CONS_Printf("rollback_rawsnap: VERIFY tic %u -- %u of %u reference counts rebuilt "
+				"differently from the live ones%s\n", (uint32_t)slot->tic,
+				c->mismatched, c->thinkers,
+				(c->listschanged ? ", and the thinker lists moved during the load" : ""));
+
+			for (m = 0; m < c->shown; m++)
+			{
+				const rawcountmiss_t *miss = &c->miss[m];
+
+				CONS_Printf("rollback_rawsnap:   list %d, %s #%u -- live %d, rebuilt %d\n",
+					miss->list,
+					(miss->mobjtype >= 0 ? K_MobjTypeName((mobjtype_t)miss->mobjtype) : "(not an object)"),
+					miss->mobjnum, miss->was, miss->now);
+			}
+		}
+	}
+}
+
+/** Puts back a raw snapshot: every part checked before anything is written,
+  * then the pools, the heads, and the archive with the counts rebuilt. */
+static dboolean K_ReadRawSnapshot(rollbackslot_t *slot)
+{
+	const uint8_t *pools = slot->raw + slot->rawnet;
+	const uint8_t *heads = pools + slot->rawpools;
+	const precise_t at = I_GetPreciseTime();
+	savebuffer_t net = {0};
+	dboolean ok;
+
+	// The heads first: Z_LevelPoolRestore checks its own part and writes
+	// nothing if it refuses, so after these two nothing can be refused.
+	if (P_RawHeadsFit(heads, slot->rawheads) == false)
+	{
+		g_rawrefused++;
+		return false;
+	}
+
+	// Which object each playing sound comes from, while the objects playing
+	// them are still the ones in memory (S_NoteChannelOrigins, 8.73); and
+	// which thinkers are alive, so Lua can forget the ones the restore takes
+	// away (P_NoteRawLiving).
+	S_NoteChannelOrigins();
+	P_NoteRawLiving();
+
+	if (Z_LevelPoolRestore(pools, slot->rawpools) == false)
+	{
+		g_rawrefused++;
+		return false;
+	}
+
+	P_RestoreRawHeads(heads, slot->rawheads);
+
+	if (P_SaveBufferFromExisting(&net, slot->raw, slot->rawnet) == false)
+		return false;
+
+	P_RawCountCheck(g_rawsnap == 2);
+	ok = P_LoadNetGameRaw(&net);
+	P_RawCountCheck(false);
+
+	memcpy(camera, slot->cameras, sizeof (slot->cameras));
+
+	g_rawrestores++;
+	g_rawrestoreus += K_PreciseToMicros(I_GetPreciseTime() - at);
+
+	if (g_rawsnap == 2)
+		K_VerifyRawRestore(slot);
+
+	return ok;
+}
+
+static void K_ReportRawSnap(void)
+{
+	static const char *const mode[3] = {
+		"off -- network snapshots, as before",
+		"on -- raw snapshots of the level pools",
+		"on, verified -- raw snapshots, each restore checked against the full archive"
+	};
+
+	CONS_Printf("rollback_rawsnap: %s\n", mode[g_rawsnap]);
+
+	if (g_rawsaves > 0)
+	{
+		CONS_Printf("rollback_rawsnap: %u raw saves, %u us each -- %s KB of archive, "
+			"%s KB of pools, %s KB of heads\n", g_rawsaves,
+			(uint32_t)(g_rawsaveus / g_rawsaves),
+			sizeu1((size_t)(g_rawnetbytes / g_rawsaves / 1024)),
+			sizeu2((size_t)(g_rawpoolbytes / g_rawsaves / 1024)),
+			sizeu3((size_t)(g_rawheadbytes / g_rawsaves / 1024)));
+	}
+
+	if (g_rawrestores > 0 || g_rawrefused > 0)
+	{
+		CONS_Printf("rollback_rawsnap: %u raw restores, %u us each (a verified one includes "
+			"its check); %u refused (another level)\n", g_rawrestores,
+			(uint32_t)(g_rawrestores ? g_rawrestoreus / g_rawrestores : 0), g_rawrefused);
+	}
+
+	if (g_rawverified > 0 || g_rawcountchecks > 0)
+	{
+		CONS_Printf("rollback_rawsnap: verified %u restores -- %u with the archive differing, "
+			"%u with a reference count rebuilt differently\n",
+			g_rawverified, g_rawbytesoff, g_rawcountbad);
+	}
+}
+
+/** Console command: rollback_rawsnap [0|1|2]
+  *
+  * Client side, and the tests. 0: network snapshots, as before. 1: raw
+  * snapshots -- the level pools copied whole, with the heads pointing into
+  * them, beside an archive of the rest -- restored at their own addresses,
+  * every reference count rebuilt (WORLDWIDE.md 8.88). 2: the same, plus the
+  * full archive beside each, and each restore checked against it byte for
+  * byte, and its counts against the live ones; the tests (rollback_test, the
+  * soaks) need 0 or 2. Setting it resets the counts; snapshots already taken
+  * are read the way they were written. */
+static void Command_RollbackRawSnap_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		const int32_t want = atoi(COM_Argv(1));
+
+		g_rawsnap = (want <= 0) ? 0 : ((want >= 2) ? 2 : 1);
+		g_rawsaves = g_rawrestores = g_rawrefused = 0;
+		g_rawsaveus = g_rawrestoreus = 0;
+		g_rawnetbytes = g_rawpoolbytes = g_rawheadbytes = 0;
+		g_rawverified = g_rawbytesoff = g_rawcountchecks = g_rawcountbad = 0;
+	}
+
+	K_ReportRawSnap();
 }
 
 // A comparison run inside a resimulation check cannot print as it goes: at
@@ -1029,9 +1347,10 @@ static dboolean K_NeedScratch(void)
 {
 	if (g_first == NULL)
 	{
-		g_first = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
-		g_second = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
-		g_third = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		// Zeroed: a slot's raw buffer pointer must start NULL (rollback_rawsnap).
+		g_first = (rollbackslot_t *)Z_Calloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		g_second = (rollbackslot_t *)Z_Calloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+		g_third = (rollbackslot_t *)Z_Calloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 	}
 
 	return (g_first != NULL && g_second != NULL && g_third != NULL);
@@ -2155,6 +2474,9 @@ static void Command_RollbackTest_f(void)
 	int16_t before, afterperturb, afterload;
 	uint32_t thinkerorder, blockmaporder, sectororder;
 
+	if (K_RawSnapBlocksTests("rollback_test"))
+		return;
+
 	if (gamestate != GS_LEVEL)
 	{
 		CONS_Printf("You must be in a level to use this.\n");
@@ -2166,7 +2488,7 @@ static void Command_RollbackTest_f(void)
 	// Somewhere to put the second snapshot that is not part of the ring.
 	// Transient: a megabyte is not worth holding on to between invocations of
 	// a diagnostic command.
-	resaved = (rollbackslot_t *)Z_Malloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
+	resaved = (rollbackslot_t *)Z_Calloc(sizeof (rollbackslot_t), PU_STATIC, NULL);
 	if (!resaved)
 	{
 		CONS_Printf("rollback_test: could not allocate the comparison buffer\n");
@@ -2179,7 +2501,7 @@ static void Command_RollbackTest_f(void)
 	if (!K_SaveGameState(gametic))
 	{
 		CONS_Printf("rollback_test: K_SaveGameState failed\n");
-		Z_Free(resaved);
+		K_FreeSlot(resaved);
 		return;
 	}
 	saveus = K_PreciseToMicros(I_GetPreciseTime() - started);
@@ -2222,7 +2544,7 @@ static void Command_RollbackTest_f(void)
 	if (!K_LoadGameState(gametic))
 	{
 		CONS_Printf("rollback_test: K_LoadGameState failed\n");
-		Z_Free(resaved);
+		K_FreeSlot(resaved);
 		K_FreeDiagSet(&recsbefore);
 		K_FreeDiagSet(&recsafter);
 		return;
@@ -2259,7 +2581,7 @@ static void Command_RollbackTest_f(void)
 	if (!K_WriteSnapshot(resaved, gametic))
 	{
 		CONS_Printf("rollback_test: second K_WriteSnapshot failed\n");
-		Z_Free(resaved);
+		K_FreeSlot(resaved);
 		K_FreeDiagSet(&recsbefore);
 		K_FreeDiagSet(&recsafter);
 		return;
@@ -2296,7 +2618,7 @@ static void Command_RollbackTest_f(void)
 		"seeds. The byte comparison is the real result.\n");
 #endif
 
-	Z_Free(resaved);
+	K_FreeSlot(resaved);
 	K_FreeDiagSet(&recsbefore);
 	K_FreeDiagSet(&recsafter);
 }
@@ -2920,6 +3242,9 @@ static void Command_RollbackLeak_f(void)
 {
 	int32_t tics = 4;
 
+	if (K_RawSnapBlocksTests("rollback_leak"))
+		return;
+
 	if (COM_Argc() > 1)
 		tics = atoi(COM_Argv(1));
 
@@ -2930,6 +3255,9 @@ static void Command_RollbackLeak_f(void)
 static void Command_RollbackResim_f(void)
 {
 	int32_t tics = 4;
+
+	if (K_RawSnapBlocksTests("rollback_resim"))
+		return;
 
 	if (COM_Argc() > 1)
 		tics = atoi(COM_Argv(1));
@@ -2977,6 +3305,9 @@ static void Command_RollbackSoak_f(void)
 		}
 		return;
 	}
+
+	if (K_RawSnapBlocksTests("rollback_soak"))
+		return;
 
 	g_soakinterval = atoi(COM_Argv(1));
 
@@ -4134,6 +4465,9 @@ static void K_ReportSaveProfile(void)
 				sizeu1(bytes / 1024), saveus);
 		}
 	}
+
+	if (g_rawsnap > 0 || g_rawsaves > 0)
+		K_ReportRawSnap();
 }
 
 static void K_PrintBuckets(const char *what, const uint32_t *buckets)
@@ -4536,6 +4870,9 @@ static void Command_RollbackReplay_f(void)
 	tic_t ltbefore, ltafter, ltloaded;
 	dboolean records;
 
+	if (K_RawSnapBlocksTests("rollback_replay"))
+		return;
+
 	if (COM_Argc() > 1)
 		n = atoi(COM_Argv(1));
 
@@ -4729,6 +5066,11 @@ void K_RollbackTicker(void)
 void K_RollbackSoakTicker(void)
 {
 	if (g_soakinterval == 0 || gamestate != GS_LEVEL)
+		return;
+
+	// A soak compares archives, which rollback_rawsnap 1 does not write: one
+	// started before the switch waits until it is set back to 0 or 2.
+	if (g_rawsnap == 1)
 		return;
 
 	// A check resimulates tics, and those tics must not start checks of their own.
@@ -7774,4 +8116,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
 	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
+	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 }
