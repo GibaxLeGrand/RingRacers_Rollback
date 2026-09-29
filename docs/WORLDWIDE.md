@@ -5076,3 +5076,101 @@ heads (B), a copy of `players[]` if E1 is chosen, and the string arguments.
 And the verify mode needs a reference-count check beside the byte
 comparison. Two module statics (`beamPoints`, `minimapGear`) are to read
 before relying on them.
+
+### 8.84 Driven `keep` on Opulence with the instruments: the history loses its place, and a raw copy of the pools is 0.4 ms
+
+Measured on 2026-09-29, binary `df8ed24e9` (sha256 `385b0a29...`, CI run
+36544246555), both copies checked against the artefact, the previous exe
+kept as `.bak_755ea3c`. Gibax's go-ahead ("oui, installe et lance keep sur
+Opulence, je pilote"), **driven by Gibax**. Processor at 27% before the
+launch, League of Legends client closed. The player entered the game
+(`playlog_keep_RR_Opulence_20260929-124631_df8ed24.txt`). Predictions in
+8.79, 8.81, 8.82.
+
+**Kept speculation and its rebuilds**
+
+| | window 0 | window 1 | window 2 | 8.78 (driven) |
+|---|---|---|---|---|
+| passes kept, of 999 | **965** | **830** | **720** | 654 - 694 |
+| rebuilt: an input differed | 34 | 168 | 279 | 305 - 345 |
+| first wrong tic, from the frontier: 0 / 1 / 2 / 3 / 4+ | 24 / 7 / 3 / 0 / 0 | 131 / 28 / 9 / 0 / 0 | 256 / 16 / 6 / 1 / 0 | |
+| wrong inputs on it: this machine / bots | 32 / 4 | 166 / 9 | 279 / 0 | |
+| ... this machine's: received / **replayed** / guessed | 0 / **32** / 0 | 0 / **165** / 1 | 0 / **279** / 0 | |
+| ... differing in `latency` / `angle` / `turning` / `buttons` | 32 / 28 / 4 / 4 | 166 / 122 / 48 / 16 | 279 / 181 / 95 / 22 | |
+| tics thrown away / kept by a rebuild from the first wrong tic | 273 / 13 | 1329 / 46 | 2004 / 31 | |
+| pass | **9.7 ms** | 20.6 | 29.3 | 29.5 - 33.9 |
+| frames drawn in 1000 tics | **3458** | 2595 | 1786 | 1556 - 1852 |
+| iterations past a tic | 35 | 172 | 282 | |
+| inputs in flight / depth | 7.09 / 7.98 | 6.31 / 8.02 | 5.96 / 7.33 | |
+| a speculated tic | 3.96 ms | 4.26 | 4.75 | |
+
+- **8.79's prediction fails, and its doubt was right: every wrong local
+  input was replayed from the history, none guessed past it** (one in 477).
+  Every one differs in `latency` -- **the replay handed the tic a different
+  sample from the one the server applied** -- and most in `angle`, which
+  `D_ResetTiccmdAngle` rewrites across the history (the reason
+  `K_RollbackMapHistory` does not match on it). So 8.78's reading was wrong:
+  the speculation does not run past the newest input; the history's
+  alignment with the server's tics slips.
+- **The first wrong tic is the frontier's own** (24 of 34, 131 of 168, 256
+  of 279): the oldest tic in flight, the one just confirmed. A rebuild from
+  the first wrong tic would keep 1.5 to 5% of what is thrown away -- **not
+  the remedy**. The remedy is where the history loses its place.
+- **It feeds on itself**: 3% of passes rebuilt in window 0, 17%, then 28%;
+  the pass 9.7 ms, 20.6, 29.3; iterations past a tic 35, 172, 282. A late
+  frame is the likely way a sample and a tic come apart (a tic run with no
+  new sample, or two samples in one), and each rebuild makes a late frame.
+  Not measured.
+- **Window 0 is what A gives when the history holds: 97% kept, a pass of
+  9.7 ms, 3458 frames in 1000 tics -- 121 a second, driven, on Opulence.**
+- The bots: 13 wrong inputs in 3000 passes.
+- Drift 0.000 but once: tic 3348, this machine's kart 0.036 units out,
+  `speed` 729370 against 729410, put back once. One sample in 6696; not
+  explained.
+
+**Where a save's time goes** (8.81; per local save, 1260 to 3001 saves a
+window):
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| a local save | 2938 us, 275 KB | 2865 us, 288 KB | 2896 us, 296 KB |
+| thinkers: objects | 1938 us, 231 KB | 1961 us, 243 KB | 1975 us, 251 KB |
+| world | 464 us, 4 KB | 452 us, 4 KB | 453 us, 4 KB |
+| numbering / chain stamp | 283 us | 219 us | 201 us |
+| Lua / ACS | 147 / 18 us | 146 / 18 us | 151 / 18 us |
+| players | 4 us, 11 KB | 4 us, 11 KB | 4 us, 11 KB |
+| specials, slopes, main list, waypoints, misc | 78 us | 57 us | 86 us |
+
+- **Holds**: the objects are two thirds of the time and 84% of the bytes;
+  players far under 0.5 ms; Lua and ACS together 0.17 ms, far under 1 ms --
+  so Lua is **not** the next target.
+- **Fails**: a save is **2.9 ms, not about 4**, and the world is not small:
+  **0.45 ms for 4 KB**, a sixth of the save; the numbering and chain stamp
+  another 0.2 to 0.3 ms. The world is the second target after the objects.
+- The 4 ms of 8.78 was an estimate from counting saves; measured directly a
+  save is 2.9 ms against 2.2 to 2.8 up to `5a417494f` (8.78). The
+  "regression" is smaller than 8.78 said, if it is one at all.
+
+**The level pools and their raw copy** (8.82):
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| objects: 776-byte blocks in use / chunks | 3982 / 5 | 4231 / 5 | 4050 / 5 |
+| 128-byte / 64-byte blocks in use | 501 / 8783 | 501 / 8851 | 501 / 8806 |
+| **a raw copy of the pools** | **4091 KB, 385 us** | **4148 KB, 375 us** | **4233 KB, 460 us** |
+
+`rollback_poolcopy` at the end: 4233 KB, a copy 369 us (mean of 10), putting
+it back 192 us, **the round trip exact**.
+
+- **Holds**: exact; 4.1 to 4.2 MB, in 3 to 5; 0.37 to 0.46 ms, in 0.3 to 1.
+  The block size is 776 bytes, and five chunks, not four (3982 to 4231
+  objects, not about 3700).
+- **Against the save it replaces: 0.4 ms against 2.9**, and the restore half
+  that. Well under 8.82's 1.5 ms line: **step 3 of B2 is worth building**
+  (the resume note of 2026-09-29: `rollback_rawsnap` on `feature-b2`, after
+  choosing E1 or E2 for the reference counts, 8.83).
+
+**So, in order:** find where the history and the server's tics part (reading
+first: how the client builds and labels its samples when a frame is late,
+and how the server fills a tic that has none); then B2's step 3, whose raw
+copy is measured at a seventh of the save; the world's 0.45 ms after that.
