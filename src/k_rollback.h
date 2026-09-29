@@ -198,6 +198,11 @@ int32_t K_RollbackTwoClock(void);
   * top of it is a cost paid twice. */
 dboolean K_RollbackPays(void);
 
+/** True when this machine runs tics that are not the confirmed ones: the
+  * two-clock speculation, or the old loop. Such a machine records no replay
+  * (WORLDWIDE.md 8.96). */
+dboolean K_RollbackPredicting(void);
+
 /** True while speculative tics are being run. Sound, the snapshot keeper and
   * anything else that must not happen twice sit these out: a speculation is
   * thrown away and rebuilt every pass, so its side effects would repeat. */

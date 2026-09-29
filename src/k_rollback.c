@@ -5755,6 +5755,11 @@ dboolean K_RollbackSpeculating(void)
 	return g_speculating;
 }
 
+dboolean K_RollbackPredicting(void)
+{
+	return (K_RollbackTwoClock() > 0 || K_RollbackPredictAhead() > 0);
+}
+
 void K_RollbackNoteSuppressedXCmd(void)
 {
 	g_suppressedxcmds++;

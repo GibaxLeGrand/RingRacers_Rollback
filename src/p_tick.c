@@ -780,7 +780,11 @@ void P_Ticker(dboolean run)
 	{
 		R_UpdateMobjInterpolators();
 
-		if (demo.recording)
+		// A client that predicts writes no replay: every speculated tic was
+		// written too, the restores never rewinding it, and one wrote across a
+		// level's restart (WORLDWIDE.md 8.96). A replay being recorded stops
+		// where the prediction starts; P_SetupLevel begins none while it runs.
+		if (demo.recording && K_RollbackPredicting() == false)
 		{
 			if (!G_ConsiderEndingDemoWrite())
 			{
