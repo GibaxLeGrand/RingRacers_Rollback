@@ -4,7 +4,7 @@
 An unofficial fork, maintained by Gibax, on the branch `rollback-netcode`.
 
 <p align="center">
-  <img src="docs/RRW_logo.png" width="476" style="image-rendering:pixelated" alt="Ring Racers Worldwide logo">
+  <img src="docs/RRW_logo.png" width="238" alt="Ring Racers Worldwide logo">
 </p>
 
 > **Experimental, not ready for public play.** Every feature below sits behind
