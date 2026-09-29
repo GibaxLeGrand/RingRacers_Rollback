@@ -12,12 +12,13 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-29** — 27 commands, checked against
+**Up to date as of 2026-09-29** — 28 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
 `rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80);
-`rollback_poolcopy` from `df8ed24e9` (8.82).
+`rollback_poolcopy` from `df8ed24e9` (8.82); `rollback_rawsnap` from
+`371ca7419`, on `feature-b2` (8.88, not yet pushed).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -185,6 +186,29 @@ coins, mace chains, braziers), not the karts.
 - The timing adds its own cost, so the total reads above a tic's real one:
   compare types with each other, not with a race without it.
 - Setting it resets the counts.
+
+### `rollback_rawsnap [0|1|2]`
+**Client side, and the tests** (`WORLDWIDE.md` 8.88; on `feature-b2`, not
+yet in a build). How snapshots are taken:
+- `0` (default): network snapshots, as before.
+- `1`: **raw snapshots** -- the level pools copied whole, the heads pointing
+  into them, and an archive of the rest (players, world, ACS, Lua...).
+  Restored at their own addresses; every reference count is rebuilt. The
+  tests and soaks refuse to start in this mode, and a running soak waits:
+  they compare archives, which it does not write.
+- `2`: raw snapshots **verified** -- each also carries the full archive, and
+  each restore is checked against it byte for byte, and its rebuilt
+  reference counts against the live ones; the first failures print a
+  `VERIFY` line (the archive block, or the object type and both counts).
+  Slower: it is a check, not a mode to play in.
+
+No argument: the mode and its counts -- raw saves and their size (archive,
+pools, heads) and time, raw restores and their time, restores refused
+(another level), restores verified and how many failed each check. Also
+printed at the end of `rollback_twoclock`'s report while raw snapshots are
+on. Setting it resets the counts; snapshots already taken are read the way
+they were written. About 5 MB a snapshot on Opulence. Harness: `soak.sh
+leakraw`, `soak.sh wwraw` (mode 2), `playtest.sh keepraw` (mode 1).
 
 ### `rollback_poolcopy [times]`
 **Diagnostic, in a level** (`WORLDWIDE.md` 8.82). Times a raw copy of the four

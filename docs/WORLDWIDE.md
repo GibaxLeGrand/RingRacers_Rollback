@@ -100,8 +100,11 @@ not yet run).
    2026-09-29 (8.81)**: the saves are about 40% of a driven pass; the save
    is now timed step by step (`ba1e43523`), and every thinker turns out
    to live in four fixed-block pools, which a raw snapshot can copy whole;
-   they snapshot and restore themselves in `df8ed24e9` (8.82),
-   not yet used in play.
+   they snapshot and restore themselves in `df8ed24e9` (8.82): a copy is
+   0.4 ms against a 2.9 ms save, round trip exact (8.84). **Step 3 written
+   (8.88, `371ca7419` on `feature-b2`, not pushed)**: `rollback_rawsnap`,
+   raw snapshots with every reference count rebuilt (choice E2), and a
+   verify mode.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
    8.28 is fixed in code (8.29), never checked against a stock build. **WORLDWIDE
    mode written (8.80), pushed as `51ba899d6` (CI green), not yet run**: one server switch,
@@ -5366,3 +5369,93 @@ arrivals jitter on their own.
 The harness's server scenario prints `rollback_relabel` every 2000 tics and
 is killed before its last print; it needs a print inside every client
 window.
+
+### 8.88 B2, step 3: raw snapshots, with every reference count rebuilt (E2)
+
+Written on 2026-09-29 on Gibax's choice of E2 (8.83: "E2"), `371ca7419`,
+branch `feature-b2`, **not pushed, never compiled** (no compiler on the
+machine it was written on). Behind a new switch, off by default.
+
+**`rollback_rawsnap 0|1|2`** -- 0: network snapshots, as before. 1: raw
+snapshots. 2: raw snapshots **verified**: beside each one the full archive,
+and after each restore the archive of the restored world compared with it
+byte for byte, and every rebuilt reference count compared with the one the
+copy brought back. The tests and soaks compare archives, which mode 1 does not
+write: they refuse to start in mode 1, and a running soak waits.
+
+**A raw snapshot is three parts**, in one buffer per slot (about 5 MB on
+Opulence, grown as needed, so about 100 MB for the 20-slot ring):
+
+1. the archive **without what the pools hold** (`P_SaveNetGameRaw`): of the
+   thinker section only the global object links; no chain stamp -- the chains
+   come back raw; objects never archived are numbered 0, so a restored one
+   can never answer for a synced object in the relink index;
+2. the **level pools** (`Z_LevelPoolSnapshot`, 8.82);
+3. the **heads** that point into the pools from outside (`P_SaveRawHeads`,
+   8.83's list B): thinker list heads; per sector its object chain, its
+   sector-node and precipitation-node lists and its four thinker slots; each
+   FOF's fade thinker; the blockmap and precipitation blockmap heads; each
+   polyobject's owner; the TID chains; `waypointcap`, `trackercap`,
+   `overlaycap`; the skybox points.
+
+**A raw restore**, every part checked before anything is written (the heads
+against this level's layout, the pools against their chunks):
+
+- sounds noted by object number, and the living thinkers listed, while the
+  old objects are still in memory; then the pools, then the heads;
+- Lua forgets every thinker the restore took away -- the objects born after
+  the snapshot: a network load's purge makes it forget every object, and a
+  raw copy frees nothing block by block;
+- the ACS era is advanced, as `P_InitThinkers` does in a network load: ACS
+  threads forget the objects they held without giving their references back;
+- **every reference count set to zero**; the network sections are loaded --
+  players, world, polyobjects (their owner is no longer nulled: it came back
+  with the heads), specials, waypoints, ACS, Lua -- and the loaders count the
+  references they relink: players, race and tube waypoints, the global
+  links, the end camera, ACS threads;
+- players reclaim their bodies (`players[].mo`), as `LoadMobjThinker` does;
+- **`P_CountRawReferences`** counts the rest: every object's eight counted
+  pointers, *removed objects included* -- `P_RemoveMobj` gives back all of
+  them but `terrainOverlay`, which the live count therefore still holds; the
+  caller of every delayed linedef executor; the caps and the skybox points;
+- the renderer's interpolation list is rebuilt from the objects there are.
+
+**Found on the way -- a latent defect of today's restore:** a delayed linedef
+executor counts its caller (`p_spec.c`, `P_SetTarget`), but the network load
+puts the caller back without counting it (`P_NetUnArchiveThinkers`,
+`restoreNum`). After any restore the caller's count is one too low, so an
+object held only by a pending executor could be freed under it. The raw
+restore counts it; verify mode will say whether the live counts agree.
+
+**Kept, not fixed:** level interpolators (sector planes a thinker moves) are
+not rebuilt, so a thinker born after the snapshot leaves a stale one and one
+brought back has none -- visual only, a plane moving without smoothing;
+precipitation is rolled back with the pools; the string arguments of
+removed objects are no longer freed while raw snapshots may bring them back
+(a few bytes an object, freed with the level); `beamPoints` and
+`minimapGear` (8.83) are still to read.
+
+**Harness:** `soak.sh leakraw` and `soak.sh wwraw` -- the leak and resim soaks
+with `rollback_rawsnap 2`, and its report at the end; `playtest.sh keepraw`
+-- the `keep` race with `rollback_rawsnap 1`, for the cost.
+
+**Predictions, on the first build that carries it** (each launch asked for):
+
+- **It compiles** -- or the CI names the lines to fix; the code is large and
+  was never compiled.
+- **`soak.sh leakraw`, then `wwraw`, on Skyscraper Leaps, then Opulence:**
+  every restore verified; **no archive difference** but the ones the stock
+  soaks already show (`itemList.cap`, in the players block, which stays in the
+  network format); **no reference count rebuilt differently** -- or, if some
+  are, each line names an object type and its live and rebuilt counts, which
+  is a holder the recount misses (or counts twice). The soak's own failures
+  as in the stock soaks (8.59, 8.62).
+- **`playtest.sh keepraw map=RR_Opulence`, driven:** a raw save **1.2 to 1.6
+  ms** (the pools 0.4, the world 0.45, Lua and ACS 0.17, numbering and the
+  rest) against 2.9 (8.84); a raw restore **1.5 to 2.5 ms** against about 6.5
+  (8.60); so a kept pass about 1.5 ms cheaper, and a rebuild -- a restore and
+  a save per re-run tic -- 15 to 20 ms cheaper. The fraction kept unchanged
+  (the history's loop, 8.87, is not this).
+- If the verify mode finds nothing on the seven maps' soaks, mode 1 can be
+  trusted in races; if it finds counts off, the missing holder goes into
+  `P_CountRawReferences` before anything else.

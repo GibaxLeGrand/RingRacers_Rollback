@@ -196,9 +196,12 @@ correction channel's put-back and fixed. **Every launch is asked for first.**
      `rollback_poolcopy` times a copy and checks the round trip. Step 3's
      census is done (8.83): about twenty small heads and arrays to save
      beside the pools, the string arguments, and the reference counts.
-     **Next: measure step 2 on the measuring machine** (a copy against the
-     save's 4 ms), then `rollback_rawsnap` with a verify mode that checks the
-     counts as well as the bytes, then the soaks.
+     Step 2 measured (8.84): a copy 0.4 ms against a 2.9 ms save, round
+     trip exact. **Step 3 written** (8.88, `371ca7419` on `feature-b2`, not
+     pushed): `rollback_rawsnap`, E2 (every count rebuilt), with a verify
+     mode. **Next, each asked for:** a build of `feature-b2`, then `soak.sh
+     leakraw` and `wwraw` on Skyscraper Leaps and Opulence (mode 2), then
+     `playtest.sh keepraw map=RR_Opulence` driven, for the cost.
    - Open: a sound cut when an object is removed in a speculated tic (8.73);
      the slow save -- 4 ms from `69e65f0ac` against 2.5 up to `5a417494f`,
      not the machine (8.78), to bisect with the kept exes; the camera
