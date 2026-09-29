@@ -6689,6 +6689,14 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 	// we don't want the removed mobjs to come back
 	P_InitThinkers();
 
+	// Every object is gone, and every body with them. A player whose body the
+	// save does not hold -- one who entered the game after a snapshot -- kept
+	// pointing at the purged one, whose memory the next objects reuse; at a
+	// level's restart G_DoReborn then removed whatever object lived there
+	// (WORLDWIDE.md 8.96). The load claims the bodies it brings back.
+	for (i = 0; i < MAXPLAYERS; i++)
+		players[i].mo = NULL;
+
 	P_LoadMobjPointers(ReadMobjPointer);
 
 	// clear sector thinker pointers so they don't point to non-existant thinkers for all of eternity
@@ -8557,6 +8565,7 @@ static void P_NetArchiveThinkersRaw(savebuffer_t *save)
 static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
 {
 	thinker_t *th;
+	int32_t i;
 
 	if (READUINT32(save->p) != ARCHIVEBLOCK_THINKERS)
 		I_Error("Bad $$$.sav at archive block Thinkers");
@@ -8566,7 +8575,12 @@ static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
 
 	// players[].mo: LoadMobjThinker gives each loaded object's player back its
 	// body. The raw copy put the objects back instead; each synced one that
-	// carries a player claims it again, in list order, as the load would.
+	// carries a player claims it again, in list order, as the load would. A
+	// player with no body in the snapshot gets none, not the one the pools no
+	// longer hold (WORLDWIDE.md 8.96).
+	for (i = 0; i < MAXPLAYERS; i++)
+		players[i].mo = NULL;
+
 	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
 	{
 		mobj_t *mo = (mobj_t *)th;
