@@ -5525,3 +5525,8 @@ the same-session control.
 - If `keep` still misses after late samples, the misses' direction says
   where: older by one again -- the held count is short (a repeat not seen as
   one); newer -- R1 gives a sample a tic the server did not.
+
+⚠ Pushed the same day on Gibax's go-ahead ("pousse"), `7a455f6fe` with its
+docs `decbe360a`, CI run 36589172001. The merge of B2 step 3 before it
+(`49daf1196`, CI run 36588490220) is green on its three jobs: the raw
+snapshot code compiles with GCC and clang.
