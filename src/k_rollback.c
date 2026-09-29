@@ -3930,6 +3930,87 @@ static void K_ResetPassCosts(void)
 	g_spluahooks = g_spcheckpos = 0;
 	memset(g_splistus, 0, sizeof g_splistus);
 	g_spticcount = 0;
+
+	P_ResetSaveProfile();
+}
+
+/** A local save, step by step (WORLDWIDE.md 8.81): the mean time and size of
+  * each step over every local save since the counts were reset, the rollback
+  * tests' own included. Printed four steps a line; a step under 5 us and 1 KB
+  * on average is left out and counted in the last line. */
+static void K_ReportSaveProfile(void)
+{
+	const savestep_t *steps;
+	uint32_t saves;
+	const size_t n = P_GetSaveProfile(&steps, &saves);
+	uint64_t totalus = 0, totalbytes = 0, smallus = 0;
+	char line[512];
+	size_t i;
+	int32_t onthisline = 0;
+
+	if (saves == 0 || n == 0)
+		return;
+
+	for (i = 0; i < n; i++)
+	{
+		totalus += steps[i].us;
+		totalbytes += steps[i].bytes;
+	}
+
+	CONS_Printf("rollback_save: per local save, over %u -- %u us, %u KB\n", saves,
+		(uint32_t)(totalus / saves), (uint32_t)(totalbytes / saves / 1024));
+
+	line[0] = 0;
+
+	for (i = 0; i < n; i++)
+	{
+		const uint32_t us = (uint32_t)(steps[i].us / saves);
+		const uint32_t bytes = (uint32_t)(steps[i].bytes / saves);
+		char one[96];
+
+		if (us < 5 && bytes < 1024)
+		{
+			smallus += steps[i].us;
+			continue;
+		}
+
+		snprintf(one, sizeof one, "%s%s %u us %u KB", (onthisline ? ", " : ""),
+			(steps[i].name ? steps[i].name : "?"), us, bytes / 1024);
+		strlcat(line, one, sizeof line);
+
+		if (++onthisline == 4)
+		{
+			CONS_Printf("rollback_save: %s\n", line);
+			line[0] = 0;
+			onthisline = 0;
+		}
+	}
+
+	if (onthisline > 0)
+		CONS_Printf("rollback_save: %s\n", line);
+
+	CONS_Printf("rollback_save: the smaller steps together, %u us\n",
+		(uint32_t)(smallus / saves));
+
+	// What a raw snapshot of the thinkers would copy instead (track B2): every
+	// thinker and sector node lives in one of the four level pools, and a pool
+	// grows by whole chunks. As the pools stand at this report.
+	{
+		levelpoolinfo_t pools[Z_LEVELPOOLS];
+		size_t p;
+
+		Z_LevelPoolInfo(pools);
+
+		for (p = 0; p < Z_LEVELPOOLS; p++)
+		{
+			CONS_Printf("rollback_save: level pool of %u-byte blocks -- %u in use (%u KB), "
+				"%u chunks of %u blocks (%u KB)\n",
+				(uint32_t)pools[p].blocksize, (uint32_t)pools[p].allocated,
+				(uint32_t)((pools[p].allocated * pools[p].blocksize) / 1024),
+				(uint32_t)pools[p].chunks, (uint32_t)pools[p].blocksperchunk,
+				(uint32_t)((pools[p].chunks * pools[p].blocksperchunk * pools[p].blocksize) / 1024));
+		}
+	}
 }
 
 static void K_PrintBuckets(const char *what, const uint32_t *buckets)
@@ -4007,6 +4088,8 @@ static void K_ReportPassCosts(void)
 			"a speculated tic\n",
 			(uint32_t)(g_spluahooks / n), (uint32_t)(g_spcheckpos / n));
 	}
+
+	K_ReportSaveProfile();
 }
 
 // Spikes.

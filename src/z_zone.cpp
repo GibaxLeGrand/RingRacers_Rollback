@@ -696,6 +696,21 @@ size_t Z_LevelPoolUsage(void)
 		+ g_level_tiny_pool.allocated_bytes();
 }
 
+void Z_LevelPoolInfo(levelpoolinfo_t out[Z_LEVELPOOLS])
+{
+	const srb2::PoolAllocator* pools[Z_LEVELPOOLS] = {
+		&g_level_large_pool, &g_level_med_pool, &g_level_small_pool, &g_level_tiny_pool
+	};
+
+	for (size_t i = 0; i < Z_LEVELPOOLS; i++)
+	{
+		out[i].blocksize = pools[i]->block_size();
+		out[i].allocated = pools[i]->allocated_blocks();
+		out[i].chunks = pools[i]->chunks();
+		out[i].blocksperchunk = pools[i]->blocks_per_chunk();
+	}
+}
+
 void* Z_LevelPoolMalloc(size_t size)
 {
 	void* p = nullptr;

@@ -79,6 +79,89 @@ static inline dboolean MobjIsArchived(const mobj_t *mobj);
 // the unarchiving functions above it.
 static void P_ProfileStep(const char *name);
 
+// ----------------------------------------------------------------------------
+// Save profiling (WORLDWIDE.md 8.81)
+//
+// The load has had its steps timed since 8.34; the save had only its total,
+// and under rollback_keepspec it is the larger half of a pass (8.78). Every
+// local save adds each step's time and bytes to the step of the same index:
+// P_SaveNetGame's steps come in a fixed order, and only a local save, which
+// is always taken in a level, is counted. Timed in the counter's own units and
+// converted when read, so a step shorter than a microsecond still adds up.
+// Some fifteen clock reads a save, against milliseconds of writing.
+// ----------------------------------------------------------------------------
+
+static savestep_t g_saveprofile[P_SAVEPROFILE_MAX];
+static precise_t g_saveprofileticks[P_SAVEPROFILE_MAX];
+static size_t g_saveprofilecount;   // steps seen so far
+static uint32_t g_saveprofilesaves;
+static dboolean g_saveprofiling;    // inside a local P_SaveNetGame
+static size_t g_savestep;           // the step that save is on
+static precise_t g_savemark;
+static const uint8_t *g_savemarkp;
+
+static void P_SaveProfileStart(const savebuffer_t *save)
+{
+	g_saveprofiling = true;
+	g_savestep = 0;
+	g_savemarkp = save->p;
+	g_savemark = I_GetPreciseTime();
+}
+
+/** Books the time and the bytes since the last step under this one. */
+static void P_SaveProfileStep(const savebuffer_t *save, const char *name)
+{
+	precise_t now;
+
+	if (g_saveprofiling == false)
+		return;
+
+	now = I_GetPreciseTime();
+
+	if (g_savestep < P_SAVEPROFILE_MAX)
+	{
+		g_saveprofile[g_savestep].name = name;
+		g_saveprofile[g_savestep].bytes += (uint64_t)(save->p - g_savemarkp);
+		g_saveprofileticks[g_savestep] += now - g_savemark;
+
+		if (g_savestep + 1 > g_saveprofilecount)
+			g_saveprofilecount = g_savestep + 1;
+	}
+
+	g_savestep++;
+	g_savemarkp = save->p;
+	g_savemark = now;
+}
+
+static void P_SaveProfileEnd(void)
+{
+	if (g_saveprofiling == false)
+		return;
+
+	g_saveprofilesaves++;
+	g_saveprofiling = false;
+}
+
+size_t P_GetSaveProfile(const savestep_t **steps, uint32_t *saves)
+{
+	size_t i;
+
+	for (i = 0; i < g_saveprofilecount; i++)
+		g_saveprofile[i].us = (g_saveprofileticks[i] * (uint64_t)1000000) / I_GetPrecisePrecision();
+
+	*steps = g_saveprofile;
+	*saves = g_saveprofilesaves;
+	return g_saveprofilecount;
+}
+
+void P_ResetSaveProfile(void)
+{
+	memset(g_saveprofile, 0, sizeof g_saveprofile);
+	memset(g_saveprofileticks, 0, sizeof g_saveprofileticks);
+	g_saveprofilecount = 0;
+	g_saveprofilesaves = 0;
+}
+
 // Where each object sits in the chains collision walks. Declared here
 // because SaveMobjThinker, further up the file than the rest of this, is
 // what writes them out.
@@ -4888,9 +4971,16 @@ static void P_NetArchiveThinkers(savebuffer_t *save)
 	const thinker_t *th;
 	uint32_t i;
 
+	// One profile step for each list, named in thinklistnum_t's order.
+	static const char *const listname[NUM_THINKERLISTS] = {
+		"thinkers: slopes", "thinkers: polyobjects", "thinkers: main",
+		"thinkers: objects", "thinkers: slopes (demo)", "thinkers: precipitation"
+	};
+
 	WRITEUINT32(save->p, ARCHIVEBLOCK_THINKERS);
 
 	P_SaveMobjPointers(WriteMobjPointer);
+	P_SaveProfileStep(save, "thinkers: object pointers");
 
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
@@ -5119,6 +5209,7 @@ static void P_NetArchiveThinkers(savebuffer_t *save)
 		CONS_Debug(DBG_NETPLAY, "%u thinkers saved in list %d\n", numsaved, i);
 
 		WRITEUINT8(save->p, tc_end);
+		P_SaveProfileStep(save, listname[i]);
 	}
 
 	TracyCZoneEnd(__zone);
@@ -8336,8 +8427,12 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 	mobj_t *mobj;
 	uint32_t i = 1; // don't start from 0, it'd be confused with a blank pointer otherwise
 
+	if (local)
+		P_SaveProfileStart(save);
+
 	CV_SaveNetVars(&save->p);
 	P_NetArchiveMisc(save, resending);
+	P_SaveProfileStep(save, "netvars/misc");
 
 	// Assign the mobjnumber for pointer tracking
 	if (gamestate == GS_LEVEL)
@@ -8357,32 +8452,43 @@ void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 	// After the numbering above, which the stamp indexes by.
 	if (local)
 		P_StampChainOrder();
+	P_SaveProfileStep(save, "numbering/chain stamp");
 
 	K_SaveEndCamera(save);
 	WriteMobjPointer(g_endcam.panMobj);
 
 	P_NetArchivePlayers(save);
+	P_SaveProfileStep(save, "players");
 	P_NetArchiveParties(save);
 	P_NetArchiveRoundQueue(save);
 	P_NetArchiveZVote(save);
+	P_SaveProfileStep(save, "parties/queue/vote");
 
 	if (gamestate == GS_LEVEL)
 	{
 		P_NetArchiveWorld(save);
+		P_SaveProfileStep(save, "world");
 		P_ArchivePolyObjects(save);
-		P_NetArchiveThinkers(save);
+		P_SaveProfileStep(save, "polyobjects");
+		P_NetArchiveThinkers(save);   // profiles each of its lists
 		P_NetArchiveSpecials(save);
 		P_NetArchiveColormaps(save);
+		P_SaveProfileStep(save, "specials/colormaps");
 		P_NetArchiveTubeWaypoints(save);
 		P_NetArchiveWaypoints(save);
+		P_SaveProfileStep(save, "waypoints");
 	}
 
 	ACS_Archive(save);
+	P_SaveProfileStep(save, "ACS");
 	LUA_Archive(save, true);
+	P_SaveProfileStep(save, "Lua");
 
 	P_NetArchiveRNG(save);
 
 	P_ArchiveLuabanksAndConsistency(save);
+	P_SaveProfileStep(save, "rng/luabanks");
+	P_SaveProfileEnd();
 
 	TracyCZoneEnd(__zone);
 }

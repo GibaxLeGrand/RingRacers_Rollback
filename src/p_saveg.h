@@ -95,6 +95,26 @@ const uint8_t *P_GetProfilePlayers(size_t step);
 
 size_t P_GetLoadProfile(const loadstep_t **steps);
 
+// Where a local save's time goes, step by step, summed over every local save
+// since the last P_ResetSaveProfile (WORLDWIDE.md 8.81). The load has had its
+// steps timed since 8.34; the save, which rollback_keepspec runs once a kept
+// pass and once per tic of a rebuild, had only its total -- about 4 ms on
+// Opulence, some 40% of a driven pass (8.78). A raw snapshot (track B2) can
+// replace some of these steps and not others (Lua, ACS); this says which ones
+// are worth it.
+#define P_SAVEPROFILE_MAX 24
+
+struct savestep_t
+{
+	const char *name;
+	uint64_t us;      // summed over every save counted
+	uint64_t bytes;   // what the step wrote, summed likewise
+};
+
+// The steps, and how many local saves they sum.
+size_t P_GetSaveProfile(const savestep_t **steps, uint32_t *saves);
+void P_ResetSaveProfile(void);
+
 // Archives one mobj on its own, so the same object can be compared before and
 // after a state restore. Diagnostic aid, see p_saveg.cpp.
 size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj);

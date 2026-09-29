@@ -152,6 +152,21 @@ char *Z_StrDup(const char *in);
 // Specialty allocation functions
 //
 size_t Z_LevelPoolUsage(void);
+
+// What each level pool holds, largest blocks first (WORLDWIDE.md 8.81): every
+// thinker and sector node lives in one of these four, so their chunks are what
+// a raw snapshot of the world would have to copy.
+typedef struct levelpoolinfo_s
+{
+	size_t blocksize;
+	size_t allocated;       // blocks in use
+	size_t chunks;
+	size_t blocksperchunk;
+} levelpoolinfo_t;
+
+#define Z_LEVELPOOLS 4
+void Z_LevelPoolInfo(levelpoolinfo_t out[Z_LEVELPOOLS]);
+
 void *Z_LevelPoolMalloc(size_t size);
 void *Z_LevelPoolCalloc(size_t size);
 void Z_LevelPoolFree(void *p, size_t size);

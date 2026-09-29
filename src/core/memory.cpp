@@ -128,6 +128,16 @@ void PoolAllocator::deallocate(void* p)
 	allocated_blocks_--;
 }
 
+size_t PoolAllocator::chunks() const noexcept
+{
+	size_t n = 0;
+	for (const ChunkFooter* i = first_chunk_; i != nullptr; i = i->next)
+	{
+		n++;
+	}
+	return n;
+}
+
 void PoolAllocator::release()
 {
 	ChunkFooter* next = nullptr;

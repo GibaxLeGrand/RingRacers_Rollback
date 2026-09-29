@@ -63,6 +63,8 @@ public:
 	constexpr size_t block_size() const noexcept { return block_size_; };
 	constexpr size_t allocated_blocks() const noexcept { return allocated_blocks_; };
 	constexpr size_t allocated_bytes() const noexcept { return allocated_blocks_ * block_size_; };
+	constexpr size_t blocks_per_chunk() const noexcept { return blocks_; };
+	size_t chunks() const noexcept;
 
 	void release();
 };
