@@ -28,6 +28,10 @@ It is **client-side prediction with server reconciliation**, not GGPO-style
 peer-to-peer rollback: the game has an authoritative server and a consistency
 check, and this design keeps both.
 
+The goal is a community one: letting players race on servers far from them
+-- a European on an American server, for a start -- in a game as demanding as
+Ring Racers.
+
 ## How it works
 
 - **Two clocks.** The confirmed world (`gametic`) runs only the tics the
@@ -139,18 +143,39 @@ repository's agent instructions and applied at every step:
 
 ### Why I use AI, and where it stops -- a note from Gibax
 
-I know a lot of people are wary of AI in game development, or against it
-outright, and I fully understand that movement. So here is why I made this
-choice, and where I think its limits are.
+**Who is behind this.** I learned to program before the rise of AI, and I am
+a C# developer by trade, not a C expert. Ring Racers is written in C and C++,
+in an engine that comes from Doom Legacy, SRB2 and SRB2Kart. Alone, a project
+of this size would have meant months, if not more, of teaching myself the
+concepts -- netcode, prediction, determinism, this engine's internals -- and
+then designing the code, which would easily have made it unviable. It takes
+something away from the achievement, of course. But if I wait for someone
+else to do it, nobody will. And I did not want to hand the project over to
+somebody else just because C is not my strongest language.
 
-I use AI as a development assistant. On a project like this one -- a netcode
-inside an engine that comes from Doom Legacy, SRB2 and SRB2Kart -- it helps me
+**Why it went public.** It started as a small personal project. As it grew, I
+decided to take it online, because I am convinced that progress in Ring
+Racers' netcode can benefit everyone -- think of the rollback patches that
+were added to many older fighting games. Letting a European play properly on
+American servers would be a gift, especially in a game as demanding as Ring
+Racers, which unfortunately has few players in Europe. I also decided to use
+this project to find out how far generative AI can be pushed on real code, and
+where it breaks.
+
+**Kart Krew and the community.** I am not associated with Kart Krew, and I am
+not trying to be: this is a fork, a project of my own. I am well aware of how
+negatively generative AI is seen in the SRB2 community in general, and I fully
+understand the movement against it. I have decided that this is not mine to
+carry: if people don't like it, so be it -- they can boycott it and call it
+"AI slop", and not necessarily wrongly.
+
+**What the AI is for here.** I use it as a development assistant. It helps me
 move faster and, above all, keeps me working within a structure: a written
-prediction before every test, a journal that is never rewritten, one change at
-a time. It reads code faster than I can, keeps track of what was measured and
-when, and does a lot of the typing.
+prediction before every test, a journal that is never rewritten, one change
+at a time. It reads code faster than I can, keeps track of what was measured
+and when, and does a lot of the typing.
 
-Its limits are written down, not hidden. It gets things wrong: many of the
+**Its limits are written down, not hidden.** It gets things wrong: many of the
 predictions in the journal are its own, and many of them failed -- they stay
 there, marked as such. It cannot test a game properly: it cannot play a race,
 feel input delay or see a stutter, and a log only says what it was built to
@@ -162,6 +187,10 @@ do everything on its own, with no human knowledge behind it to check its work
 -- especially on code like Ring Racers -- greatly underestimates what human
 verification brings. AI is a tool to speed up development and make the work
 easier, not an automatic developer that does the job while nobody is looking.
+
+**My commitment.** As long as I maintain this project, I will do everything I
+can to make it as good as it can be -- ideally to the point where it can no
+longer objectively be called AI slop.
 
 A human always has to steer the AI, and steer it properly.
 
