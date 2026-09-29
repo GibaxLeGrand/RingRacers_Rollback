@@ -3276,6 +3276,16 @@ static uint32_t g_histcapped;   // passes whose replay was cut short by the dept
 static uint64_t g_histunackedsum;
 static uint64_t g_histdepthsum;
 
+// Where the replay and the server's filing part (WORLDWIDE.md 8.85). The replay
+// assumes one sample a tic; NetUpdate makes one a call, however many tics went
+// by, and the anchor tells samples apart by a stamp two of them can share.
+// Counted with rollback_history on or off, reset with it.
+static uint32_t g_samples;          // samples NetUpdate made in a level
+static uint32_t g_samplelate;       // ... after more than one real tic
+static uint32_t g_samplelatetics;   // ... the tics that got no sample of their own
+static uint32_t g_samplesamestamp;  // ... with the same stamp as the one before
+static uint32_t g_anchorambiguous;  // anchors that matched more than one sample
+
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
 // lands on moves with the delay the server files this machine's inputs with --
@@ -3501,6 +3511,17 @@ static uint32_t g_keepmissfield[3][NUMGUESSFIELDS];
 static uint32_t g_keepmisssrc[NUMKEEPSRC];          // this machine's, by where they came from
 static uint32_t g_keepmissrun;                      // tics already run that the rebuilds threw away
 static uint32_t g_keepmissright;                    // ... of them before the first wrong tic
+
+// This machine's wrong inputs, by where the sample the server applied sits in
+// the history against the one the replay used (WORLDWIDE.md 8.85): newer means
+// the replay fell behind (a sample lost at the server), older that it ran ahead
+// (a tic the server filled by repeating, or an anchor that took a newer twin).
+enum
+{
+	KEEPSHIFT_NEWER2, KEEPSHIFT_NEWER1, KEEPSHIFT_SAME, KEEPSHIFT_OLDER1, KEEPSHIFT_OLDER2,
+	KEEPSHIFT_LOST, NUMKEEPSHIFT
+};
+static uint32_t g_keepmissshift[NUMKEEPSHIFT];
 
 // Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
 // Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
@@ -3796,6 +3817,7 @@ static void K_SetKeepSpec(dboolean on)
 	memset(g_keepmisswho, 0, sizeof g_keepmisswho);
 	memset(g_keepmissfield, 0, sizeof g_keepmissfield);
 	memset(g_keepmisssrc, 0, sizeof g_keepmisssrc);
+	memset(g_keepmissshift, 0, sizeof g_keepmissshift);
 	g_keepmissrun = g_keepmissright = 0;
 }
 
@@ -3843,6 +3865,12 @@ static void Command_RollbackKeepSpec_f(void)
 		"an input replayed from the history %u, the newest input guessed past it %u\n",
 		g_keepmisssrc[KEEPSRC_RECEIVED], g_keepmisssrc[KEEPSRC_REPLAYED],
 		g_keepmisssrc[KEEPSRC_GUESSED]);
+	CONS_Printf("rollback_keepspec: the sample the server applied there, against the one "
+		"replayed -- newer by 2 or more %u, newer by 1 %u, the same to the anchor %u, "
+		"older by 1 %u, older by 2 or more %u, not in the history %u\n",
+		g_keepmissshift[KEEPSHIFT_NEWER2], g_keepmissshift[KEEPSHIFT_NEWER1],
+		g_keepmissshift[KEEPSHIFT_SAME], g_keepmissshift[KEEPSHIFT_OLDER1],
+		g_keepmissshift[KEEPSHIFT_OLDER2], g_keepmissshift[KEEPSHIFT_LOST]);
 	K_PrintWrongFields("rollback_keepspec", g_keepmisswho, g_keepmissfield);
 	CONS_Printf("rollback_keepspec: those rebuilds threw away %u tics already run; "
 		"starting from the first wrong tic would have kept %u of them\n",
@@ -4838,6 +4866,15 @@ static uint32_t g_offsetlost;  // the server used an input we never ran a tic on
 static uint32_t g_relabelseen[(2 * ROLLBACK_RELABELSPAN) + 1];
 static uint32_t g_relabelfar;
 static uint32_t g_relabelcount;
+
+// How the server filed each player's samples (WORLDWIDE.md 8.85): a tic later
+// than they arrived because the slot was taken, over one already filed, and the
+// tics that got none and repeated the one before. In a level only; never reset,
+// like the histogram above.
+static uint32_t g_filed[MAXPLAYERS];
+static uint32_t g_filedshifted[MAXPLAYERS];
+static uint32_t g_filedover[MAXPLAYERS];
+static uint32_t g_filedrepeat[MAXPLAYERS];
 static int64_t g_relabelsum;
 static int32_t g_relabelmin;
 static int32_t g_relabelmax;
@@ -5410,6 +5447,29 @@ void K_RollbackUnspeculate(void)
   * first. Newest match wins, so a run of identical samples is undercounted, not
   * overcounted.
   */
+/** The age in a local player's history of the newest sample, from age from on,
+  * that the anchor would take for cmd; -1 when none. */
+static int32_t K_HistoryAgeOf(uint8_t ss, const ticcmd_t *cmd, int32_t from)
+{
+	int32_t age;
+
+	// Not the angle: D_ResetTiccmdAngle rewrites it across the whole history.
+	for (age = (from > 0 ? from : 0); age < MAXGENTLEMENDELAY; age++)
+	{
+		const ticcmd_t *sent = D_LocalTiccmdAge(ss, age);
+
+		if (sent->latency == cmd->latency
+			&& sent->forwardmove == cmd->forwardmove
+			&& sent->turning == cmd->turning
+			&& sent->buttons == cmd->buttons)
+		{
+			return age;
+		}
+	}
+
+	return -1;
+}
+
 static void K_RollbackMapHistory(void)
 {
 	const tic_t base = D_NeededTic();
@@ -5433,21 +5493,12 @@ static void K_RollbackMapHistory(void)
 			continue;
 
 		applied = &netcmds[(base - 1) % BACKUPTICS][who];
+		age = K_HistoryAgeOf((uint8_t)i, applied, 0);
+		g_histunacked[i] = age;
 
-		// Not the angle: D_ResetTiccmdAngle rewrites it across the whole history.
-		for (age = 0; age < MAXGENTLEMENDELAY; age++)
-		{
-			const ticcmd_t *sent = D_LocalTiccmdAge((uint8_t)i, age);
-
-			if (sent->latency == applied->latency
-				&& sent->forwardmove == applied->forwardmove
-				&& sent->turning == applied->turning
-				&& sent->buttons == applied->buttons)
-			{
-				g_histunacked[i] = age;
-				break;
-			}
-		}
+		// Another sample the anchor cannot tell from it: the newer was taken.
+		if (i == 0 && age >= 0 && K_HistoryAgeOf(0, applied, age + 1) >= 0)
+			g_anchorambiguous++;
 	}
 }
 
@@ -5527,6 +5578,25 @@ static void K_NoteKeepMiss(tic_t from, tic_t tic)
 
 		if (who == 0 && g_keepsrc[s] < NUMKEEPSRC)
 			g_keepmisssrc[g_keepsrc[s]]++;
+
+		if (who == 0)
+		{
+			const int32_t ranage = K_HistoryAgeOf(0, ran, 0);
+			const int32_t realage = K_HistoryAgeOf(0, real, 0);
+
+			if (ranage < 0 || realage < 0)
+				g_keepmissshift[KEEPSHIFT_LOST]++;
+			else if (realage - ranage <= -2)
+				g_keepmissshift[KEEPSHIFT_NEWER2]++;
+			else if (realage - ranage == -1)
+				g_keepmissshift[KEEPSHIFT_NEWER1]++;
+			else if (realage == ranage)
+				g_keepmissshift[KEEPSHIFT_SAME]++;
+			else if (realage - ranage == 1)
+				g_keepmissshift[KEEPSHIFT_OLDER1]++;
+			else
+				g_keepmissshift[KEEPSHIFT_OLDER2]++;
+		}
 	}
 }
 
@@ -6142,6 +6212,50 @@ void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash)
 		*hash = g_liveinputhash;
 }
 
+void K_RollbackNoteSample(int32_t realtics)
+{
+	const ticcmd_t *now, *before;
+
+	if (gamestate != GS_LEVEL)
+		return;
+
+	g_samples++;
+
+	if (realtics > 1)
+	{
+		g_samplelate++;
+		g_samplelatetics += (uint32_t)(realtics - 1);
+	}
+
+	now = D_LocalTiccmdAge(0, 0);
+	before = D_LocalTiccmdAge(0, 1);
+
+	if (now != NULL && before != NULL && now->latency == before->latency)
+		g_samplesamestamp++;
+}
+
+void K_RollbackNoteFiling(int32_t player, dboolean shifted, dboolean overwrote)
+{
+	if (player < 0 || player >= MAXPLAYERS || gamestate != GS_LEVEL)
+		return;
+
+	g_filed[player]++;
+
+	if (shifted)
+		g_filedshifted[player]++;
+
+	if (overwrote)
+		g_filedover[player]++;
+}
+
+void K_RollbackNoteRepeat(int32_t player)
+{
+	if (player < 0 || player >= MAXPLAYERS || gamestate != GS_LEVEL)
+		return;
+
+	g_filedrepeat[player]++;
+}
+
 void K_RollbackNoteRelabel(int32_t delta, dboolean fromhost, dboolean inlevel)
 {
 	const int32_t split = fromhost
@@ -6238,6 +6352,21 @@ static void Command_RollbackRelabel_f(void)
 			}
 
 			CONS_Printf("%s\n", line);
+		}
+	}
+
+	{
+		int32_t p;
+
+		for (p = 0; p < MAXPLAYERS; p++)
+		{
+			if (g_filed[p] == 0 && g_filedrepeat[p] == 0)
+				continue;
+
+			CONS_Printf("rollback_relabel: p%d -- %u samples filed, %u a tic late because "
+				"the slot was taken, %u over one already there; %u tics got none and "
+				"repeated the one before\n",
+				p, g_filed[p], g_filedshifted[p], g_filedover[p], g_filedrepeat[p]);
 		}
 	}
 }
@@ -7072,6 +7201,8 @@ static void K_SetHistory(int32_t want)
 	g_histrises = g_histdrops = 0;
 	g_drawnvalid = false;
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
+	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
+	g_anchorambiguous = 0;
 }
 
 static void Command_RollbackHistory_f(void)
@@ -7098,11 +7229,21 @@ static void Command_RollbackHistory_f(void)
 			(uint32_t)((uint64_t)g_drawnjumps * 100 / g_drawnpasses), g_drawnjumptics);
 	}
 
+	if (g_samples > 0)
+	{
+		CONS_Printf("rollback_history: %u samples made, %u after more than one real tic "
+			"(%u tics got no sample of their own), %u with the same stamp as the one "
+			"before\n", g_samples, g_samplelate, g_samplelatetics, g_samplesamestamp);
+	}
+
 	if (g_histpasses == 0)
 	{
 		CONS_Printf("rollback_history: no speculation has looked for the applied input yet\n");
 		return;
 	}
+
+	CONS_Printf("rollback_history: the anchor matched more than one sample on %u of %u "
+		"passes\n", g_anchorambiguous, g_histpasses);
 
 	CONS_Printf("rollback_history: %u passes, the applied input found in %u (%u%%)\n",
 		g_histpasses, g_histmatched,

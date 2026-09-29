@@ -162,6 +162,20 @@ void K_RollbackLiveInputs(uint32_t *count, uint32_t *hash);
   * server's own node or a remote one) and by whether a level is running. */
 void K_RollbackNoteRelabel(int32_t delta, dboolean fromhost, dboolean inlevel);
 
+/** NetUpdate has just made this machine's sample, realtics real tics after the
+  * last one. One sample for several tics leaves the server a tic with none,
+  * which it fills by repeating the one before (WORLDWIDE.md 8.85). Client side. */
+void K_RollbackNoteSample(int32_t realtics);
+
+/** The server has filed one player's sample: a tic later than it arrived,
+  * because that slot was taken (shifted), and over a sample already filed there
+  * (overwrote). Server side. */
+void K_RollbackNoteFiling(int32_t player, dboolean shifted, dboolean overwrote);
+
+/** SV_Maketic found no sample from a player for a tic, and repeated the one
+  * before. Server side. */
+void K_RollbackNoteRepeat(int32_t player);
+
 /** Measures the stored correction against this client's confirmed world, and
   * applies it when asked to. Called from the tic loop once the confirmed world
   * is back and before it is advanced. Does nothing when none is pending. */

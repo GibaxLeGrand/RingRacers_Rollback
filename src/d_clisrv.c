@@ -5733,9 +5733,18 @@ static void HandlePacketFromPlayer(int8_t node)
 			// or interp messing with ticcmd send/receive timing. Instead of dropping, submit this
 			// ticcmd for the next tic, giving us 1 tic of "buffer".
 			// Remember, if we submitted 2 ticcmds too fast, the next one will probably be too slow!
+			dboolean shifted = false;
+
 			if ((!!(netcmds[faketic % BACKUPTICS][netconsole].flags & TICCMD_RECEIVED))
 				&& (faketic - firstticstosend < BACKUPTICS))
+			{
 				faketic++;
+				shifted = true;
+			}
+
+			// And whether it now lands on one already filed (WORLDWIDE.md 8.85).
+			K_RollbackNoteFiling(netconsole, shifted,
+				(netcmds[faketic % BACKUPTICS][netconsole].flags & TICCMD_RECEIVED) != 0);
 
 			FuzzTiccmd(&netbuffer->u.clientpak.cmd);
 
@@ -7199,6 +7208,7 @@ static void SV_Maketic(void)
 				// Copy the input from the previous tic
 				*ticcmd = *prevticcmd;
 				ticcmd->flags &= ~TICCMD_RECEIVED;
+				K_RollbackNoteRepeat(i);
 			}
 
 			// packetloss[i][leveltime%PACKETMEASUREWINDOW] = (cmd->flags & TICCMD_RECEIVED) ? false : true;
@@ -8209,6 +8219,10 @@ void NetUpdate(void)
 		maketic = neededtic;
 
 	Local_Maketic(realtics); // make local tic, and call menu?
+
+	// How many real tics this one sample stands for (WORLDWIDE.md 8.85).
+	if (client)
+		K_RollbackNoteSample(realtics);
 
 	if (server)
 		CL_SendClientCmd(); // send it
