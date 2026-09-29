@@ -5628,7 +5628,15 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 	{
 		i = READUINT8(save->p);
 		mobj->player = &players[i];
+
+		// A player's body is held with a counted reference -- P_SpawnPlayer's
+		// P_SetTarget(&p->mo, mobj), let go with P_SetTarget(&player->mo, NULL).
+		// Given back by plain assignment, every kart was one reference short
+		// after a load, and the count reached -1 when the body was let go
+		// (WORLDWIDE.md 8.54, 8.91). The old player->mo is not let go here: it
+		// may point at an object the purge has freed.
 		mobj->player->mo = mobj;
+		mobj->thinker.references++;
 	}
 	if (diff & MD_MOVEDIR)
 		mobj->movedir = READANGLE(save->p);
@@ -8566,8 +8574,12 @@ static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
 		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
 			continue;
 
+		// Counted, as the network load now counts it (LoadMobjThinker).
 		if (mo->player != NULL && TypeIsNetSynced(mo->type))
+		{
 			mo->player->mo = mo;
+			mo->thinker.references++;
+		}
 	}
 }
 
