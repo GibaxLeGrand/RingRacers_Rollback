@@ -5530,3 +5530,18 @@ the same-session control.
 docs `decbe360a`, CI run 36589172001. The merge of B2 step 3 before it
 (`49daf1196`, CI run 36588490220) is green on its three jobs: the raw
 snapshot code compiles with GCC and clang.
+
+⚠ Read on the measuring machine before any race, 2026-09-29: two places R1
+leaves on one sample a tic. (1) `K_SpeculationDepth` still takes the lead
+from the samples in flight (`g_histunacked`), not from the tics R1 gives
+them: after a late sample the speculation may stop short of the tic the
+newest sample lands on, so the newest input reaches the drawn world a tic
+or two later -- a matter of feel, not of what is kept. (2)
+`K_LocalInputSource` still calls a tic replayed only within the first
+`unacked` tics past `g_histbase`: a tic R1 fills from the history past those
+is counted **guessed**. So in the `keep` race a miss read as "guessed past
+it" may be a replayed one; its "sample against the one replayed" line says
+which. The same machine had written R1 separately (local branch
+`wip/histgaps`, never pushed), with the lead taken from what the samples
+cover and the source read the same way; it stays a reference, not a
+candidate.
