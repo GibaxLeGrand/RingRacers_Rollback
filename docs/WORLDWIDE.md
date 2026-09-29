@@ -5736,3 +5736,74 @@ place is reported by the compiler.
 one: `072542eb2`, `492118879`, `e2da72742`, `cc6ca1c0e` (the four above,
 put on top of the docs); the build to install is `cc6ca1c0e`'s, CI run
 36629162827.
+
+### 8.94 The four fixes measured: no kart off in a driven race, and raw snapshots exact on Opulence
+
+Measured on 2026-09-29, binary `cc6ca1c0e` (sha256 `95e5ca79...`, CI run
+36629162827, green on its three jobs), both copies checked, the previous exe
+kept as `.bak_decbe36`. Gibax's go-ahead ("oui, pousse, installe et lance
+tout"). Processor at 17%. Predictions in 8.93.
+
+**`keep` on Opulence, driven by Gibax**
+(`playlog_keep_RR_Opulence_20260929-225701_cc6ca1c.txt`; the player entered):
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| passes kept, of 999 | **993** | **999** | **999** |
+| rebuilt: an input differed | 6 (this machine 3, bots 8 inputs) | 0 | 0 |
+| **kart samples with a state field off / karts put back** | **0 / 0** | **0 / 0** | **0 / 0** |
+| drift, worst | 0.000 | 0.000 | 0.000 |
+| pass | 7.1 ms | 6.9 | 7.6 |
+| frames drawn in 1000 tics | 3753 | 3702 | 3637 |
+| longest gap between frames | 131 ms | **22 ms** | **21 ms** |
+| late samples / passes R1 laid out differently | 5 / 15 | 1 / 6 | 1 / 6 |
+
+- **Holds: no `STATE` line on this machine's kart, in three windows** -- the
+  first driven race without one since 8.84 (1 or 2 a window before). No kart
+  put back all race. `received` in no wrong input.
+- **Holds: 99% or more kept** -- 993, 999, 999; **127 to 131 frames a
+  second**, and in windows 1 and 2 never more than 22 ms between two frames:
+  not one hitch.
+- This machine's 3 wrong inputs, all in window 0: two older by one (a late
+  sample R1 missed), one the same to the anchor, differing in `angle` -- the
+  field `D_ResetTiccmdAngle` rewrites across the history.
+- **The server's side, now reported every 500 tics**: over the last 500,
+  this machine's player had 500 samples filed, **129 of them a tic late
+  because the slot was taken, none repeated**; 35 repeats in the whole race.
+  So the server's "one tic later" rule runs a quarter of the time, and the
+  replay is not misled by it while it holds steady -- only a change of it
+  is. None over another.
+- No `PARANOIA` line in either log.
+
+**Soaks** (unattended, after the race):
+
+| | leakraw, Opulence | wwraw, Opulence | leak, Carnival Night |
+|---|---|---|---|
+| soak failures | **0 of 278** (8.90: 19 of 280) | **0 of 379** (8.90: 23 of 377) | 2 of 261 |
+| restores with the archive differing | **0 of 1668** (8.90: 1400) | **9 of 1137** (8.90: 1131) | -- |
+| ... where | -- | players block, bytes 2832 and 9292 | -- |
+| reference counts rebuilt differently | 6 restores: one kart, live 66, rebuilt 67 | **0** | -- |
+| `PARANOIA` lines | 0 | 0 | **0** (8.54: 2 on `MT_PLAYER`) |
+| raw save / verified restore | 776 / 1560 us | 857 / 1717 us | -- |
+
+- **Holds: the slope planes** -- no archive difference at the thinkers block
+  any more, and both Opulence soaks at 0 failures, better than the network
+  restore's 0 and 1 (8.59).
+- **Holds: the sign** -- no `MT_SIGN_PIECE` line. **Holds, mostly: the
+  kart's reference** -- no kart one short any more, and no `MT_PLAYER`
+  warning on Carnival Night, where 8.54 had two. But in one check of the
+  leak soak (tic 3901, five restores) one kart's rebuilt count was **one
+  over** live (67 against 66): probably a second object claiming the same
+  player in one load, counting one reference the live game does not hold.
+  `e2da72742` noted the case and left it; it may be what shows. Harmless (an object kept until
+  the level ends); the remedy is to count only the claim that stays.
+- **Stays, as predicted: the players-block difference** (8.90, 3), 9 of 1137
+  restores on Opulence; not explained. Carnival Night's 2 failures are one
+  byte each in the players block, 0x00 to 0x20: the known `itemList.cap`
+  (8.54).
+- **The cost**: a raw save 0.78 to 0.86 ms on Opulence, a verified restore
+  1.6 to 1.7 ms with its check.
+
+**So:** B2 is exact enough on Opulence to measure its cost in a race --
+**`keepraw` can run**. Still open: the double claim, the players-block
+difference, `floorspriteslope`.
