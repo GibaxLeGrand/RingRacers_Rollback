@@ -593,6 +593,14 @@ consvar_t cv_sleep = Server("cpusleep", "1").min_max(0, 1000/TICRATE);
 	consvar_t cv_stunserver = Server("stunserver", "stun.l.google.com:19302");
 #endif
 
+// WORLDWIDE mode: client-side prediction and the light correction channel, and
+// WORLDWIDE clients only (k_rollback.c, K_WorldwideServer). A client reads it
+// when it joins, so it cannot change while anybody else is connected. Not
+// saved: set once, it would put every later test server in the mode, and a
+// control run (nospec) would then predict without anyone having asked for it.
+void Worldwide_OnChange(void);
+consvar_t cv_worldwide = Server("worldwide", "Off").on_off().dont_save().onchange_noinit(Worldwide_OnChange);
+
 
 //
 // Netvars - synced in netgames, also saved.

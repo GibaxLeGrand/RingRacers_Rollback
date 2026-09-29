@@ -1106,6 +1106,17 @@ static dboolean CL_SendJoin(void)
 		memcpy(&netbuffer->u.clientcfg.challengeResponse[i], signature, sizeof(signature));
 	}
 
+	// A WORLDWIDE client says so after the stock packet (clientworldwide_pak).
+	// A stock server reads a clientconfig_pak and ignores the rest; a server in
+	// WORLDWIDE mode turns away a join without it (HandleConnect).
+	if (K_WorldwideDeclare())
+	{
+		memcpy(netbuffer->u.clientww.magic, WORLDWIDE_MAGIC, sizeof netbuffer->u.clientww.magic);
+		netbuffer->u.clientww.protocol = WORLDWIDE_PROTOCOL;
+
+		return HSendPacket(servernode, false, 0, sizeof (clientworldwide_pak));
+	}
+
 	return HSendPacket(servernode, false, 0, sizeof (clientconfig_pak));
 }
 
@@ -1164,6 +1175,7 @@ static void SV_SendServerInfo(int32_t node, tic_t servertime)
 
 	netbuffer->u.serverinfo.kartvars = (uint8_t) (
 		(gamespeed & SV_SPEEDMASK) |
+		(K_WorldwideServer() ? SV_WORLDWIDE : 0) |
 		(dedicated ? SV_DEDICATED : 0) |
 		(cv_voice_allowservervoice.value ? SV_VOICEENABLED : 0)
 	);
@@ -2017,6 +2029,10 @@ static dboolean CL_ServerConnectionSearchTicker(tic_t *asksent)
 
 		if (client)
 		{
+			// The server decides: prediction against a server in WORLDWIDE mode,
+			// the stock netcode against any other (K_WorldwideJoin).
+			K_WorldwideJoin((serverlist[i].info.kartvars & SV_WORLDWIDE) != 0);
+
 #ifdef DEVELOP
 			// Commits do not match? Do not connect!
 			if (memcmp(serverlist[i].info.commit,
@@ -2819,6 +2835,9 @@ void CL_Reset(void)
 	connectiontimeout = (tic_t)cv_nettimeout.value; //reset this temporary hack
 
 	expectChallenge = false;
+
+	// Whatever the last server's WORLDWIDE mode switched on here.
+	K_WorldwideLeave();
 
 #ifdef HAVE_CURL
 	curl_failedwebdownload = false;
@@ -4509,6 +4528,18 @@ static void HandleConnect(int8_t node)
 		}
 	}
 
+	// What a WORLDWIDE client adds after the stock packet (clientworldwide_pak),
+	// read before any refusal below writes over netbuffer. 0: not there, as
+	// from a stock client, which sends exactly a clientconfig_pak.
+	uint8_t wwprotocol = 0;
+
+	if (doomcom->datalength > 0
+		&& (size_t)doomcom->datalength >= BASEPACKETSIZE + sizeof (clientworldwide_pak)
+		&& memcmp(netbuffer->u.clientww.magic, WORLDWIDE_MAGIC, sizeof netbuffer->u.clientww.magic) == 0)
+	{
+		wwprotocol = netbuffer->u.clientww.protocol;
+	}
+
 	banrecord_t *ban = SV_GetBanByAddress(node);
 	if (ban == NULL)
 	{
@@ -4565,6 +4596,22 @@ static void HandleConnect(int8_t node)
 		|| netbuffer->u.clientcfg.subversion != SUBVERSION)
 	{
 		SV_SendRefuse(node, va(M_GetText("Different Ring Racers versions cannot\nplay a netgame!\n(server version %d.%d)"), VERSION, SUBVERSION));
+	}
+	// A server in WORLDWIDE mode sends corrections in place of the full-state
+	// resend, which a stock client cannot use: it would drift and never be put
+	// right. So it lets in WORLDWIDE clients only (ROADMAP.md, compatibility).
+	// Node 0 is this machine's own player on a listen server.
+	else if (node != 0 && K_WorldwideServer() && wwprotocol == 0)
+	{
+		CONS_Printf("worldwide: refused node %d -- it did not declare itself WORLDWIDE\n", node);
+		SV_SendRefuse(node, M_GetText("This server runs the WORLDWIDE\nnetcode. Join it with a\nRing Racers WORLDWIDE build."));
+	}
+	else if (node != 0 && K_WorldwideServer() && wwprotocol != WORLDWIDE_PROTOCOL)
+	{
+		CONS_Printf("worldwide: refused node %d -- WORLDWIDE protocol %d, this server's is %d\n",
+			node, wwprotocol, WORLDWIDE_PROTOCOL);
+		SV_SendRefuse(node, va(M_GetText("Different WORLDWIDE versions\ncannot play together.\n(server %d, yours %d)"),
+			WORLDWIDE_PROTOCOL, wwprotocol));
 	}
 	else if (!cv_allownewplayer.value && node)
 	{

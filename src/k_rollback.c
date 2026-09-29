@@ -3345,6 +3345,86 @@ static uint32_t g_driftrefused;     // ... and karts the move refused to place
 static uint32_t g_driftsame;        // ... and karts already where the server had them
 
 // ----------------------------------------------------------------------------
+// WORLDWIDE mode (ROADMAP.md, compatibility, steps 2 to 6; WORLDWIDE.md 8.80)
+// ----------------------------------------------------------------------------
+//
+// Everything in this file is behind console switches that the test harness sets
+// on two machines: rollback_correct on the server, rollback_twoclock and its
+// companions on the client. Nobody else can be asked to type those, and the
+// host's delay exemption had to guess the mode from g_correctrate (8.26). The
+// compatibility policy says the server decides, so the server has one switch,
+// cv_worldwide, and the rest follows from it:
+//
+//   - a server in WORLDWIDE mode sends the light correction channel in place of
+//     the full-state resend, says so in its server info (SV_WORLDWIDE), and
+//     turns away a client that does not declare itself WORLDWIDE at join;
+//   - a client reads that bit when it joins, and runs the prediction the driven
+//     races settled on (playclient_keep.cfg, 8.78) against a server that has
+//     it -- and none at all against one that does not: a stock server gets a
+//     stock client.
+//
+// The console switches still work on top of it, for measuring: a rate set by
+// rollback_correct wins over the mode's, and a client's switches can be moved
+// after it has joined.
+#define WORLDWIDE_CORRECTRATE 4   // tics between corrections: every driven race since 8.44
+#define WORLDWIDE_TWOCLOCK 4      // the speculation's floor; rollback_history lifts it
+#define WORLDWIDE_HISTORY 12      // how deep the history may take it (8.47, 8.48, 8.78)
+
+static dboolean g_wwclient;       // this client's switches were set by joining a WORLDWIDE server
+static dboolean g_wwkeepingwas;   // the snapshot keeper's switch before that join turned it on
+static dboolean g_wwvanillajoin;  // rollback_vanillajoin: join without declaring, to test the refusal
+
+dboolean K_WorldwideServer(void)
+{
+	return (server && netgame && cv_worldwide.value != 0);
+}
+
+dboolean K_WorldwideDeclare(void)
+{
+	return (g_wwvanillajoin == false);
+}
+
+/** Is anybody but this machine connected to it? */
+static dboolean K_RemoteNodeInGame(void)
+{
+	int32_t node;
+
+	for (node = 1; node < MAXNETNODES; node++)
+	{
+		if (nodeingame[node])
+			return true;
+	}
+
+	return false;
+}
+
+/** cv_worldwide's callback. A client learns the mode from the server info when
+  * it joins and keeps it for its whole stay, so a server that changed it under
+  * connected players would part from every one of them: corrections starting
+  * for clients that ignore them and resends stopping for clients that need
+  * them, or the reverse. The change is only taken with nobody else connected,
+  * which still lets a dedicated server's startup script or the harness set it
+  * before anybody joins. */
+void Worldwide_OnChange(void);
+void Worldwide_OnChange(void)
+{
+	if (server && netgame && K_RemoteNodeInGame())
+	{
+		CONS_Alert(CONS_WARNING, "worldwide: can only change with nobody else connected -- "
+			"everyone here joined %s\n",
+			(cv_worldwide.value ? "a stock server" : "a WORLDWIDE server"));
+		CV_StealthSetValue(&cv_worldwide, (cv_worldwide.value ? 0 : 1));
+		return;
+	}
+
+	CONS_Printf("worldwide: %s\n",
+		(cv_worldwide.value
+			? "on -- corrections every " TOSTR2(WORLDWIDE_CORRECTRATE) " tics instead of "
+				"full-state resends, and WORLDWIDE clients only"
+			: "off -- the stock netcode, and any client"));
+}
+
+// ----------------------------------------------------------------------------
 // What a pass costs, what a frame costs, and how often the guess was right
 // ----------------------------------------------------------------------------
 //
@@ -3704,6 +3784,21 @@ void K_RollbackNoteObjectTic(void)
 		g_objtics++;
 }
 
+/** Switches rollback_keepspec, and forgets every record and count it had.
+  * Shared by the command and by WORLDWIDE mode. */
+static void K_SetKeepSpec(dboolean on)
+{
+	g_keepspec = on;
+	memset(g_keepcount, 0, sizeof g_keepcount);
+	memset(g_keeptic, 0xff, sizeof g_keeptic);
+	g_keepcorrnoop = 0;
+	memset(g_keepmissat, 0, sizeof g_keepmissat);
+	memset(g_keepmisswho, 0, sizeof g_keepmisswho);
+	memset(g_keepmissfield, 0, sizeof g_keepmissfield);
+	memset(g_keepmisssrc, 0, sizeof g_keepmisssrc);
+	g_keepmissrun = g_keepmissright = 0;
+}
+
 static void Command_RollbackKeepSpec_f(void)
 {
 	static const char *const why[KEEP_NUMREASONS] = {
@@ -3715,17 +3810,7 @@ static void Command_RollbackKeepSpec_f(void)
 	uint32_t armed = 0;
 
 	if (COM_Argc() > 1)
-	{
-		g_keepspec = (atoi(COM_Argv(1)) != 0);
-		memset(g_keepcount, 0, sizeof g_keepcount);
-		memset(g_keeptic, 0xff, sizeof g_keeptic);
-		g_keepcorrnoop = 0;
-		memset(g_keepmissat, 0, sizeof g_keepmissat);
-		memset(g_keepmisswho, 0, sizeof g_keepmisswho);
-		memset(g_keepmissfield, 0, sizeof g_keepmissfield);
-		memset(g_keepmisssrc, 0, sizeof g_keepmisssrc);
-		g_keepmissrun = g_keepmissright = 0;
-	}
+		K_SetKeepSpec(atoi(COM_Argv(1)) != 0);
 
 	CONS_Printf("rollback_keepspec: %s%s\n", g_keepspec ? "on" : "off",
 		(g_keepspec && (g_twoclock <= 0 || g_histmax <= 0 || g_cleancmds == false))
@@ -5042,10 +5127,15 @@ static dboolean K_RollbackTwoClockConfigured(void)
   * delay policy really wants is *are my clients predicting*, which the server
   * cannot answer today. That is the capability advertising already scoped on
   * the roadmap, and when it lands this predicate should ask it instead.
+  *
+  * It has landed as WORLDWIDE mode (8.80): K_RollbackCorrectRate() now answers
+  * for it too, and a server in that mode lets in only clients that declare
+  * themselves WORLDWIDE -- which predict as soon as they join it. So the proxy
+  * is now the question, whenever the mode rather than rollback_correct set it.
   */
 static dboolean K_RollbackCorrectingHere(void)
 {
-	return (g_correctrate > 0 && gamestate == GS_LEVEL);
+	return (K_RollbackCorrectRate() > 0 && gamestate == GS_LEVEL);
 }
 
 /** The mindelay/gentleman's-delay exemption used to ask K_RollbackPredictAhead()
@@ -5076,7 +5166,8 @@ static dboolean K_RollbackCorrectingHere(void)
   * an edge over any remote player who is *not* running Worldwide. That is the
   * same trade the client-side exemption already makes, and the honest fix is
   * the capability advertising already scoped on the roadmap, not this
-  * predicate.
+  * predicate. (WORLDWIDE mode, 8.80, closes it for the mode: a server running
+  * it refuses every client that has not declared itself WORLDWIDE.)
   */
 dboolean K_RollbackPays(void)
 {
@@ -5718,12 +5809,18 @@ static void Command_RollbackNullSpec_f(void)
 
 int32_t K_RollbackCorrectRate(void)
 {
-	return g_correctrate;
+	if (g_correctrate > 0)
+		return g_correctrate;   // set by hand: a measurement, and it wins
+
+	return (K_WorldwideServer() ? WORLDWIDE_CORRECTRATE : 0);
 }
 
 dboolean K_RollbackCorrectSuppress(void)
 {
-	return (g_correctrate > 0 && g_correctsuppress);
+	if (g_correctrate > 0)
+		return g_correctsuppress;
+
+	return K_WorldwideServer();
 }
 
 /** A key for one side of an event that means the same thing on every machine.
@@ -6369,7 +6466,9 @@ static const char *K_DescribeFrac(uint64_t frac, char *buf, size_t len)
   *
   * Server side. Asks the server to send every client a light state correction
   * every N tics. Zero turns it off, which is stock behaviour: the only
-  * correction is then the full-state resend.
+  * correction is then the full-state resend -- unless the server runs
+  * WORLDWIDE mode, which sends one every WORLDWIDE_CORRECTRATE tics in place
+  * of the resend whenever this is 0. A rate set here wins over the mode's.
   */
 static void Command_RollbackCorrect_f(void)
 {
@@ -6397,6 +6496,12 @@ static void Command_RollbackCorrect_f(void)
 			(g_correctsuppress
 				? "NOT resending the full state on a mismatch"
 				: "still resending the full state on a mismatch"));
+	}
+	else if (K_WorldwideServer())
+	{
+		CONS_Printf("rollback_correct: not set -- WORLDWIDE mode sends a light "
+			"correction every %d tics, NOT resending the full state on a mismatch\n",
+			WORLDWIDE_CORRECTRATE);
 	}
 	else
 	{
@@ -6567,31 +6672,34 @@ static void Command_RollbackDrift_f(void)
   * rollback_loop by construction rather than by checking: one advances the
   * authoritative clock and the other refuses to.
   */
+/** Sets rollback_twoclock's depth, 0 for off, and zeroes its counts.
+  * Shared by the command and by WORLDWIDE mode. */
+static void K_SetTwoClock(int32_t want)
+{
+	// Turning it off leaves a speculation standing, and the world would keep
+	// it for good. Put the confirmed world back on the way out.
+	if (want <= 0 && g_speculated)
+		K_RollbackUnspeculate();
+
+	g_twoclock = (want > 0) ? want : 0;
+
+	if (g_twoclock > 0)
+	{
+		// The old loop hoists gametic; this one refuses to. Running both
+		// would be two answers to the same question.
+		g_loopahead = 0;
+		g_keeping = true;
+	}
+
+	g_specpasses = g_spectics = g_specstranded = g_specnosave = g_suppressedxcmds = 0;
+	g_unspecus = g_specus = 0;
+	K_ResetPassCosts();
+}
+
 static void Command_RollbackTwoClock_f(void)
 {
 	if (COM_Argc() > 1)
-	{
-		const int32_t want = atoi(COM_Argv(1));
-
-		// Turning it off leaves a speculation standing, and the world would keep
-		// it for good. Put the confirmed world back on the way out.
-		if (want <= 0 && g_speculated)
-			K_RollbackUnspeculate();
-
-		g_twoclock = (want > 0) ? want : 0;
-
-		if (g_twoclock > 0)
-		{
-			// The old loop hoists gametic; this one refuses to. Running both
-			// would be two answers to the same question.
-			g_loopahead = 0;
-			g_keeping = true;
-		}
-
-		g_specpasses = g_spectics = g_specstranded = g_specnosave = g_suppressedxcmds = 0;
-		g_unspecus = g_specus = 0;
-		K_ResetPassCosts();
-	}
+		K_SetTwoClock(atoi(COM_Argv(1)));
 
 	CONS_Printf("rollback_twoclock: %d tics of speculation on top of the confirmed world%s\n",
 		g_twoclock,
@@ -6775,20 +6883,23 @@ static void Command_RollbackCleanCmds_f(void)
   * The report also says how often the drawn world moved against the clock,
   * with the switch on or off: the off windows are the control.
   */
+/** Sets rollback_history's deepest speculation, 0 for off, and zeroes its
+  * counts. Shared by the command and by WORLDWIDE mode. */
+static void K_SetHistory(int32_t want)
+{
+	g_histmax = (want <= 0) ? 0 : ((want > MAXGENTLEMENDELAY - 1) ? MAXGENTLEMENDELAY - 1 : want);
+	g_histpasses = g_histmatched = g_histcapped = 0;
+	g_histunackedsum = g_histdepthsum = 0;
+	g_histhold = false;
+	g_histrises = g_histdrops = 0;
+	g_drawnvalid = false;
+	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
+}
+
 static void Command_RollbackHistory_f(void)
 {
 	if (COM_Argc() > 1)
-	{
-		const int32_t want = atoi(COM_Argv(1));
-
-		g_histmax = (want <= 0) ? 0 : ((want > MAXGENTLEMENDELAY - 1) ? MAXGENTLEMENDELAY - 1 : want);
-		g_histpasses = g_histmatched = g_histcapped = 0;
-		g_histunackedsum = g_histdepthsum = 0;
-		g_histhold = false;
-		g_histrises = g_histdrops = 0;
-		g_drawnvalid = false;
-		g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
-	}
+		K_SetHistory(atoi(COM_Argv(1)));
 
 	if (g_histmax <= 0)
 	{
@@ -7235,6 +7346,83 @@ static void Command_RollbackDelay_f(void)
 	}
 }
 
+/** Every switch WORLDWIDE mode sets on a client, back to off.
+  *
+  * A speculation still standing is forgotten, not put back: this runs when a
+  * client joins a server or leaves one, and either way the world it would
+  * restore is on its way out. rollback_cleancmds is left as it is -- on by
+  * default, and it does nothing without rollback_twoclock. */
+static void K_WorldwideClientOff(void)
+{
+	g_speculated = false;
+
+	K_SetKeepSpec(false);
+	K_SetHistory(0);
+	K_SetTwoClock(0);
+	g_correctapply = false;
+
+	// Two-clock switches the snapshot keeper on and nothing switches it off,
+	// and with two-clock off the keeper saves the whole world every tic
+	// (K_RollbackTicker): left on, every game after a WORLDWIDE one -- alone,
+	// or hosting -- would pay a save a tic for nothing.
+	if (g_wwclient)
+		g_keeping = g_wwkeepingwas;
+
+	g_wwclient = false;
+}
+
+void K_WorldwideJoin(dboolean serverhasit)
+{
+	if (serverhasit == false)
+	{
+		// The policy's other half: a stock server gets a stock client, whatever
+		// was switched on here before.
+		K_WorldwideClientOff();
+		CONS_Printf("worldwide: this server runs the stock netcode -- so does this client\n");
+		return;
+	}
+
+	if (g_wwclient == false)
+		g_wwkeepingwas = g_keeping;
+
+	// What the driven keep race ran (playclient_keep.cfg, WORLDWIDE.md 8.78),
+	// with the corrections applied rather than only measured.
+	K_SetTwoClock(WORLDWIDE_TWOCLOCK);
+	g_cleancmds = true;
+	K_SetHistory(WORLDWIDE_HISTORY);
+	K_SetKeepSpec(true);
+	g_correctapply = true;
+	g_wwclient = true;
+
+	CONS_Printf("worldwide: this server runs WORLDWIDE mode -- predicting, "
+		"rollback_twoclock %d, rollback_history %d, rollback_keepspec on, "
+		"corrections applied\n", WORLDWIDE_TWOCLOCK, WORLDWIDE_HISTORY);
+}
+
+void K_WorldwideLeave(void)
+{
+	// Only what a join switched on. Switches set by hand outside a netgame are
+	// someone measuring, and are theirs to turn off.
+	if (g_wwclient)
+		K_WorldwideClientOff();
+}
+
+/** Console command: rollback_vanillajoin [0/1]
+  *
+  * Client side, for testing the refusal with a WORLDWIDE build: with 1, the
+  * next join leaves out what a WORLDWIDE client adds to it, as a stock client
+  * would, and a server in WORLDWIDE mode should turn it away. Off by default. */
+static void Command_RollbackVanillaJoin_f(void)
+{
+	if (COM_Argc() > 1)
+		g_wwvanillajoin = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_vanillajoin: %s\n",
+		(g_wwvanillajoin
+			? "on -- the next join does NOT declare this client WORLDWIDE, as a stock client would"
+			: "off -- joins declare this client WORLDWIDE"));
+}
+
 void K_RegisterRollbackStuff(void)
 {
 	// Debug commands rather than plain ones: they are diagnostics, and being
@@ -7265,4 +7453,5 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_damagelog", Command_RollbackDamageLog_f);
 	COM_AddDebugCommand("rollback_inputlog", Command_RollbackInputLog_f);
 	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
+	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
 }

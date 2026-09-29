@@ -69,6 +69,7 @@ TYPEDEF (fileacksegment_t);
 TYPEDEF (fileack_pak);
 TYPEDEF (player_config_t);
 TYPEDEF (clientconfig_pak);
+TYPEDEF (clientworldwide_pak);
 TYPEDEF (serverinfo_pak);
 TYPEDEF (serverrefuse_pak);
 TYPEDEF (askinfo_pak);

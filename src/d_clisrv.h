@@ -316,9 +316,28 @@ struct clientconfig_pak
 } ATTRPACK;
 
 #define SV_SPEEDMASK 0x03		// used to send kartspeed
+#define SV_WORLDWIDE 0x04		// the server runs WORLDWIDE mode (cv_worldwide). A stock client
+								// reads kartvars through SV_SPEEDMASK and the flags above only,
+								// so it never sees this bit.
 #define SV_DEDICATED 0x40		// server is dedicated
 #define SV_VOICEENABLED 0x80    // voice_mute is off/voice chat is enabled
 #define SV_LOTSOFADDONS 0x20	// flag used to ask for full file list in d_netfil
+
+// A WORLDWIDE client's PT_CLIENTJOIN is clientconfig_pak with these bytes after
+// it. A stock server reads the packet as a clientconfig_pak and never checks
+// its length (HandleConnect), so the extra bytes cost it nothing; a WORLDWIDE
+// server reads them to tell a WORLDWIDE client from a stock one, and refuses
+// the stock one while it runs WORLDWIDE mode. WORLDWIDE_PROTOCOL goes up when
+// two WORLDWIDE builds can no longer play together.
+#define WORLDWIDE_MAGIC "RRWW"
+#define WORLDWIDE_PROTOCOL 1
+
+struct clientworldwide_pak
+{
+	clientconfig_pak cfg;
+	uint8_t magic[4];	// WORLDWIDE_MAGIC, without its terminator
+	uint8_t protocol;	// WORLDWIDE_PROTOCOL
+} ATTRPACK;
 
 #define MAXFILENEEDED 915
 #define MAX_MIRROR_LENGTH 256
@@ -587,6 +606,7 @@ struct doomdata_t
 		char fileack[sizeof (fileack_pak)];
 		uint8_t filereceived;
 		clientconfig_pak clientcfg;         //         650 bytes
+		clientworldwide_pak clientww;       // clientcfg, and what a WORLDWIDE client adds
 		uint8_t md5sum[16];
 		serverinfo_pak serverinfo;          //        1024 bytes
 		serverrefuse_pak serverrefuse;      //       65025 bytes (somehow I feel like those values are garbage...)
@@ -710,6 +730,7 @@ extern dboolean server_lagless;
 extern consvar_t cv_mindelay;
 
 extern consvar_t cv_netticbuffer, cv_allownewplayer, cv_maxconnections, cv_joindelay;
+extern consvar_t cv_worldwide;
 extern consvar_t cv_pingtimeout, cv_blamecfail;
 extern consvar_t cv_maxsend, cv_noticedownload, cv_downloadspeed;
 

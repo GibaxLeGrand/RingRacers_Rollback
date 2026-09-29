@@ -97,6 +97,27 @@ int32_t K_RollbackCorrectRate(void);
   * a drift measurement needs. */
 dboolean K_RollbackCorrectSuppress(void);
 
+// WORLDWIDE mode (WORLDWIDE.md 8.80): the server decides. One switch on the
+// server, cv_worldwide; a client follows what the server it joins advertises.
+
+/** True on a server hosting a netgame in WORLDWIDE mode: it sends corrections
+  * in place of full-state resends, advertises SV_WORLDWIDE, and refuses clients
+  * that do not declare themselves WORLDWIDE. */
+dboolean K_WorldwideServer(void);
+
+/** Whether this client's join declares it WORLDWIDE. True unless
+  * rollback_vanillajoin asks it to join as a stock client would. */
+dboolean K_WorldwideDeclare(void);
+
+/** Called by a client when it has the server info of the server it is joining:
+  * switches prediction on against a server in WORLDWIDE mode, and everything off
+  * against any other. */
+void K_WorldwideJoin(dboolean serverhasit);
+
+/** Called when this machine leaves a netgame: undoes what K_WorldwideJoin
+  * switched on, and nothing else. */
+void K_WorldwideLeave(void);
+
 /** Files a correction that arrived from the server. Only stores it: the world
   * it has to be applied to is the confirmed one, which does not exist yet at
   * the moment a packet is read. */
