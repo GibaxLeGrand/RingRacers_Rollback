@@ -3554,8 +3554,10 @@ static dboolean g_keepspec;                 // the switch
 // -- the pass after the sample is made -- instead of when the server confirms
 // the tic, a round trip later. Driven in WORLDWIDE mode, 469 of 488 rebuilds
 // were a tic run on a guess past the history, each one the whole depth and a
-// longer frame about four times a second. On by default; 0 is the control.
-static dboolean g_keepearly = true;
+// longer frame about four times a second. Off by default since 8.99: in the
+// race there was nothing for it to remove -- those rebuilds were before it --
+// and before the race it fired on most passes. 1 turns it on.
+static dboolean g_keepearly = false;
 static uint32_t g_keepearlyn;               // standing speculations run again from a tic past the frontier
 static uint32_t g_keepearlytics;            // ... the tics they ran again
 static dboolean g_keeparmed;                // this pass left the speculation standing
@@ -4321,10 +4323,10 @@ static void Command_RollbackKeepSpec_f(void)
 
 /** Console command: rollback_keepearly [0|1]
   *
-  * Client side, with rollback_keepspec and rollback_history. On (the default): a
+  * Client side, with rollback_keepspec and rollback_history. On: a
   * tic the standing speculation ran on this machine's input is run again from
   * its saved start as soon as the input R1 gives it changes (WORLDWIDE.md 8.98).
-  * Off: only when the server confirms it -- the control. */
+  * Off (the default since 8.99): only when the server confirms it. */
 static void Command_RollbackKeepEarly_f(void)
 {
 	if (COM_Argc() > 1)
