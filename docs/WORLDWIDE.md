@@ -5640,3 +5640,56 @@ Read on 2026-09-29 while the R1 races ran; nothing changed.
 
 The players block difference on Skyscraper Leaps (8.90, 3) is not explained
 by any of these; 2 may be part of it, if a player field reads a count.
+
+### 8.92 R1 measured: no wrong input of this machine's in three windows; the control loops as before
+
+Measured on 2026-09-29, binary `decbe360a` (8.90), same session, **both
+driven by Gibax**, one after the other: `keep` (R1 on, the default) then
+`keepnor1` (`rollback_histreal 0`, the control). Gibax's go-ahead ("allez").
+Processor at 4%. Both players entered the game
+(`playlog_keep_RR_Opulence_20260929-223811_decbe36.txt`,
+`playlog_keepnor1_RR_Opulence_20260929-224119_decbe36.txt`). Predictions in
+8.89.
+
+| | `keep`, R1 on: w0 / w1 / w2 | `keepnor1`, R1 off: w0 / w1 / w2 |
+|---|---|---|
+| passes kept, of 999 | **993 / 999 / 998** | 961 / 949 / 874 |
+| rebuilt: an input differed | 4 / 0 / 0 | 35 / 50 / 125 |
+| ... **this machine's wrong inputs** | **0 / 0 / 0** | 29 / 50 / 125 |
+| ... server's sample older by one | -- | 29 / 49 / 124 (newer by one: 0 / 1 / 1) |
+| bots' wrong inputs | 10 / 0 / 0 | 7 / 0 / 0 |
+| rebuilt: a correction was due | 2 / 0 / 1 | 3 / 0 / 0 |
+| samples made after more than one real tic | 5 / 1 / 2 | 33 / 51 / 126 |
+| passes R1 laid out differently | 22 / 6 / 12 | -- |
+| ambiguous anchors | 0 / 0 / 0 | 9 / 37 / 106 |
+| pass | **7.3 / 7.8 / 8.6 ms** | 9.2 / 10.9 / 16.8 ms |
+| frames drawn in 1000 tics | **3680 / 3592 / 3463** | 3536 / 3385 / 2889 |
+| iterations past a tic | 7 / 1 / 3 | 39 / 52 / 128 |
+
+- **Holds: this machine's wrong inputs ~165 to 10 or fewer -- 0 in three
+  windows.** And no window in the loop: 99.4, 100 and 99.9% of passes kept,
+  **a pass of 7.3 to 8.6 ms, 121 to 129 frames a second, driven, on
+  Opulence, all race long.**
+- **Holds: the control is 8.87 again** -- this machine's wrong inputs
+  following the late samples one for one (29 and 33, 50 and 51, 125 and
+  126), the server's sample older by one in 202 of 204, and the loop in
+  window 2 (126 late samples, 874 passes kept, 101 frames a second).
+- The control's two newer-by-one are probably the server's "one tic later"
+  rule (8.87) catching up, not measured; R1 had no miss either way.
+- **Late samples 8 in the whole R1 race against 210 in the control**: with
+  the misses gone, the rebuilds that made the late frames are gone, and
+  the loop cannot start. What starts the few left is not measured.
+
+**A fourth difference, found reading why every driven race has one or two
+`STATE` lines on this machine's kart** -- always `speed`, 0.001 to 0.088
+units (8.84, 8.87 and both races here; never unattended):
+`K_SameInput` compares inputs without `TICCMD_RECEIVED`, and
+`P_UpdatePlayerAngle` reads it (`p_user.c:2371`): a tic the server filled by
+repeating a sample, the flag cleared, is steered by the "missed a single
+tic" rule; the client ran the same sample on that tic with the flag set, by
+the turn solver. The two inputs compare equal, the tic is kept, and the
+kart's steering differs by a hair -- which the correction channel then puts
+back (a kart put back, 8.84). R1 makes it likelier, since it now replays the
+repeated sample on exactly the tic the server repeats it on. **Remedy**: the
+keep decision compares the flag too, and R1 clears it on the tics it gives a
+sample past its first, as `SV_Maketic` does.
