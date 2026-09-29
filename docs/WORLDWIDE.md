@@ -5693,3 +5693,41 @@ back (a kart put back, 8.84). R1 makes it likelier, since it now replays the
 repeated sample on exactly the tic the server repeats it on. **Remedy**: the
 keep decision compares the flag too, and R1 clears it on the tics it gives a
 sample past its first, as `SV_Maketic` does.
+
+### 8.93 Four fixes written: the flag, the slope planes, the kart's reference, the sign
+
+Written on 2026-09-29 (Gibax: "lance tout", then "allez"), on the local
+branch `wip/fixes-0929`, **not pushed**. One commit each; syntax checked on
+every changed file with no new warning, and an error injected at each changed
+place is reported by the compiler.
+
+- **`82b1a4f94`, the flag (8.92).** R1 says whether a tic is a sample's first;
+  on the tics after, the speculation clears `TICCMD_RECEIVED` on this
+  machine's input, as `SV_Maketic` does. The keep decision compares the flag
+  for this machine's own players (not for others: a guess about another
+  player is unreceived on purpose). The instruments count a `received` field.
+- **`8985fd990`, the slope planes (8.91, 1).** The raw archive writes every
+  dynamic slope thinker's plane (`SaveSlopePlane`) in list order and the raw
+  load reads them back in the same order. `floorspriteslope` is not covered:
+  only Lua creates one, and after a raw restore it may point at a freed
+  plane -- open.
+- **`3d853424b`, the kart's reference (8.91, 2).** Both loads count the
+  reference a player holds on its body, where the object claims its player.
+  This changes the network load too, which every restore and every stock
+  resync uses.
+- **`ae7f84961`, the sign (8.91, 3).** Its pieces are chained with
+  `P_SetTarget`. Also stock code; before, removing a piece let go of `hnext`
+  and `hprev` references it had never taken.
+
+**Predictions, on a build with the four:**
+
+- **Soaks, raw, Opulence** (`leakraw`, `wwraw`): failures back to the network
+  restore's (0 to 1 in about 300); no archive difference at the start of the
+  thinkers block; **no `MT_PLAYER` and no `MT_SIGN_PIECE` count rebuilt
+  differently**. The players-block difference of Skyscraper Leaps (8.90, 3)
+  may stay: none of the four explains it.
+- **Soaks, network** (`leak`, `ww`): no "`MT_PLAYER` references go negative"
+  warning.
+- **`keep` on Opulence, driven**: **no `STATE` line on this machine's kart**
+  in three windows (1 or 2 a window since 8.84); passes kept as in 8.92
+  (99% or more); `received` in no wrong input.
