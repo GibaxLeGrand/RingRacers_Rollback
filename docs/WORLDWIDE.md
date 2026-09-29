@@ -13,7 +13,7 @@ rest lives in the private notes only -- `README.md`, the entry point (working
 rules, decisions, environment); `ROLLBACK.md`, the closed journal from before
 the pivot; and `AUDIT_20260909.md`, the comparison with SRB2 NetPlus and Odamex.
 
-## Current state (2026-09-28) -- read this first
+## Current state (2026-09-29) -- read this first
 
 This block is the only part of this file that is rewritten to stay current.
 Everything after it is a dated journal: when a later section overturns an
@@ -28,7 +28,9 @@ light correction channel (`PT_STATECORRECTION`, server to client every
 `rollback_correct N` tics) puts back each kart that is not already where the
 server has it (8.75), in place of the stock full-state resend.
 Every piece is behind a switch that is off by default, except
-`rollback_cleancmds`, on by default since 2026-09-21 (8.36).
+`rollback_cleancmds`, on by default since 2026-09-21 (8.36). A server's
+`worldwide On` switches them on for the clients that join it (8.80, pushed,
+not yet run).
 
 **Measured and holding.**
 
@@ -94,12 +96,19 @@ Every piece is behind a switch that is off by default, except
    second -- unattended, with the local player a spectator. **Driven, with
    the player in (8.78): 65 to 69% kept, 54 to 65 frames a second against
    12**, each rebuild a hitch of about 60 ms, and the camera stutters. Who
-   is wrong on those rebuilds is the next measure (8.79).
+   is wrong on those rebuilds is the next measure (8.79). **B2 started on
+   2026-09-29 (8.81)**: the saves are about 40% of a driven pass; the save
+   is now timed step by step (not pushed yet), and every thinker turns out
+   to live in four fixed-block pools, which a raw snapshot can copy whole.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
-   8.28 is fixed in code (8.29), never checked against a stock build. Still
-   missing: the refusal of vanilla clients, the automatic mode switch, and a
-   release base -- CI builds a release-config exe, but the branch still sits on
-   upstream's development line (8.30).
+   8.28 is fixed in code (8.29), never checked against a stock build. **WORLDWIDE
+   mode written (8.80), pushed as `51ba899d6` (CI green), not yet run**: one server switch,
+   `worldwide On`, which advertises the mode, sends corrections in place of
+   resends and refuses clients that do not declare themselves WORLDWIDE; a
+   client switches its prediction on or off by what the server it joins
+   advertises. Still missing: a release base -- CI builds a release-config
+   exe, but the branch still sits on upstream's development line (8.30) --
+   a menu entry, and a mark in the server browser.
 5. **The relabel histogram's `+2` cluster** (8.27) -- **read in `correct_on`,
    probably harmless (8.44).** 8.32's prediction fails on its label: the
    waiting map `RR_TESTRUN` counts as a race. On the counts, every `+2` falls
@@ -4665,3 +4674,231 @@ losing its place after a hitch.
 ⚠ Pushed the same night on Gibax's go-ahead ("pousse dès que c'est bon") as
 `a61ccadd8` -- `80d530d82` put on top of the docs -- CI run 36489955086. Not
 installed, not run: the session ended there ("on finit là-dessus ce soir").
+
+### 8.80 WORLDWIDE mode: one switch on the server, and the client follows
+
+Written on 2026-09-29 on Gibax's go-ahead ("oui fais la partie 4": step 4 of
+the plan to a playable alpha, the compatibility section of `ROADMAP.md`,
+steps 2 to 6). `51ba899d6`, on the local branch `wip/worldwide-mode`, **not pushed, not
+built**: the machine it was written on has no compiler, so the CI will be its
+first compile. Checked by reading only: every new function is declared in
+`k_rollback.h` (the build turns an implicit declaration into an error), the
+braces balance as before, and the three console commands it touches keep
+their behaviour -- their setting code moved into `K_SetTwoClock`,
+`K_SetHistory` and `K_SetKeepSpec`, which the mode calls too.
+
+**Why.** Everything this branch does is behind console switches set on two
+machines by the harness: `rollback_correct` on the server, `rollback_twoclock`
+and its companions on the client. Nobody else can be asked to type those, and
+the host's delay exemption had to guess the mode from the correction rate
+(8.26). The policy of 2026-09-21 says the server decides.
+
+**What the server does, with `worldwide On`** (a console variable, `Off` by
+default, not saved in the config):
+
+- it sends a light correction every 4 tics **in place of** the full-state
+  resend -- what `rollback_correct 4` does, and a rate set by hand still wins;
+- it sets `SV_WORLDWIDE` (`0x04`), a free bit of `kartvars` in its server
+  info (`d_clisrv.h`); a stock client reads that byte through `SV_SPEEDMASK`
+  and three other flags only;
+- it refuses a join that does not declare itself WORLDWIDE, with a readable
+  message, and one that declares another `WORLDWIDE_PROTOCOL` (1 today); its
+  own player on a listen server (node 0) is never refused. The server's log
+  says `worldwide: refused node N`;
+- `K_RollbackPays()` exempts its host from the gentleman's delay through the
+  correction rate, as before -- which is now the question it was a proxy for.
+
+The variable can only change with nobody else connected; a change under
+connected players is put back with a warning. A client learns the mode when
+it joins, and a server that switched under it would stop resending to
+clients that need it, or start correcting clients that ignore it. That still
+lets a dedicated server's script, or the harness, set it before anybody
+joins -- the game's own `CV_NOTINNET` would not have: it refuses any change
+in a netgame, before anybody has joined as well.
+
+**How a client declares itself.** A WORLDWIDE client's join request is the
+stock `clientconfig_pak` with five bytes after it (`clientworldwide_pak`:
+`"RRWW"` and the protocol). Read in `HandleConnect` and the network layer
+before writing it: a stock server reads the request as a `clientconfig_pak`
+and checks neither its length nor anything past it, and the packet checksum
+covers the whole length, so the five bytes cost it nothing. A stock client
+sends exactly `sizeof (clientconfig_pak)`, which is how the server tells it
+apart. `rollback_vanillajoin 1` makes a WORLDWIDE client join without them,
+to test the refusal with one exe.
+
+**What the client does.** When it has the server info of the server it is
+joining (`CL_ServerConnectionSearchTicker`), `K_WorldwideJoin` reads the bit:
+
+- set: what the driven `keep` race ran (8.78) -- `rollback_twoclock 4`,
+  `rollback_cleancmds 1`, `rollback_history 12`, `rollback_keepspec 1` --
+  with the corrections applied rather than only measured;
+- not set: all of them off. A stock server gets a stock client.
+
+Leaving (`CL_Reset`, the one place every departure goes through) undoes what
+the join switched on, and nothing else: switches set by hand outside a
+netgame are someone measuring. A speculation still standing is forgotten
+rather than restored, since the world it would restore is being thrown away.
+
+**Two things found while writing it:**
+
+- **The snapshot keeper outlives two-clock.** `rollback_twoclock` switches the
+  keeper on and nothing switches it off; with two-clock off, the keeper saves
+  the whole world every tic (`K_RollbackTicker`). A player leaving a WORLDWIDE
+  server would have paid a save a tic -- 1 to 4 ms on the maps measured --
+  in every game after it, alone or hosting. The mode puts the keeper back as
+  it found it. The harness has always left it on after a race, which does not
+  matter there: the game quits.
+- **A saved `worldwide` would contaminate the controls.** Set once on the
+  measuring machine, it would put every later test server in the mode, and a
+  client joining a `nospec` or `measure` server would then predict at join
+  without the scenario saying so. So it is not saved.
+
+**What it does not do yet:**
+
+- A WORLDWIDE client on a *public* stock server still needs the release base
+  of 8.30: the branch sits on upstream's development line.
+- No menu entry: the host types `worldwide On` (console, command line or
+  script). The server browser does not mark WORLDWIDE servers.
+- Step 7 of the section (a few bytes appended to the server info, for a
+  recommended delay) is not done.
+- The mode's client settings are the `keep` race's, hitches included (8.78):
+  it packages what exists, it makes nothing cheaper.
+
+**The measuring scenarios are unchanged in intent.** Their server never runs
+`worldwide`, so a client joining one switches everything off at join, then
+the scenario's own lines -- run after the join -- set what it measures.
+Every client log gains one line, `worldwide: this server runs the stock
+netcode`.
+
+**Predictions, for the first build that carries it:**
+
+- `playtest.sh vanillajoin` (new, unattended, a few minutes; loopback on
+  purpose): the first join is let in, the client's log says `worldwide: this
+  server runs WORLDWIDE mode` and its bare `rollback_twoclock` prints 4 tics;
+  the second join, undeclared, is refused -- the server's log says
+  `worldwide: refused node N -- it did not declare itself WORLDWIDE` -- and
+  nothing crashes on either side.
+- `playtest.sh worldwide` (new; the client sets no prediction switch, one
+  window for the whole race): the server prints `worldwide: on` and
+  `rollback_correct: not set -- WORLDWIDE mode sends a light correction every
+  4 tics`; the client prints `worldwide: this server runs WORLDWIDE mode`;
+  `rollback_lagcheck` reads a target of 0 on both machines; no `Game state
+  reloaded`, drift 0.000, and the kept fraction of the `keep` races: 99% or
+  more unattended (8.77), 65 to 69% driven (8.78).
+- Any old scenario, `keep` for instance: as before, with the one extra log
+  line above.
+
+⚠ Pushed the same day on Gibax's go-ahead ("oui pousse") as `51ba899d6`. CI
+run 36541593195 green on its three jobs (Linux GCC, Windows clang release and
+dev): the mode compiles. Not installed, not run.
+
+### 8.81 Where a save's time goes -- and B2 through the level pools
+
+Gibax, 2026-09-29, on the order of the tracks: "ça serait pas mieux de déjà
+faire B2 ? ... on cherche à VRAIMENT gagner de la perf au plus possible",
+then "oui pousse et commence B2". The case for B2 now, whatever a race with
+remote people shows: in the driven `keep` race on Opulence (8.78) the saves
+are 12.6 to 13.7 ms of a 29.5 to 33.9 ms pass, about 40%, at some 4 ms each,
+and a rebuild saves every tic it re-runs. The measure of remote people only
+says whether B2 is enough, not whether it is needed.
+
+**The instrument, first** (`d20b9a0a9`, local branch `wip/b2`, not pushed).
+The load's steps have been timed since 8.34; the save had only its total.
+Every local `P_SaveNetGame` now books each step's time and bytes -- netvars
+and misc, numbering and the chain stamp, players, parties, world,
+polyobjects, the object pointers, each of the six thinker lists, specials and
+colormaps, waypoints, ACS, Lua, RNG and luabanks -- and `rollback_twoclock`'s
+report prints the mean per save as `rollback_save` lines. About fifteen clock
+reads a save.
+
+**Found while writing it: the level pools.** Every thinker -- objects
+(`P_SpawnMobj`), moving floors and ceilings, lights, polyobject and slope
+thinkers -- and every sector node (`p_map.c`, `P_GetSecnode`) is allocated
+from one of four fixed-block pools (`z_zone.cpp`, `srb2::PoolAllocator`):
+blocks of `sizeof (mobj_t)` in chunks of 1024, of `sizeof (precipmobj_t)` in
+chunks of 32768, of 128 bytes in chunks of 4096, of 64 in chunks of 8192. A
+pool's free list is threaded through its free blocks, so its chunks, copied
+whole, with its head and count, *are* its state. Copied back:
+
+- an object removed since the snapshot is at its old address again, with its
+  old fields, and one born since is gone -- its block is free again;
+- every pointer from one pooled thing to another is right as it stands: the
+  thinker list links, `target`/`tracer`/`hnext`, the sector and blockmap
+  chains *in their order* (8.76's drift was that order), the sector nodes,
+  the reference counts between pooled things;
+- the next allocations hand out the same blocks in the same order as the
+  first run did.
+
+No per-type code for the forty thinker types and the hundreds of lines of
+`SaveMobjThinker`: the 8.60 proposal ("keep removed objects aside, copy the
+fields of objects and players raw") needed both halves written by hand. The
+pools already do the first half.
+
+**What a copy of the pools does not cover, and would need beside it** --
+read, to be checked one by one when it is built:
+
+- *pointers into the pools from outside them*: the thinker list heads
+  (`thlist`), each sector's `thinglist`, `touching_thinglist`, `floordata`,
+  `ceilingdata`, `lightingdata`, `fadecolormapdata` and precipitation list,
+  the blockmap heads (`blocklinks`), polyobject fields (their thinker, 8.57),
+  the players' pointers (`mo`, `followmobj` and the rest), the global object
+  pointers the archive already enumerates (`P_SaveMobjPointers`), the TID
+  hash heads, the renderer's interpolators, sound channels (already put back
+  by object number, 8.73);
+- *pointers out of the pools to memory freed or reallocated since*: an
+  object's string arguments (freed with it, `P_DeleteMobjStringArgs`), FOFs
+  added at run time, sector light lists, and outside the pools a player's
+  roulette list (`itemList`, reallocated -- the known `itemList.cap`);
+- *reference counts held from outside the pools*: ACS threads (8.52), and the
+  players if they stay in the network format. A raw restore puts back the
+  counts the snapshot had; a network loader that then adds its own would
+  count twice. This is the part to get exactly right: a count too low frees
+  an object still in use;
+- *what the pools' free list cannot see*: a pool that grew a chunk after the
+  snapshot has blocks the restored list does not reach -- they have to be
+  given back, or they leak; a block freed by `LUA_InvalidateUserdata`'s path
+  (`PoolAllocator::deallocate`) comes back while Lua forgot its userdata --
+  Lua stays in the network format and finds objects by number, so it should
+  make a new one;
+- *everything else a tic changes*: the misc globals, RNG, world (heights,
+  lights), polyobject positions, waypoints, ACS and Lua stay in the network
+  format, minus the players and thinker sections the pools replace.
+
+**How it would be checked**: a verify mode. After each raw restore, write the
+network archive of the restored world and compare it byte for byte with a
+network snapshot of the same tic, as the leak soak does (8.34); a difference
+names its block (`P_LocateSnapshotBlock`). The seven maps' leak and resim
+soaks in that mode, then the `keep` race.
+
+**What it would cost (estimate, to replace with the instrument's pool
+lines)**: a copy of the pools' chunks. The object pool on Opulence, about
+3700 objects, is four chunks of 1024 objects -- a few MB, which a memory copy
+moves in 0.3 to 1 ms, against about 4 ms of save. A 128-, 64- or
+precipitation-sized chunk is far larger than what it holds: 32768 blocks for
+the third. Copying whole chunks could cost more than the save it replaces;
+limiting the copy to the blocks a chunk has ever handed out (a bump pointer
+in `PoolAllocator`) makes it proportional to what the level used.
+
+**B2, in order:**
+
+1. the instrument (`d20b9a0a9`);
+2. `PoolAllocator` snapshot and restore, bounded to the blocks ever handed
+   out, and the chunks grown since given back -- no change in behaviour;
+3. `rollback_rawsnap 1`: the pools and the pointers into them raw, the rest
+   in the network format; `rollback_rawsnap 2`: the same, verified after
+   every restore against the network archive;
+4. the soaks of the seven maps in verify mode; then `keep` on Opulence, for
+   the cost.
+
+**Predictions for the instrument** (any race with `rollback_twoclock`'s
+report; Opulence's `keep` for the figures of 8.78):
+
+- a local save about 4 ms and about 290 KB there (8.60, 8.78), the object
+  list (`thinkers: objects`) the largest step in time and bytes -- half or
+  more; players under 0.5 ms; Lua and ACS together under 1 ms, the least sure
+  of these (401 Lua gems and coins, 8.69); the world, waypoints, specials
+  and polyobjects small;
+- the object pool: about 3700 blocks in use on Opulence, four chunks. The
+  block size is `sizeof (mobj_t)`, read in the report;
+- if Lua is a millisecond or more, a copy of the pools leaves it in the save,
+  and it is the next target.

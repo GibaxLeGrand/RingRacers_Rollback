@@ -185,12 +185,24 @@ correction channel's put-back and fixed. **Every launch is asked for first.**
      `a61ccadd8` (who is wrong on a rebuild, 8.79) and drive `keep` on
      Opulence again; then, by what it shows, rebuild from the first wrong
      tic, or fix where the history loses its place.
-   - B1, restore in place; B2, a raw snapshot: not started.
+   - B1, restore in place; B2, a raw snapshot. **B2 started on 2026-09-29,
+     on Gibax's word, before B1** (`WORLDWIDE.md` 8.81): the save timed step
+     by step (`d20b9a0a9`, local, to push), and the design changed by a
+     reading -- every thinker lives in four fixed-block pools
+     (`PoolAllocator`), so a copy of their chunks restores objects at their
+     own addresses, which was B1's whole point. Next: the pools' snapshot and
+     restore, then `rollback_rawsnap` with a verify mode, then the soaks.
    - Open: a sound cut when an object is removed in a speculated tic (8.73);
      the slow save -- 4 ms from `69e65f0ac` against 2.5 up to `5a417494f`,
      not the machine (8.78), to bisect with the kept exes; the camera
      during rebuilds (8.78).
 9. **Then** the compatibility work (section below), and Phase B's big lever.
+   **Started on 2026-09-29, on Gibax's word, beside item 8:** steps 2 to 6 of
+   the compatibility section written as WORLDWIDE mode (`WORLDWIDE.md` 8.80),
+   pushed as `51ba899d6`, CI green, not yet run. **Next, each asked for:** install
+   it, then `playtest.sh vanillajoin` (the refusal, unattended) and
+   `playtest.sh worldwide` (the product path: the server runs `worldwide On`,
+   the client sets nothing).
 
 ---
 
@@ -362,6 +374,13 @@ release tag. "A WORLDWIDE client on a vanilla server" needs a release-config
 build on the release base the public servers run.
 
 **The work, in order:**
+
+⚠ Steps 2 to 6 are written as WORLDWIDE mode (`WORLDWIDE.md` 8.80, 2026-09-29),
+not yet built or run: `worldwide On` on the server; the `SV_WORLDWIDE` bit
+(`0x04`); a client declares itself by five bytes after the stock join request,
+which a stock server ignores; the server refuses a join without them; the
+client switches itself by the bit at join; `K_RollbackPays()` asks the mode
+through the correction rate.
 
 1. ~~Roulette fields in local snapshots only~~ -- done in code (8.29).
 2. **One server-side meaning of "WORLDWIDE mode".** Today it is two switches on

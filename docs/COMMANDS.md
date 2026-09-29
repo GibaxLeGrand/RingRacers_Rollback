@@ -12,9 +12,11 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-28** — 25 commands, checked against
-`K_RegisterRollbackStuff` in `k_rollback.c`. Two are **obsolete**
-(`rollback_loop`, `rollback_pace`) and are kept only for comparison.
+**Up to date as of 2026-09-29** — 26 commands, checked against
+`K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
+`worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
+`rollback_pace`) and are kept only for comparison. `worldwide` and
+`rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -183,6 +185,14 @@ coins, mace chains, braziers), not the karts.
   compare types with each other, not with a race without it.
 - Setting it resets the counts.
 
+### `rollback_vanillajoin [0|1]`
+**Client side, for testing WORLDWIDE mode's refusal** with a WORLDWIDE build
+(`WORLDWIDE.md` 8.80). With `1`, the next join leaves out what a WORLDWIDE
+client adds to its join request, as a stock client would: a server running
+`worldwide on` must turn it away with a readable message, and its log says
+`worldwide: refused node`. Off by default. The `vanillajoin` scenario of
+`playtest.sh` uses it.
+
 ### `rollback_lagcheck` — not a command
 Looked for as a command, it is not one: it is an **automatic print**, edge
 triggered, inside `UpdatePingTable` (`d_clisrv.c`). It emits a line
@@ -193,6 +203,41 @@ the line shows up in the `latest-log.txt` of the machine in question.
 ---
 
 ## Live netcode — change actual network behaviour
+
+### `worldwide [On|Off]` — server variable
+**Server side. The one switch of WORLDWIDE mode** (`WORLDWIDE.md` 8.80): the
+compatibility policy says the server decides. A console variable, not a
+debug command; `Off` by default, and **not saved** in the config -- set once,
+it would put every later test server in the mode, and a control scenario
+would then predict without anyone having asked for it. Set it before
+hosting, in a dedicated server's startup script, or on the command line
+(`+worldwide On`). With anybody else connected, a change is refused and the
+value put back: the clients learned the mode when they joined.
+
+A server hosting in WORLDWIDE mode:
+- sends a light correction every 4 tics **in place of** the full-state
+  resend, as `rollback_correct 4` does (a rate set by `rollback_correct`
+  wins over the mode's);
+- sets the `SV_WORLDWIDE` bit (`0x04`) of `kartvars` in its server info; a
+  stock client never reads that bit;
+- refuses a client whose join request does not declare it WORLDWIDE
+  ("This server runs the WORLDWIDE netcode...") or declares another
+  WORLDWIDE protocol version; its own player on a listen server is never
+  refused;
+- exempts its host from the gentleman's delay (`K_RollbackPays()`), as
+  `rollback_correct` did.
+
+A WORLDWIDE client reads the bit when it joins. Against a server that has
+it, it switches on what the driven `keep` race ran (`WORLDWIDE.md` 8.78):
+`rollback_twoclock 4`, `rollback_cleancmds 1`, `rollback_history 12`,
+`rollback_keepspec 1`, and the corrections applied (`rollback_drift 1`);
+its log says `worldwide: this server runs WORLDWIDE mode`. Against any other
+server it switches all of them off and plays the stock netcode. Leaving the
+server undoes what the join switched on, and nothing else. The switches
+can still be moved by hand after joining, for measuring.
+
+Every WORLDWIDE client adds 5 bytes to its join request (`clientworldwide_pak`,
+`d_clisrv.h`); a stock server reads the stock request and ignores them.
 
 ### `rollback_loop [tics]` — ❌ OBSOLETE
 Replaced by `rollback_twoclock` on 2026-09-10; kept for comparison only. It
@@ -255,7 +300,14 @@ itself.
     (8.71);
   - `rollback_tic` — a speculated tic's time split into player thinks, the
     thinker lists, ACS and Lua, with the Lua mobj hooks and
-    `P_CheckPosition` calls a tic.
+    `P_CheckPosition` calls a tic;
+  - `rollback_save` (from the build that carries `WORLDWIDE.md` 8.81, not
+    yet pushed) — a local save step by step, the mean time and size of each
+    step over every local save since the reset: players, world, polyobjects,
+    each thinker list, waypoints, ACS, Lua and the rest; the steps under 5 us
+    and 1 KB are summed in one line. Then, for each of the four level pools
+    every thinker and sector node is allocated from, its block size, blocks
+    in use and chunks -- what a raw snapshot (track B2) would copy.
 - Setting it (any value) resets all of these, so a race can print one report
   a window.
 - Removes the fixed input delay while it is on (see the box below).
@@ -434,7 +486,8 @@ learn whether the visual snapping is gone (that, only a human can say).
 ### `rollback_correct [tics] [suppress]`
 **Server side.** Asks the server to send every client a light state correction
 every `tics` tics. `0` turns it off (stock behaviour: only the full resend
-corrects).
+corrects) -- unless the server runs `worldwide On`, which then sends one every
+4 tics in place of the resend; the bare command says which is in force.
 
 The packet (`statekart_pak`, `d_clisrv.h`) is **56 bytes per kart**, i.e. 896
 for a grid of 16:
@@ -492,8 +545,12 @@ nothing has been measured yet.
 
 ## Usage cheat sheet
 
-- **Setting up a WORLDWIDE race** (as the `correct` scenarios of
-  `playtest.sh` do, `WORLDWIDE.md` 8.4):
+- **Setting up a WORLDWIDE race, the product way** (`WORLDWIDE.md` 8.80, not
+  yet run): `worldwide On` on the server before anybody joins, nothing on the
+  clients -- they switch themselves on at join. The `worldwide` scenario of
+  `playtest.sh` does exactly that; `vanillajoin` checks the refusal.
+- **Setting up a WORLDWIDE race by hand**, for measuring (as the `correct`
+  scenarios of `playtest.sh` do, `WORLDWIDE.md` 8.4):
   - server: `rollback_correct 4`;
   - client: `rollback_twoclock 4` and `rollback_drift 1` (it is that `1` that
     applies the corrections; without it, the client only measures them).
@@ -509,9 +566,10 @@ nothing has been measured yet.
   `rollback_history`.
 
   The control is run with `rollback_correct 4 0` on the server (the full
-  resend stays active). Today these settings are made by hand on each
-  machine: the client's automatic switch into WORLDWIDE mode based on the
-  server is still to be built (`ROADMAP.md`, *Compatibility* section).
+  resend stays active). The measuring scenarios keep setting everything by
+  hand: their server does not run `worldwide`, so a client joining it
+  switches everything off at join, and the scenario's own lines, run after
+  the join, set what it measures.
 - For a solo diagnostic with no network: `rollback_test`, then
   `rollback_resim`, then, if both are clean but a real race still drifts,
   `rollback_leak` (see also `soak_leak.cfg`, which runs
