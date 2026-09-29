@@ -5897,3 +5897,15 @@ vanillajoin puis worldwide"), unattended. Predictions in 8.80. Logs
 WORLDWIDE mode cannot be tested past the join until 1 is fixed; the old
 scenarios, which switch prediction on mid-race, are not affected by 1 and
 carry 2 as they always have.
+
+⚠ Both fixed the same night on Gibax's go-ahead ("oui, option A, pousse et
+relance les deux"): `d847ce681` clears `players[].mo` before a load's
+objects come back (network and raw); `ab126a1a7`, Gibax's option A, stops a
+predicting client from writing or beginning a replay
+(`K_RollbackPredicting`). Pushed one by one; the build is `ab126a1a7`'s,
+CI run 36632765321. **Predictions for the rerun of both scenarios**: no
+crash and no `PARANOIA` line on either machine; `vanillajoin`: the second,
+undeclared join refused, the server's log saying `worldwide: refused node`;
+`worldwide`: the race runs to its end with prediction on from the join,
+drift 0.000, 99% of passes kept or more if nobody drives; the client's log
+records no replay, the server's does.
