@@ -6045,3 +6045,29 @@ rebuilt 199 times for a wrong input; with `rollback_keepearly`, 193 -- and
   rebuild in a race is what hurts. What Gibax feels is not a rebuild: the
   leads are the frame pacing (one longer frame a tic) and the interpolation
   -- what the view and the objects are interpolated from on a kept pass.
+
+### 8.100 An instrument for what is drawn, and `rollback_keepearly` off by default
+
+Written on 2026-09-29 before the night's stop (Gibax: "écris l'instrument et
+désactive (a), et on reprend demain"), on the local branch `wip/drawn`,
+**not pushed**. Syntax checked with no warning; an error injected at each of
+the six changed places is reported by the compiler.
+
+- **`c5d2eb0b8`**: `rollback_frames`' report now says, for the frames drawn
+  while the local kart moves (over 2 units a tic), how the kart's **drawn**
+  position (`R_InterpolateMobjState` at `rendertimefrac`) and the view's
+  (`viewx`, `viewy`) stepped from the frame before, against the kart's speed
+  and the time between the two frames: even, short (under half), long (over
+  one and a half) or **backwards** -- split by whether the frame carried a
+  pass. It counts with prediction on or off, so a race without prediction
+  is its control.
+- **`e0848fc7e`**: `rollback_keepearly` off by default (8.99); `1` turns it
+  on.
+
+**Predictions, for a driven `wwwindows` race and a driven race without
+prediction, same session:** with prediction, the kart's irregular steps
+(short, long, backwards) are **at least twice as frequent** as without, and
+mostly in frames that carried a pass; backwards steps rare (under 1% of
+frames) but not zero. If the view is regular where the kart is not, the
+kart's interpolation is what Gibax sees; if both are irregular together, it
+is the frame pacing.
