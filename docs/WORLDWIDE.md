@@ -5998,3 +5998,50 @@ eight changed places is reported by the compiler.
   **1 to 2 tics each**; iterations with a pass over 8.3 ms a fifth of the
   control's or fewer. Drift 0.000 in both.
 - Gibax should feel the stutter go -- the one measure no report gives.
+
+### 8.99 `rollback_keepearly` measured: nothing to fix in the race, and busy before it -- 8.97 misread
+
+Measured on 2026-09-29, binary `6209f1786` (sha256 `e7344737...`, CI run
+36634476627, the previous exe kept as `.bak_ab126a1`), Gibax's go-ahead
+("oui, pousse, installe et lance les deux, je pilote"), **both driven**;
+processor at 6%; no crash, no `PARANOIA` line on the server, 3 and 4 on the
+client (at the join, as in 8.97). `wwwindows_noearly` (control) then
+`wwwindows`, Skyscraper Leaps. Windows are differences of the cumulative
+reports (`window_diff.py` in the scratch folder of the measuring machine).
+Predictions in 8.98.
+
+| race windows (1000 tics) | control: w0 / w1 / w2 | `rollback_keepearly`: w0 / w1 / w2 |
+|---|---|---|
+| passes kept | 999 / 1000 / 1000 | 994 / 987 / 1000 |
+| rebuilt: an input differed | 1 / 0 / 0 | 6 / 13 / 0 |
+| early reruns (tics) | -- | 5 (22) / 6 (37) / 0 |
+| pass | 2.31 / 2.36 / 2.46 ms | 2.35 / 2.48 / 2.04 ms |
+| frames drawn | 4106 / 4106 / 4105 | 4094 / 4086 / 4111 |
+| iterations with a pass over 8.3 ms | 9 / 8 / 5 | 21 / 22 / 3 |
+| gaps between frames of 8.3 to 16.7 ms | 959 / 987 / 1006 | 968 / 948 / 967 |
+| drawn world moved against the clock | 2 / 7 / 0 | 2 / 4 / 0 |
+| state fields off, karts put back | 0, 0 | 0, 0 |
+
+Before the race (the join and the waiting map, 1599 passes): the control
+rebuilt 199 times for a wrong input; with `rollback_keepearly`, 193 -- and
+**1339 early reruns, 2793 tics**.
+
+- **8.98's predictions fail, and so does 8.97's reading.** The control's race
+  windows had 1, 0 and 0 rebuilds: **the 488 rebuilds of 8.97 were before the
+  race**, in the join and the waiting map, not in the driving. There was
+  nothing in the race for the early rerun to remove; it reran 5 and 6 times
+  there, 4 to 6 tics each, and before the race it fired on most passes to no
+  effect.
+- **Gibax's feel, the same in both**: "pas trop senti une différence ... le
+  kart avait toujours l'impression de rollback très très légèrement ... c'est
+  jouable, pas un souci, mais ça se remarque". Maybe the interpolation, he
+  suggests.
+- **What the numbers show in the race, in both**: about **one gap in four
+  between frames lasts 8.3 to 16.7 ms**, against under 8.3 for the rest --
+  about 1000 a window, **one a tic**: the frame that carries the pass. The
+  drawn world moving against the clock is rare (0 to 7 a window). No rebuild,
+  no correction moving a kart.
+- **So `rollback_keepearly` goes off by default**, to be read again when a
+  rebuild in a race is what hurts. What Gibax feels is not a rebuild: the
+  leads are the frame pacing (one longer frame a tic) and the interpolation
+  -- what the view and the objects are interpolated from on a kept pass.
