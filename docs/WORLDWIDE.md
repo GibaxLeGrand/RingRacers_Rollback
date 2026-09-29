@@ -5844,3 +5844,56 @@ same build's `keep` race (8.94) is the control, driven too, 12 minutes before.
 **So B2 does what it was for**, on the map that needed it. `rollback_rawsnap`
 stays off by default until the players-block difference (8.90, 8.94) and the
 double claim are understood.
+
+### 8.96 WORLDWIDE mode's first runs: both crash at the waiting map's restart
+
+Run on 2026-09-29, binary `cc6ca1c0e`, Gibax's go-ahead ("oui, lance
+vanillajoin puis worldwide"), unattended. Predictions in 8.80. Logs
+`playlog_{vanillajoin,worldwide}_20260929-2314*_cc6ca1c.txt`.
+
+- **Holds, as far as it got**: the server prints `worldwide: on`; the client,
+  on joining, prints `worldwide: this server runs WORLDWIDE mode --
+  predicting, rollback_twoclock 4, rollback_history 12, rollback_keepspec
+  on, corrections applied`, and `rollback_lagcheck` reads a target of 0.
+- **Both clients crashed at the same place, before either test reached its
+  point** (the refusal; the race): right after the player entered the game,
+  when the server restarted the waiting map (`RR_TESTRUN`), with
+  `EXCEPTION_ACCESS_VIOLATION` in `G_WriteDemoExtraData` (`g_demo.cpp:550`),
+  called by `P_Ticker` from a speculated tic (`K_RunSpeculatedTic` <
+  `K_RollbackSpeculate` < `TryRunTics`). Just before, `PARANOIA` lines:
+  two `MT_PLAYER` at `references=-1`, and a spring (`MT_BLUESPRING`, then
+  `MT_REDSPRING` in the second run) at `references=-1` from
+  `g_game.c:3271`.
+- **What is new**: every scenario so far switched prediction on mid-race,
+  after the level had started. WORLDWIDE mode switches it on at the join, so
+  for the first time a speculation stands while a player enters and a level
+  restarts.
+
+**Read in the code, not tested:**
+
+1. **A player's body pointer is left dangling by a restore.** A restore purges
+   every object and loads the snapshot's; `players[i].mo` is set again only
+   for a body the snapshot holds (`LoadMobjThinker`, and the raw path's
+   claim). A player whose body is not in the snapshot -- one who entered the
+   game after it, as this client did -- keeps pointing at the purged body,
+   whose memory the next objects reuse. At the restart `G_DoReborn`
+   (`g_game.c:3261` to `3271`) does `P_RemoveMobj(player->mo)` and
+   `P_SetTarget(&player->mo, NULL)` on it: **it removes whatever object now
+   lives there -- a spring -- and takes a reference it never had.** From
+   there the world is corrupt. **Remedy**: clear `players[].mo` before a load
+   brings the objects back, in both paths -- every body the purge freed is
+   gone, and the loads claim the ones that exist.
+2. **Speculated tics write the replay.** `P_Ticker` writes the demo's extra
+   data and every player's input on every tic it runs (`p_tick.c:783` to
+   `789`) when a replay is being recorded, and nothing in the prediction
+   code stops it: every speculated tic has been appended to the client's
+   replay since the pivot, the restores never rewinding it, and here one
+   wrote into the replay across the level's restart. Whether the crash is
+   this write itself or the corruption of 1 reaching it is not settled.
+   **Remedy**: no replay writes from a speculated tic; with
+   `rollback_keepspec` a kept tic is written when it is kept -- or a
+   predicting client does not record a replay at all (a choice for Gibax).
+
+WORLDWIDE mode cannot be tested past the join until 1 is fixed; the old
+scenarios, which switch prediction on mid-race, are not affected by 1 and
+carry 2 as they always have.
