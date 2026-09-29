@@ -5964,3 +5964,37 @@ instead of the whole depth, a round trip earlier; (b) keep the speculation
 from running past the tic the newest sample lands on, trading guessed tics
 for more jumps of the drawn world. And a `worldwide` scenario with windows,
 to measure the race apart from the waiting map.
+
+### 8.98 `rollback_keepearly`: a guessed tic run again as soon as the input for it is made
+
+Written on 2026-09-29 on Gibax's go-ahead ("oui, écris (a) et le scénario en
+fenêtres"): `5165cdd99`, on the local branch `wip/keepearly`, **not
+pushed**. Syntax checked with no warning; an error injected at each of the
+eight changed places is reported by the compiler.
+
+- On a kept pass, once `NetUpdate`'s new sample is in the history
+  (`K_SpeculationDepth` maps it), `K_KeepEarlyCheck` gives every standing
+  tic past what the server has sent its input again, as R1 would
+  (`K_RollbackLocalCmdFor`, the `TICCMD_RECEIVED` rule of 8.93 included),
+  and compares it with what the tic ran (`K_KeepSameInput`). At the first
+  that differs it puts that tic's saved start back, and the extension runs
+  again from there: the tics from it to the head, instead of the whole depth
+  at the frontier a round trip later.
+- On by default; `rollback_keepearly 0` is the control. `rollback_keepspec`'s
+  report counts the early reruns and the tics they ran.
+- Harness (`9524619` in the notes): `playtest.sh wwwindows` --
+  WORLDWIDE mode with no switch passed, every report printed bare (no reset)
+  at the race's start and after each 1000 tics, so a window is the
+  difference of two reports; `wwwindows_noearly` the same with
+  `rollback_keepearly 0`. Server: `worldwide`'s, `rollback_relabel` every 500
+  tics.
+
+**Predictions, driven, same session, `wwwindows_noearly` then `wwwindows`:**
+
+- The control reads as 8.97 in its race windows: rebuilds on guessed tics,
+  the server's sample newer by one, 5 to 15% of passes.
+- With `rollback_keepearly`: **rebuilds for this machine's wrong input a
+  handful a window**; early reruns about as many as the control's rebuilds,
+  **1 to 2 tics each**; iterations with a pass over 8.3 ms a fifth of the
+  control's or fewer. Drift 0.000 in both.
+- Gibax should feel the stutter go -- the one measure no report gives.
