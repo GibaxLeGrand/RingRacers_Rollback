@@ -57,6 +57,8 @@
 #include "p_saveg.h"
 #include "p_tick.h" // leveltime
 #include "r_state.h" // sectors
+#include "r_main.h" // rendertimefrac
+#include "r_fps.h" // R_InterpolateMobjState
 #include "z_zone.h"
 #include "s_sound.h" // S_NoteChannelOrigins, for a raw restore
 
@@ -3818,6 +3820,76 @@ static uint32_t g_framesdrawn;
 static uint32_t g_frameskips;                           // iterations that made the next frame skip
 static precise_t g_lastdrawnat;
 
+// The local kart and the view as drawn, frame to frame (WORLDWIDE.md 8.99,
+// 8.100). In races where nothing is rebuilt and no kart put back, Gibax still
+// sees the kart "rollback very slightly" -- something in what is drawn. Each
+// drawn frame's step of the kart and of the view is set against the kart's
+// speed and the time since the frame before: even, short (under half of it),
+// long (over one and a half), or backwards; split by whether the frame
+// carried a pass of the tic loop.
+enum { DRAWSTEP_EVEN, DRAWSTEP_SHORT, DRAWSTEP_LONG, DRAWSTEP_BACK, NUMDRAWSTEPS };
+static uint32_t g_drawkart[2][NUMDRAWSTEPS];   // [frame with a pass][class]
+static uint32_t g_drawview[2][NUMDRAWSTEPS];
+static fixed_t g_drawlastkx, g_drawlastky, g_drawlastvx, g_drawlastvy;
+static dboolean g_drawlastok;
+
+static int32_t K_DrawStepClass(fixed_t dx, fixed_t dy, fixed_t mx, fixed_t my, uint32_t gapus)
+{
+	const double fx = (double)dx / FRACUNIT, fy = (double)dy / FRACUNIT;
+	const double vx = (double)mx / FRACUNIT, vy = (double)my / FRACUNIT;
+	const double step = sqrt(fx * fx + fy * fy);
+	const double expected = sqrt(vx * vx + vy * vy) * (double)gapus * TICRATE / 1000000.0;
+
+	if (fx * vx + fy * vy < 0.0)
+		return DRAWSTEP_BACK;
+
+	if (step < 0.5 * expected)
+		return DRAWSTEP_SHORT;
+
+	if (step > 1.5 * expected)
+		return DRAWSTEP_LONG;
+
+	return DRAWSTEP_EVEN;
+}
+
+static void K_NoteDrawnKart(dboolean ranloop, uint32_t gapus)
+{
+	const int32_t who = g_localplayers[0];
+	const int32_t which = ranloop ? 1 : 0;
+	interpmobjstate_t st;
+	mobj_t *mo;
+
+	if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false || players[who].spectator
+		|| players[who].mo == NULL || P_MobjWasRemoved(players[who].mo))
+	{
+		g_drawlastok = false;
+		return;
+	}
+
+	mo = players[who].mo;
+	R_InterpolateMobjState(mo, rendertimefrac, &st);
+
+	// Moving -- over 2 units a tic -- and not a respawn or a teleport.
+	if (g_drawlastok && gapus > 0 && gapus < 100000
+		&& FixedHypot(mo->momx, mo->momy) > 2 * FRACUNIT)
+	{
+		const fixed_t kdx = st.x - g_drawlastkx, kdy = st.y - g_drawlastky;
+		const fixed_t vdx = viewx - g_drawlastvx, vdy = viewy - g_drawlastvy;
+
+		if (FixedHypot(kdx, kdy) < 512 * FRACUNIT)
+		{
+			g_drawkart[which][K_DrawStepClass(kdx, kdy, mo->momx, mo->momy, gapus)]++;
+			g_drawview[which][K_DrawStepClass(vdx, vdy, mo->momx, mo->momy, gapus)]++;
+		}
+	}
+
+	g_drawlastkx = st.x;
+	g_drawlastky = st.y;
+	g_drawlastvx = viewx;
+	g_drawlastvy = viewy;
+	g_drawlastok = true;
+}
+
 // The inputs the standing speculation ran, tic by tic, checked against what the
 // server confirms for the same tics on the next pass.
 #define ROLLBACK_GUESSMAX 32
@@ -3932,6 +4004,7 @@ void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboole
 	{
 		// A gap spent in a menu or a wipe is not a frame the race drew late.
 		g_lastdrawnat = 0;
+		g_drawlastok = false;
 		return;
 	}
 
@@ -3959,6 +4032,12 @@ void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboole
 
 			if (gap > g_framegapmax)
 				g_framegapmax = gap;
+
+			K_NoteDrawnKart(ranloop, gap);
+		}
+		else
+		{
+			K_NoteDrawnKart(ranloop, 0);
 		}
 
 		g_lastdrawnat = now;
@@ -4329,6 +4408,9 @@ static void K_ResetPassCosts(void)
 	memset(g_framegap, 0, sizeof g_framegap);
 	g_framegapmax = g_framesdrawn = g_frameskips = 0;
 	g_lastdrawnat = 0;
+	memset(g_drawkart, 0, sizeof g_drawkart);
+	memset(g_drawview, 0, sizeof g_drawview);
+	g_drawlastok = false;
 
 	g_guesspasses = g_guessright = g_guessrightmoved = 0;
 	memset(g_guessfirstwrong, 0, sizeof g_guessfirstwrong);
@@ -4561,6 +4643,19 @@ static void K_ReportPassCosts(void)
 	CONS_Printf("rollback_frames: %u frames drawn, the longest gap %u us; %u iterations "
 		"ran past a tic, so the frame after each was skipped\n",
 		g_framesdrawn, g_framegapmax, g_frameskips);
+	CONS_Printf("rollback_frames: the local kart as drawn, frame to frame while it moves -- "
+		"without a pass: even %u, short %u, long %u, backwards %u; with one: even %u, "
+		"short %u, long %u, backwards %u\n",
+		g_drawkart[0][DRAWSTEP_EVEN], g_drawkart[0][DRAWSTEP_SHORT],
+		g_drawkart[0][DRAWSTEP_LONG], g_drawkart[0][DRAWSTEP_BACK],
+		g_drawkart[1][DRAWSTEP_EVEN], g_drawkart[1][DRAWSTEP_SHORT],
+		g_drawkart[1][DRAWSTEP_LONG], g_drawkart[1][DRAWSTEP_BACK]);
+	CONS_Printf("rollback_frames: the view, likewise -- without a pass: even %u, short %u, "
+		"long %u, backwards %u; with one: even %u, short %u, long %u, backwards %u\n",
+		g_drawview[0][DRAWSTEP_EVEN], g_drawview[0][DRAWSTEP_SHORT],
+		g_drawview[0][DRAWSTEP_LONG], g_drawview[0][DRAWSTEP_BACK],
+		g_drawview[1][DRAWSTEP_EVEN], g_drawview[1][DRAWSTEP_SHORT],
+		g_drawview[1][DRAWSTEP_LONG], g_drawview[1][DRAWSTEP_BACK]);
 
 	CONS_Printf("rollback_hits: %u passes confirmed tics the speculation had guessed: "
 		"%u with every input right (%u of them with a kart moved by a correction), "
