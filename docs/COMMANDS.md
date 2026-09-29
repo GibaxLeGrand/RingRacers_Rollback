@@ -17,7 +17,7 @@ sides).
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
 `rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80);
-`rollback_poolcopy` from `352d3f204` (8.82, not yet pushed).
+`rollback_poolcopy` from `df8ed24e9` (8.82).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -317,7 +317,7 @@ itself.
     each thinker list, waypoints, ACS, Lua and the rest; the steps under 5 us
     and 1 KB are summed in one line. Then, for each of the four level pools
     every thinker and sector node is allocated from, its block size, blocks
-    in use and chunks; and from `352d3f204` (8.82), what a raw copy of the
+    in use and chunks; and from `df8ed24e9` (8.82), what a raw copy of the
     pools weighs and takes, measured at the report -- the raw snapshot's
     save half, against the save above.
 - Setting it (any value) resets all of these, so a race can print one report

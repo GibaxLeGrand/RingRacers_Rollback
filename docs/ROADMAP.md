@@ -191,10 +191,14 @@ correction channel's put-back and fixed. **Every launch is asked for first.**
      reading -- every thinker lives in four fixed-block pools
      (`PoolAllocator`), so a copy of their chunks restores objects at their
      own addresses, which was B1's whole point. **Step 2 written** (8.82,
-     `352d3f204`, local, to push): the pools snapshot and restore
+     `df8ed24e9`, pushed; B2 goes on on `feature-b2`): the pools snapshot and restore
      themselves, copying only the blocks ever handed out, and
-     `rollback_poolcopy` times a copy and checks the round trip. Next:
-     `rollback_rawsnap` with a verify mode (step 3), then the soaks.
+     `rollback_poolcopy` times a copy and checks the round trip. Step 3's
+     census is done (8.83): about twenty small heads and arrays to save
+     beside the pools, the string arguments, and the reference counts.
+     **Next: measure step 2 on the measuring machine** (a copy against the
+     save's 4 ms), then `rollback_rawsnap` with a verify mode that checks the
+     counts as well as the bytes, then the soaks.
    - Open: a sound cut when an object is removed in a speculated tic (8.73);
      the slow save -- 4 ms from `69e65f0ac` against 2.5 up to `5a417494f`,
      not the machine (8.78), to bisect with the kept exes; the camera

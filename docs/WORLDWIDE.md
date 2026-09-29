@@ -100,7 +100,7 @@ not yet run).
    2026-09-29 (8.81)**: the saves are about 40% of a driven pass; the save
    is now timed step by step (`ba1e43523`), and every thinker turns out
    to live in four fixed-block pools, which a raw snapshot can copy whole;
-   they snapshot and restore themselves in `352d3f204` (8.82, not pushed),
+   they snapshot and restore themselves in `df8ed24e9` (8.82),
    not yet used in play.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
    8.28 is fixed in code (8.29), never checked against a stock build. **WORLDWIDE
@@ -4911,7 +4911,7 @@ on its three jobs. Not installed, not run.
 
 ### 8.82 B2, step 2: the level pools snapshot and restore themselves
 
-Written on 2026-09-29, `352d3f204`, local branch `wip/b2`, **not pushed**.
+Written on 2026-09-29, `df8ed24e9` (pushed, see below; first written as `352d3f204`).
 Checked by reading only, as 8.80 was: declarations, balance, the compile is
 the CI's.
 
@@ -4967,3 +4967,112 @@ the world as it stands at the report.
 **Next, step 3**: `rollback_rawsnap`, the pools plus what points into them
 from outside (8.81's list), with its verify mode. That is where the reference
 counts held outside the pools, the players and Lua have to be settled.
+
+⚠ Pushed the same day on Gibax's go-ahead ("oui pousse et fais le
+recensement") as `df8ed24e9` -- `352d3f204` put on top of the docs -- on
+`rollback-netcode`, and as the new branch `feature-b2`, where B2 goes on
+from here and which merges back into `rollback-netcode` when it holds (Gibax:
+"pour pouvoir reprendre après avec un merge dans la main branch"). CI run
+36544246555.
+
+### 8.83 B2, step 3's census: what points into the pools from outside them
+
+Read only, 2026-09-29, on Gibax's word ("fais le recensement"). What a raw
+restore of the level pools (8.82) does not put back by itself.
+
+**How the census was taken.** Today's restore frees every object and makes it
+again at a *new* address (`P_NetUnArchiveThinkers`, then `LoadMobjThinker`).
+So any pointer into the pools that lasts from one tic to the next is already
+rebuilt somewhere in the load -- or it dangles today. The census is what the
+load rebuilds, checked against a search of the file-scope pointers to pooled
+types. Every pooled pointer the load *relinks* goes through `P_SetTarget`
+(`RelinkMobj`, `p_saveg.cpp`), which **counts a reference**: today every
+count is rebuilt from zero at every restore.
+
+**A. Inside the pools -- the copy puts them back, nothing to do:** thinker
+list links; an object's `target`, `tracer`, `hnext`, `hprev`, `itnext`,
+`owner`, `terrainOverlay`, `punt_ref`; the sector and blockmap chains
+(`snext`, `sprev`, `bnext`, `bprev`) in their order; every sector node and its
+links; the pointers other thinkers hold (an executor's caller); the
+reference counts *between* pooled things; the objects' numbers.
+
+**B. Outside, pointing in -- to save beside the pools, raw, small:**
+
+| holder | where | today's load |
+|---|---|---|
+| thinker list heads, `thlist[]` | `p_tick.c` | `P_InitThinkers`, then each thinker appended |
+| per sector: `thinglist`, `touching_thinglist`, `touching_preciplist`, `floordata`, `ceilingdata`, `lightingdata`, `fadecolormapdata` | `r_defs.h:474-543` | cleared, then `P_SetThingPosition` per object and each thinker's loader |
+| an FOF's `fadingdata` | `r_defs.h:263` | its fade thinker's loader |
+| blockmap heads, `blocklinks[]`, `precipblocklinks[]` | `p_setup.cpp:190` | `P_SetThingPosition` |
+| a polyobject's `thinker` | `p_polyobj.h:107` | the polyobject thinker loaders (8.57) |
+| TID chains, `TID_Hash[]` | `p_mobj.c:15889` | `P_AddThingTID` per object |
+| `waypointcap`, `trackercap`, `overlaycap` | `p_mobj.c:61-67` | `P_SetTarget` in `LoadMobjThinker` (the first two); `overlaycap` to check |
+| `svg_battleUfoSpawners`, `svg_checkpoints`, `svg_rocks` | `p_link.cpp` | `P_LoadMobjPointers`, relinked by number |
+| `g_endcam.panMobj` | end camera | relinked by number |
+| `skyboxviewpnts[]`, `skyboxcenterpnts[]` | `p_spec.c:63` | `P_InitSkyboxPoint` per skybox object |
+| `tubewaypoints[][]` | `p_setup.cpp:218` | relinked by number, `P_SetTarget` |
+| race waypoints' `mobj` | `k_waypoint` | relinked by number, `P_SetTarget` |
+| **the players**: about twenty pointers -- `mo`, `followmobj`, `follower`, `awayview.mobj`, `skybox.*`, `ringShooter`, `hoverhyudoro`, `flickyAttacker`, `stumbleIndicator`, `wavedashIndicator`, `trickIndicator`, `whip`, `hand`, `flybot`, `ballhogreticule`, `stoneShoe`, `toxomisterCloud`, `powerup.*` | `players[]` | relinked by number in `P_RelinkPointers`, `P_SetTarget` |
+| module statics: `beamPoints[2]` (`k_race.c:46`), `minimapGear` (`objects/ancient-gear.c:40`) | | **not seen in the load**: set again by their own code each tic, or already dangling after today's restores -- to check |
+
+**C. Outside, pointing in -- derived or short-lived, rebuilt or harmless:**
+the renderer's object interpolators (`R_AddMobjInterpolator`, rebuilt for
+every object today) and level interpolators (per thinker); sound channels
+(put back by object number since 8.73 -- with stable addresses, only a
+channel on an object born after the snapshot needs stopping); Lua's registry
+(keyed by address: `allocate()` forgets a reused block since 8.82, Lua itself
+stays in the network format and finds objects by number); and pointers that
+only live inside one call -- `currentthinker`, `sector_list`,
+`precipsector_list`, `tm.*`, `r_viewmobj`, and the file-scope temporaries of
+iterator callbacks (`grenade`, `lightningSource`, `attractmo`, `stand`,
+`slidemo`, `bombsource`, `bombspot`, `minus`, `barrel`, `sourceofmurder`,
+`referencepuyo`, `bestpuyo`, `promptmo`). The cameras are already saved
+beside each snapshot.
+
+**D. Out of the pools, to memory that can change under them:**
+
+- **an object's string arguments** (`thing_stringargs`) are freed when the
+  object is removed (`P_DeleteMobjStringArgs`, `p_mobj.c`): an object removed
+  after the snapshot comes back pointing at freed strings. Remedy: keep them
+  while a snapshot may need them, or put them in the snapshot;
+- everything else read is level data made at load and kept to its end --
+  `player` (the `players[]` array), `subsector`, `state`, `info`,
+  `spawnpoint`, `standingslope`, `floorrover`/`ceilingrover` (FOFs are only
+  made by `P_SpawnSpecials`, at load), sectors, lines, polyobjects.
+
+**E. Reference counts -- the part to get exactly right.** A raw restore puts
+back each count as the snapshot had it, which includes the references held
+from *outside* the pools at that moment (B's players, caps, links, waypoints;
+ACS threads, 8.52). Whatever is then reloaded through `P_SetTarget` counts
+again. A count too high only keeps a removed object's block from being freed
+(a leak); **too low frees an object still in use**. Two ways, to choose in
+step 3:
+
+1. **Everything that counts is restored raw**: the players (`players[]`
+   copied whole, with the one pointer out that moves -- the roulette's
+   `itemList`, reallocated -- handled apart), the caps, links and waypoints'
+   pointers. Only ACS stays in the network format, and its reload must not
+   count the references its threads already had.
+2. **Recount**: after the restore and the network sections, set every count
+   to zero and walk every holder once -- the enumeration `P_RelinkPointers`
+   already has, plus ACS -- adding one per pointer. Slower (every object,
+   every restore), but nothing to keep in step with.
+
+Either way, the verify mode should **check the counts** as well as the
+bytes: the network archive does not store them, so the byte comparison of
+8.81 cannot see a wrong one. A full walk that recounts and compares, in
+verify mode only, can.
+
+**F. What stays in the network format**: netvars and misc (`leveltime`, the
+globals), RNG and luabanks, the world (heights, lights, flags), polyobject
+positions, specials, colormaps, waypoints' state, ACS, Lua, the end camera,
+parties, round queue and vote -- a local save without its thinker section,
+and without the players if they go raw. The instrument's lines (8.81) say
+what that leaves to write.
+
+**What the census changes in the plan:** nothing in the order, two things in
+the scope. The raw part is the pools **plus** about twenty small arrays and
+heads (B), a copy of `players[]` if E1 is chosen, and the string arguments.
+And the verify mode needs a reference-count check beside the byte
+comparison. Two module statics (`beamPoints`, `minimapGear`) are to read
+before relying on them.
