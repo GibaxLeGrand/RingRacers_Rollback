@@ -5301,3 +5301,68 @@ places is reported by the compiler.
 - If instead the misses follow the ambiguous anchors, the anchor is the
   thing to fix first (count the samples since the last anchor rather than
   take the newest match), before R2.
+
+⚠ Pushed on Gibax's go-ahead ("oui, pousse, installe et lance keep sur
+Opulence, je pilote") as `4adeea840` -- `f719868f8` put on top of the docs --
+CI run 36559025884.
+
+### 8.87 The replay runs one sample ahead after every late frame -- 8.85's first chain, on the client side
+
+Measured on 2026-09-29, binary `4adeea840` (sha256 `b8b03cf4...`, CI run
+36559025884), both copies checked, the previous exe kept as `.bak_df8ed24`.
+Gibax's go-ahead ("oui, pousse, installe et lance keep sur Opulence, je
+pilote"), **driven by Gibax**; processor at 5%, League of Legends client
+closed; the player entered the game
+(`playlog_keep_RR_Opulence_20260929-130740_4adeea8.txt`). Predictions in 8.86.
+
+| | window 0 | window 1 | window 2 |
+|---|---|---|---|
+| passes kept, of 999 | **987** | **998** | 842 |
+| rebuilt: an input differed | 12 | 1 | 155 |
+| this machine's wrong inputs / bots' | 9 / 8 | 1 / 0 | 155 / 0 |
+| **server's sample against the replayed: older by one** | **9 of 9** | **1 of 1** | **155 of 155** |
+| **samples made after more than one real tic** (tics with none) | **9** (9) | **2** (2) | **157** (160) |
+| iterations past a tic | 13 | 3 | 159 |
+| samples with the stamp of the one before | 6 | 12 | 26 |
+| passes whose anchor matched more than one sample | 5 | 6 | 64 |
+| pass | **7.2 ms** | **6.7** | 18.4 |
+| frames drawn in 1000 tics | **3765** | **3769** | 2778 |
+| a local save / a raw copy of the pools | 2573 / 368 us | 2676 / 430 us | 2508 / 346 us |
+| drift | 0.000 | 0.000 | 0.000 (worst 0.001) |
+
+- **Holds: the replay runs ahead, every time** -- 165 of 165 of this
+  machine's wrong inputs, always by exactly one sample (80% or more
+  written). None newer, none the same to the anchor.
+- **Holds: the first chain, on the client's side.** The wrong inputs follow
+  the samples made after more than one real tic almost one for one -- 9 and
+  9, 1 and 2, 155 and 157 -- and those follow the iterations past a tic.
+- **Holds: not the anchor.** Ambiguous anchors on 0.5, 0.6 and 6.4% of
+  passes, shared stamps 0.6 to 2.6% of samples, and neither follows the
+  misses (window 2: 64 ambiguous anchors, 155 misses).
+- **Cannot be checked: the server's side.** It printed `rollback_relabel`
+  once, about 2100 tics into the race -- the scenario's next report comes
+  after the harness has killed it -- and the count starts on the waiting
+  map. Up to there: this machine's player 2901 samples filed, **678 a tic
+  late because the slot was taken**, 0 over another, **39 tics repeated**;
+  the host 3498, 2000 and 2. So the server takes up timing more often by
+  its "one tic later" rule than by repeating, and 8.86's "repeats within
+  10% of the late samples" cannot be set against window 2. For the replay
+  it makes no difference: either way, a sample made after `k` real tics
+  leaves `k - 1` tics to the one before it, which is what the misses show.
+- **The best driven race yet**: windows 0 and 1 kept 98.8 and 99.9% of
+  passes, a pass of 7.2 and 6.7 ms, 132 frames a second, driven, on
+  Opulence. Window 2 fell into the loop again (157 late samples), and still
+  kept 84% at 97 frames a second. What started it is not measured: the
+  first late frame comes before any rebuild.
+
+**So: R1 is what the numbers ask for.** Record how many real tics each
+sample stands for, beside the history, and let the replay give the sample
+before a late one `k - 1` extra tics -- anchored on the first confirmed tic
+that holds the anchor's sample. Client only, no protocol change, and every
+one of the 165 misses above is of the kind it removes. R2 (samples filed by
+sequence, WORLDWIDE mode) stays the remedy for a real network, where
+arrivals jitter on their own.
+
+The harness's server scenario prints `rollback_relabel` every 2000 tics and
+is killed before its last print; it needs a print inside every client
+window.
