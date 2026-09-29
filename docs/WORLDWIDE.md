@@ -5909,3 +5909,58 @@ undeclared join refused, the server's log saying `worldwide: refused node`;
 `worldwide`: the race runs to its end with prediction on from the join,
 drift 0.000, 99% of passes kept or more if nobody drives; the client's log
 records no replay, the server's does.
+
+### 8.97 WORLDWIDE mode runs end to end; a slight stutter, and where it comes from
+
+Rerun on 2026-09-29, binary `ab126a1a7` (sha256 `57f48de7...`, CI run
+36632765321, green on its three jobs; the previous exe kept as
+`.bak_cc6ca1c`). **Both driven by Gibax** ("j'ai piloté", "les 2");
+processor at 12%. Predictions under 8.96. Logs
+`playlog_{vanillajoin,worldwide}_20260929-23*_ab126a1.txt`.
+
+**Holds, all of it:**
+- **No crash**, on either machine, in either scenario.
+- `vanillajoin`: the declared join let in and switched to WORLDWIDE mode;
+  the undeclared one **refused** -- the server's log: `worldwide: refused
+  node 1 -- it did not declare itself WORLDWIDE`.
+- `worldwide`: prediction on from the join (`rollback_twoclock 4`,
+  `rollback_history 12`, `rollback_keepspec on`, corrections applied), target
+  lag 0; the server `rollback_correct: not set -- WORLDWIDE mode sends a light
+  correction every 4 tics`; **the race ran to its end: drift 0.000, 0 of
+  10305 kart samples with a state field off, 0 karts put back**, no full-state
+  resend; **no replay recorded by the client** (option A).
+
+**Left at the join**: 1 and 3 `PARANOIA` lines on the client, all at the
+moment the player enters the waiting map with prediction on --
+`*Guest entered the game.` printed twice, then an `MT_PLAYER` at -1 from
+`P_MobjThinker` (`p_mobj.c:10831`): the entry ran twice around a restore, and
+the first body was still some object's target. None during the race, none
+on the server. Not explained further.
+
+**The stutter Gibax felt** ("ça stutter très légèrement ... ça rejoue un tic
+en arrière ?"). One window for the whole session -- waiting map included --
+so these are totals over 4600 passes:
+
+- **488 rebuilds for a wrong input (11% of passes)**: this machine's 473, of
+  which **469 on a tic guessed past the history**, the server's sample
+  **newer by one**. The speculation ran on a tic before the sample for it was
+  made -- 6.67 tics deep for 5.09 in flight -- repeated the newest, and a
+  driver's next sample differed. Opulence's `keep` races (8.92, 8.94) had
+  none of these: there it ran 0.7 tic past the history, here 1.6.
+- **Each rebuild makes a longer frame**: 526 iterations with a pass took
+  8.3 to 16.7 ms, 13 more over 16.7, against about 7 ms for the rest, at 141
+  frames a second -- **a slightly longer frame about four times a second**.
+- **The drawn world moved against the clock 15 times** (22 tics in all):
+  the lead raised twice, lowered five times -- the "one tic back" Gibax
+  describes, but rare.
+- So the likelier stutter is the rebuilds on guessed tics; the jumps are
+  the rarer one. Not separated by window, and the waiting map is in the
+  count.
+
+**Remedies, not written:** (a) when a new sample is made, compare it with
+what the standing speculation guessed on the tic it will land on, and if
+they differ rebuild from that tic only -- its start is saved -- a tic or two
+instead of the whole depth, a round trip earlier; (b) keep the speculation
+from running past the tic the newest sample lands on, trading guessed tics
+for more jumps of the drawn world. And a `worldwide` scenario with windows,
+to measure the race apart from the waiting map.
