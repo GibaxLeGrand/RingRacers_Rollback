@@ -3830,10 +3830,11 @@ enum
 {
 	GUESSFIELD_FORWARD, GUESSFIELD_TURNING, GUESSFIELD_ANGLE, GUESSFIELD_THROWDIR,
 	GUESSFIELD_AIMING, GUESSFIELD_BUTTONS, GUESSFIELD_LATENCY, GUESSFIELD_FLAGS,
-	GUESSFIELD_BOT, NUMGUESSFIELDS
+	GUESSFIELD_BOT, GUESSFIELD_RECEIVED, NUMGUESSFIELDS
 };
 static const char *const g_guessfieldname[NUMGUESSFIELDS] =
-	{ "forwardmove", "turning", "angle", "throwdir", "aiming", "buttons", "latency", "flags", "bot" };
+	{ "forwardmove", "turning", "angle", "throwdir", "aiming", "buttons", "latency", "flags", "bot",
+	  "received" };
 static uint32_t g_guessfield[3][NUMGUESSFIELDS];
 
 // rollback_keepspec's rebuilds for a wrong input, taken apart (WORLDWIDE.md
@@ -3980,6 +3981,8 @@ static void K_CountWrongFields(uint32_t *fields, const ticcmd_t *g, const ticcmd
 		fields[GUESSFIELD_FLAGS]++;
 	if (memcmp(&g->bot, &r->bot, sizeof (g->bot)) != 0)
 		fields[GUESSFIELD_BOT]++;
+	if ((g->flags ^ r->flags) & TICCMD_RECEIVED)
+		fields[GUESSFIELD_RECEIVED]++;
 }
 
 // One line per who with a wrong input, naming the fields.
@@ -5846,17 +5849,26 @@ static int32_t K_SampleRealtics(int32_t age)
   * tics as real tics passed before the next one, of which it has already had
   * `held` among the tics received; each sample after it owns the real tics of
   * the one after that; the newest owns every tic past them. */
-static int32_t K_HistoryAgeForTic(int32_t unacked, int32_t held, tic_t d)
+static int32_t K_HistoryAgeForTic(int32_t unacked, int32_t held, tic_t d, dboolean *first)
 {
 	int32_t age = unacked;
 	int32_t own = K_SampleRealtics(age - 1) - held;
+
+	// Whether the tic is the sample's first: the server files a sample on one
+	// tic and repeats it on the ones after, with TICCMD_RECEIVED cleared
+	// (SV_Maketic). The applied sample's first tic is behind; the newest's
+	// later tics are a guess, where a new sample is likelier than a repeat.
+	*first = false;
 
 	for (;;)
 	{
 		if (own > 0)
 		{
 			if (d < (tic_t)own)
+			{
+				*first = (age != unacked && d == 0);
 				return age;
+			}
 
 			d -= (tic_t)own;
 		}
@@ -5864,7 +5876,10 @@ static int32_t K_HistoryAgeForTic(int32_t unacked, int32_t held, tic_t d)
 		age--;
 
 		if (age <= 0)
+		{
+			*first = true;
 			return 0;
+		}
 
 		own = K_SampleRealtics(age - 1);
 	}
@@ -5936,15 +5951,17 @@ static void K_RollbackMapHistory(void)
 /** The input a local player's slot gets on a speculated tic: the next sent-but-
   * unapplied one while any are left, then the newest. Without rollback_history,
   * always the newest, as before. */
-static const ticcmd_t *K_RollbackLocalCmdFor(uint8_t ss, tic_t tic)
+static const ticcmd_t *K_RollbackLocalCmdFor(uint8_t ss, tic_t tic, dboolean *received)
 {
 	const int32_t unacked = g_histunacked[ss];
 	int32_t age = 0;
 
+	*received = true;
+
 	if (g_speculating && g_histmax > 0 && unacked > 0 && tic >= g_histbase)
 	{
 		if (g_histreal)
-			age = K_HistoryAgeForTic(unacked, g_histheld[ss], tic - g_histbase);
+			age = K_HistoryAgeForTic(unacked, g_histheld[ss], tic - g_histbase, received);
 		else if (tic - g_histbase < (tic_t)unacked)
 			age = unacked - 1 - (int32_t)(tic - g_histbase);
 	}
@@ -5986,6 +6003,29 @@ dboolean K_RollbackKeepArmed(void)
 	return g_keeparmed;
 }
 
+/** The keep decision's comparison: K_SameInput, and for this machine's own
+  * players TICCMD_RECEIVED as well. The kart's steering reads that flag
+  * (P_UpdatePlayerAngle, the "missed a single tic" rule), and a tic the server
+  * filled by repeating a sample has it cleared (SV_Maketic): kept with it set,
+  * the kart steered by a hair otherwise than on the server (WORLDWIDE.md 8.92).
+  * Not for others: a guess about another player is marked unreceived on
+  * purpose, and would never match. */
+static dboolean K_KeepSameInput(int32_t player, const ticcmd_t *a, const ticcmd_t *b)
+{
+	int32_t i;
+
+	if (K_SameInput(a, b) == false)
+		return false;
+
+	for (i = 0; i <= (int32_t)splitscreen; i++)
+	{
+		if (g_localplayers[i] == player)
+			return ((a->flags ^ b->flags) & TICCMD_RECEIVED) == 0;
+	}
+
+	return true;
+}
+
 /** A rebuild for a wrong input: who was wrong on the first wrong tic, and how. */
 static void K_NoteKeepMiss(tic_t from, tic_t tic)
 {
@@ -6002,7 +6042,7 @@ static void K_NoteKeepMiss(tic_t from, tic_t tic)
 		const ticcmd_t *ran = &g_keepcmds[s][p], *real = &netcmds[tic % BACKUPTICS][p];
 		int32_t who;
 
-		if (playeringame[p] == false || g_keepin[s][p] == false || K_SameInput(ran, real))
+		if (playeringame[p] == false || g_keepin[s][p] == false || K_KeepSameInput(p, ran, real))
 			continue;
 
 		who = (p == g_localplayers[0]) ? 0 : (players[p].bot ? 1 : 2);
@@ -6049,7 +6089,7 @@ static int32_t K_KeepCheckTic(tic_t tic)
 		if (playeringame[p] != g_keepin[s][p])
 			return KEEP_INPUT;
 
-		if (playeringame[p] && K_SameInput(&g_keepcmds[s][p], &netcmds[tic % BACKUPTICS][p]) == false)
+		if (playeringame[p] && K_KeepSameInput(p, &g_keepcmds[s][p], &netcmds[tic % BACKUPTICS][p]) == false)
 			return KEEP_INPUT;
 	}
 
@@ -7539,16 +7579,23 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 	//
 	// TICCMD_RECEIVED is set and it is not a lie: this is the genuine input, not
 	// a repeat of an older one, and p_user reads that flag to decide how far to
-	// trust the angle beside it.
+	// trust the angle beside it. Except where R1 gives a sample a tic past its
+	// first: the server repeats it there, with the flag cleared, and so does
+	// the speculation (WORLDWIDE.md 8.92).
 	for (i = 0; i <= (int32_t)splitscreen; i++)
 	{
 		const int32_t who = g_localplayers[i];
+		dboolean received;
 
 		if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false)
 			continue;
 
-		netcmds[tic % BACKUPTICS][who] = *K_RollbackLocalCmdFor((uint8_t)i, tic);
-		netcmds[tic % BACKUPTICS][who].flags |= TICCMD_RECEIVED;
+		netcmds[tic % BACKUPTICS][who] = *K_RollbackLocalCmdFor((uint8_t)i, tic, &received);
+
+		if (received)
+			netcmds[tic % BACKUPTICS][who].flags |= TICCMD_RECEIVED;
+		else
+			netcmds[tic % BACKUPTICS][who].flags &= ~TICCMD_RECEIVED;
 
 		// Kept so that when the server sends this same input back, the arrival
 		// can say which of our samples it was and what tic we spent it on.
