@@ -98,8 +98,10 @@ not yet run).
    12**, each rebuild a hitch of about 60 ms, and the camera stutters. Who
    is wrong on those rebuilds is the next measure (8.79). **B2 started on
    2026-09-29 (8.81)**: the saves are about 40% of a driven pass; the save
-   is now timed step by step (not pushed yet), and every thinker turns out
-   to live in four fixed-block pools, which a raw snapshot can copy whole.
+   is now timed step by step (`ba1e43523`), and every thinker turns out
+   to live in four fixed-block pools, which a raw snapshot can copy whole;
+   they snapshot and restore themselves in `352d3f204` (8.82, not pushed),
+   not yet used in play.
 4. **Vanilla compatibility** against the policy below. The savegame misread of
    8.28 is fixed in code (8.29), never checked against a stock build. **WORLDWIDE
    mode written (8.80), pushed as `51ba899d6` (CI green), not yet run**: one server switch,
@@ -4802,7 +4804,7 @@ are 12.6 to 13.7 ms of a 29.5 to 33.9 ms pass, about 40%, at some 4 ms each,
 and a rebuild saves every tic it re-runs. The measure of remote people only
 says whether B2 is enough, not whether it is needed.
 
-**The instrument, first** (`d20b9a0a9`, local branch `wip/b2`, not pushed).
+**The instrument, first** (`ba1e43523`, pushed, 8.82).
 The load's steps have been timed since 8.34; the save had only its total.
 Every local `P_SaveNetGame` now books each step's time and bytes -- netvars
 and misc, numbering and the chain stamp, players, parties, world,
@@ -4881,7 +4883,7 @@ in `PoolAllocator`) makes it proportional to what the level used.
 
 **B2, in order:**
 
-1. the instrument (`d20b9a0a9`);
+1. the instrument (`ba1e43523`);
 2. `PoolAllocator` snapshot and restore, bounded to the blocks ever handed
    out, and the chunks grown since given back -- no change in behaviour;
 3. `rollback_rawsnap 1`: the pools and the pointers into them raw, the rest
@@ -4902,3 +4904,66 @@ report; Opulence's `keep` for the figures of 8.78):
   block size is `sizeof (mobj_t)`, read in the report;
 - if Lua is a millisecond or more, a copy of the pools leaves it in the save,
   and it is the next target.
+
+⚠ Pushed the same day on Gibax's go-ahead ("oui pousse et continue B2") as
+`ba1e43523` -- `d20b9a0a9` put on top of the docs -- CI run 36543175861 green
+on its three jobs. Not installed, not run.
+
+### 8.82 B2, step 2: the level pools snapshot and restore themselves
+
+Written on 2026-09-29, `352d3f204`, local branch `wip/b2`, **not pushed**.
+Checked by reading only, as 8.80 was: declarations, balance, the compile is
+the CI's.
+
+**`PoolAllocator`** (`core/memory.cpp`) gains `snapshot()`, `can_restore()`
+and `restore()`, and `z_zone.cpp` does the four pools at once --
+`Z_LevelPoolSnapshot`, `Z_LevelPoolRestore`, the second checking all four
+before writing any, so a refused snapshot leaves every pool as it was.
+
+- **Only what a pool has ever handed out is copied.** A new chunk's blocks
+  were linked into the free list when the chunk was made, so the list ran
+  through every block of every chunk and a copy would have had to take the
+  chunks whole -- 32768 blocks for the precipitation-sized pool. They are no
+  longer pre-linked: a never-used block comes from a fresh pointer that
+  walks the last chunk. Blocks are handed out **in the same order as
+  before** -- handed-back ones first, most recent first, then never-used ones
+  in address order -- so nothing in play changes; the pool just knows where
+  its used blocks end. A snapshot is the size of the most the level has ever
+  held at once.
+- **A restore refuses what is not its own**: another pool's snapshot (block
+  size), other chunks (another level: the chunk addresses are in the
+  snapshot and are compared), a length that does not add up.
+- **Chunks grown since the snapshot** are taken off the pool and kept as
+  spares, not freed: a pool that grows during a speculation and is restored
+  every pass would otherwise allocate and free a chunk every pass.
+- **Lua.** `deallocate()` has always made Lua forget a block as it is freed
+  (`LUA_InvalidateUserdata`). A restore frees nothing block by block, so a
+  block it hands back may still be known to Lua as the object that stood
+  there after the snapshot. `allocate()` now forgets a block as it hands it
+  out as well -- one registry lookup, which finds nothing for a block that
+  went through `deallocate()`. What Lua itself holds across a raw restore is
+  step 3's business (8.81).
+
+**Nothing restores the pools in play yet.** Measured by a new command,
+`rollback_poolcopy [times]`: it copies the pools `times` times (10 by
+default), puts the last copy back onto the world it was taken from -- which
+changes nothing -- copies again and compares the two byte for byte. And
+`rollback_twoclock`'s report ends with a line, `rollback_save: a raw copy of
+the level pools -- N KB, T us`, under the save's steps (8.81), measured on
+the world as it stands at the report.
+
+**Predictions, on Opulence** (a `keep` race or any race with
+`rollback_twoclock`'s report; `rollback_poolcopy` at any point of a level):
+
+- the round trip is **exact**, every time;
+- a copy is **3 to 5 MB** -- about 3700 objects at `sizeof (mobj_t)`, which
+  the report's pool lines give, plus the sector nodes -- and takes **0.3 to 1
+  ms**, against about 4 ms for the network save of the same world (8.78). A
+  restore of the same copy about as long;
+- on Skyscraper Leaps, a third of that or less;
+- if a copy is over 1.5 ms, copying every used block is too much, and the
+  next idea is to copy only the blocks written since the last snapshot.
+
+**Next, step 3**: `rollback_rawsnap`, the pools plus what points into them
+from outside (8.81's list), with its verify mode. That is where the reference
+counts held outside the pools, the players and Lua have to be settled.

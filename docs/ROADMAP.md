@@ -187,11 +187,14 @@ correction channel's put-back and fixed. **Every launch is asked for first.**
      tic, or fix where the history loses its place.
    - B1, restore in place; B2, a raw snapshot. **B2 started on 2026-09-29,
      on Gibax's word, before B1** (`WORLDWIDE.md` 8.81): the save timed step
-     by step (`d20b9a0a9`, local, to push), and the design changed by a
+     by step (`ba1e43523`, pushed, CI green), and the design changed by a
      reading -- every thinker lives in four fixed-block pools
      (`PoolAllocator`), so a copy of their chunks restores objects at their
-     own addresses, which was B1's whole point. Next: the pools' snapshot and
-     restore, then `rollback_rawsnap` with a verify mode, then the soaks.
+     own addresses, which was B1's whole point. **Step 2 written** (8.82,
+     `352d3f204`, local, to push): the pools snapshot and restore
+     themselves, copying only the blocks ever handed out, and
+     `rollback_poolcopy` times a copy and checks the round trip. Next:
+     `rollback_rawsnap` with a verify mode (step 3), then the soaks.
    - Open: a sound cut when an object is removed in a speculated tic (8.73);
      the slow save -- 4 ms from `69e65f0ac` against 2.5 up to `5a417494f`,
      not the machine (8.78), to bisect with the kept exes; the camera

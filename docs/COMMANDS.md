@@ -12,11 +12,12 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-29** — 26 commands, checked against
+**Up to date as of 2026-09-29** — 27 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
-`rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80).
+`rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80);
+`rollback_poolcopy` from `352d3f204` (8.82, not yet pushed).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -185,6 +186,15 @@ coins, mace chains, braziers), not the karts.
   compare types with each other, not with a race without it.
 - Setting it resets the counts.
 
+### `rollback_poolcopy [times]`
+**Diagnostic, in a level** (`WORLDWIDE.md` 8.82). Times a raw copy of the four
+level pools every thinker and sector node lives in -- what a raw snapshot
+(track B2) would save instead of the network archive's thinker sections --
+`times` times (10 by default), puts the last copy back onto the world it was
+taken from, and copies again to check the round trip is byte for byte exact.
+Changes nothing: the world is put back as it already was. Prints the copy's
+size, its mean time, the time to put it back, and `exact` or `NOT EXACT`.
+
 ### `rollback_vanillajoin [0|1]`
 **Client side, for testing WORLDWIDE mode's refusal** with a WORLDWIDE build
 (`WORLDWIDE.md` 8.80). With `1`, the next join leaves out what a WORLDWIDE
@@ -301,13 +311,15 @@ itself.
   - `rollback_tic` — a speculated tic's time split into player thinks, the
     thinker lists, ACS and Lua, with the Lua mobj hooks and
     `P_CheckPosition` calls a tic;
-  - `rollback_save` (from the build that carries `WORLDWIDE.md` 8.81, not
-    yet pushed) — a local save step by step, the mean time and size of each
+  - `rollback_save` (from `ba1e43523`, `WORLDWIDE.md` 8.81) — a local
+    save step by step, the mean time and size of each
     step over every local save since the reset: players, world, polyobjects,
     each thinker list, waypoints, ACS, Lua and the rest; the steps under 5 us
     and 1 KB are summed in one line. Then, for each of the four level pools
     every thinker and sector node is allocated from, its block size, blocks
-    in use and chunks -- what a raw snapshot (track B2) would copy.
+    in use and chunks; and from `352d3f204` (8.82), what a raw copy of the
+    pools weighs and takes, measured at the report -- the raw snapshot's
+    save half, against the save above.
 - Setting it (any value) resets all of these, so a race can print one report
   a window.
 - Removes the fixed input delay while it is on (see the box below).
