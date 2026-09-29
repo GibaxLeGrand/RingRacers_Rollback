@@ -137,6 +137,36 @@ repository's agent instructions and applied at every step:
 - **Every code change is pushed on Gibax's approval**, one subject per
   commit; commits written with the AI say so in their trailer.
 
+### Why I use AI, and where it stops -- a note from Gibax
+
+I know a lot of people are wary of AI in game development, or against it
+outright, and I fully understand that movement. So here is why I made this
+choice, and where I think its limits are.
+
+I use AI as a development assistant. On a project like this one -- a netcode
+inside an engine that comes from Doom Legacy, SRB2 and SRB2Kart -- it helps me
+move faster and, above all, keeps me working within a structure: a written
+prediction before every test, a journal that is never rewritten, one change at
+a time. It reads code faster than I can, keeps track of what was measured and
+when, and does a lot of the typing.
+
+Its limits are written down, not hidden. It gets things wrong: many of the
+predictions in the journal are its own, and many of them failed -- they stay
+there, marked as such. It cannot test a game properly: it cannot play a race,
+feel input delay or see a stutter, and a log only says what it was built to
+measure. It can explain a mechanism with confidence and be wrong about it.
+That is why nothing here counts until I have run it and checked it myself.
+
+I don't believe a project coded entirely by AI can be good. Assuming an AI can
+do everything on its own, with no human knowledge behind it to check its work
+-- especially on code like Ring Racers -- greatly underestimates what human
+verification brings. AI is a tool to speed up development and make the work
+easier, not an automatic developer that does the job while nobody is looking.
+
+A human always has to steer the AI, and steer it properly.
+
+-- Gibax
+
 ## Trying it
 
 There are no releases. Each push to `rollback-netcode` is built by GitHub
