@@ -6248,3 +6248,9 @@ launched.
   the start; run the start again with the server dedicated
   (`playtest.sh wwwindows dedicated`: no host player), so any rebuild left
   at the start is this machine's own -- and then read it tic by tic.
+
+**Prediction, for `playtest.sh wwwindows dedicated` driven** (no host player,
+no server window): no rebuild for another human's input at all; this
+machine's at the race map's start **under 20** in its first 800 tics if
+8.102's 253 came from the same stray keyboard, **over 100** if they are this
+machine's own; 0 to 5 in the race after.
