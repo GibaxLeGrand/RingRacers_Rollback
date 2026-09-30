@@ -82,8 +82,9 @@ instrument for what is drawn and `rollback_keepearly` off.
    the rare corrections, which `rollback_smooth` would ease. 8.100's
    instrument steps the drawn kart and the view frame by frame, split by
    whether the frame carried a pass, with prediction on or off. **Next
-   measure: `771bec680` installed, a driven `wwwindows` race and a driven race
-   without prediction, same session** (predictions in 8.100).
+   measure: `771bec680` installed, `playtest.sh wwwindows` driven, then
+   `playtest.sh frames_off` driven -- the control, with no prediction -- in
+   the same session** (predictions in 8.100).
 2. **Before the race** (the join and the waiting map): about 200 rebuilds for
    a wrong input in 1599 passes (8.99), and 1 to 4 `PARANOIA` lines on the
    client at the join -- `*Guest entered the game.` printed twice, then an
