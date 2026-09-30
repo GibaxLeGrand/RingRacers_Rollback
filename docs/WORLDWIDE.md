@@ -6254,3 +6254,44 @@ no server window): no rebuild for another human's input at all; this
 machine's at the race map's start **under 20** in its first 800 tics if
 8.102's 253 came from the same stray keyboard, **over 100** if they are this
 machine's own; 0 to 5 in the race after.
+
+### 8.105 The level-start rebuilds: prediction on a loopback, and `rollback_twoclock` as a floor
+
+Measured on 2026-09-30, binary `020b1d653` (8.103), Gibax's go-ahead ("oui"),
+**driven**: `playtest.sh wwwindows dedicated` -- no host player, no server
+window. Processor at 17%; no crash
+(`playlog_wwwindows_20260930-182229_020b1d6.txt`). Prediction under 8.104.
+
+- **Another human's input: 0 rebuilds**, as predicted. **This machine's at
+  the race map's start: 265 in its first 809 tics**, then 5 in the 3000
+  after -- "over 100": the start's rebuilds are this machine's own, not
+  (only) the stray keyboard of 8.103.
+- Of this machine's 455 wrong inputs before the race windows, **449 were run
+  on the newest input guessed past the history** (`latency` in all, `angle`
+  in 269, `turning` in 86).
+- **Why, read in the logs and the scenario**: `rollback_history` found **1.04
+  inputs in flight on average** until the race map's tic 809, against about
+  7 afterwards; the speculation still ran **4.19 tics deep** --
+  `rollback_twoclock 4` is the depth's floor (8.39). And **the client's
+  scenario sets `rollback_lag 6` only after `wait 1600`**, while WORLDWIDE
+  mode switches prediction on at the join: for the join, the waiting map and
+  the race map's first 800 tics the client predicted **on a loopback**, a
+  tic of round trip, so 3 of the 4 speculated tics repeated the newest input
+  -- wrong at every change of a driver's input. The rebuilds stop exactly
+  where the lag starts (tic 809, the report named `start`).
+- The same holds for 8.97's and 8.99's pre-race rebuilds, and in part for
+  8.102's and 8.103's starts: every WORLDWIDE scenario had it; the older
+  ones switched prediction and lag on together.
+- **Not only the bench's**: on a real connection with a round trip under
+  `rollback_twoclock` tics -- a LAN, a near server -- the floor makes the
+  speculation guess this machine's own input the same way, and keeping it
+  rebuilds at every change.
+
+**Remedies:**
+1. Harness: `rollback_lag` first in the WORLDWIDE scenarios, so the whole
+   session has its latency (a harness change).
+2. Code: with `rollback_history`, let the depth be what the inputs in flight
+   cover (plus the held lead) instead of never less than
+   `rollback_twoclock` -- the floor then applies only without the history.
+   A `src/` change; what the drawn world does on a near server would change
+   with it: less ahead, as far ahead as the round trip.
