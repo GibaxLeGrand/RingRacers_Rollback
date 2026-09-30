@@ -6222,3 +6222,29 @@ a speculation was kept**; it is gone. Left: the rebuilds at a level's start,
 and the few extra long steps.
 
 Gibax's feel of this race: "ouais c'est largement plus fluide".
+
+### 8.104 The rebuilds at a level's start: no intro and no POSITION on the bench, and a second human at the keyboard
+
+Read on 2026-09-30 from the logs of 8.102 and 8.103 and the code; nothing
+launched.
+
+- **The harness's races have no intro and no `POSITION`**: `K_TimerInit`
+  sets `starttime = introtime = 0` in Free Play (`k_kart.c:384` to `388`,
+  `M_NotFreePlay() == false`), and every level of 8.102 and 8.103 read as
+  `race` from leveltime 0. So `rollback_phases` could not split them, and
+  8.101's remedy -- stopping prediction until the start -- has nothing to
+  act on in these races; it is for a real race's start.
+- **Whose input the start's rebuilds were changes from race to race**: in
+  8.102's, **this machine's** (253 in the race map's first 777 tics, 10
+  another's); in 8.103's, **another human's** (298 in the first 718 tics,
+  1 this machine's -- 887 wrong inputs of "people" in window 0). The only
+  other human is the server's host, whose window opens 14 seconds before the
+  client's, on the same machine: **keys pressed while the server window has
+  the focus drive the host**, whose inputs the client can only repeat. Not
+  checked with Gibax yet.
+- After the first 700 to 800 tics, both races rebuilt next to nothing (4 and
+  0 in the next 3000 tics).
+- **Next, when the week's usage allows**: ask Gibax where the focus was at
+  the start; run the start again with the server dedicated
+  (`playtest.sh wwwindows dedicated`: no host player), so any rebuild left
+  at the start is this machine's own -- and then read it tic by tic.
