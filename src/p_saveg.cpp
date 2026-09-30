@@ -51,6 +51,7 @@
 #include "k_vote.h"
 #include "k_zvote.h"
 #include "k_endcam.h"
+#include "k_rollback.h" // K_RollbackRefTrace
 
 #include <tracy/tracy/TracyC.h>
 
@@ -5637,6 +5638,10 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 		// may point at an object the purge has freed.
 		mobj->player->mo = mobj;
 		mobj->thinker.references++;
+#ifdef PARANOIA
+		if (mobj->type == MT_PLAYER)
+			K_RollbackRefTrace(mobj, 1, __FILE__, __LINE__); // the claim, not a P_SetTarget
+#endif
 	}
 	if (diff & MD_MOVEDIR)
 		mobj->movedir = READANGLE(save->p);
@@ -8593,6 +8598,10 @@ static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
 		{
 			mo->player->mo = mo;
 			mo->thinker.references++;
+#ifdef PARANOIA
+			if (mo->type == MT_PLAYER)
+				K_RollbackRefTrace(mo, 1, __FILE__, __LINE__); // the claim, not a P_SetTarget
+#endif
 		}
 	}
 }
@@ -8838,8 +8847,14 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 	save->p += CV_LoadNetVars(save->p);
 	P_ProfileStep("netvars");
 
+	// Every object is freed and brought back (WORLDWIDE.md 8.111).
+	K_RollbackRefLoadBegin();
+
 	if (!P_NetUnArchiveMisc(save, reloading))
+	{
+		K_RollbackRefLoadEnd(false);
 		return false;
+	}
 	P_ProfileStep("misc");
 
 	K_LoadEndCamera(save);
@@ -8925,6 +8940,8 @@ dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 	P_ProfileStep("rng/luabanks");
 
 	TracyCZoneEnd(__zone);
+	K_RollbackRefLoadEnd(ret);
+
 	return ret;
 }
 

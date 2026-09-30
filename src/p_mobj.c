@@ -12106,6 +12106,11 @@ void P_RemoveMobj(mobj_t *mobj)
 	if (P_MobjWasRemoved(mobj))
 		return; // something already removing this mobj.
 
+#ifdef PARANOIA
+	if (mobj->type == MT_PLAYER)
+		K_RollbackRefRemoved(mobj); // WORLDWIDE.md 8.111
+#endif
+
 	mobj->thinker.function.acp1 = (actionf_p1)P_RemoveThinkerDelayed; // shh. no recursing.
 	LUA_HookMobj(mobj, MOBJ_HOOK(MobjRemoved));
 	mobj->thinker.function.acp1 = (actionf_p1)P_MobjThinker; // needed for P_UnsetThingPosition, etc. to work.

@@ -248,6 +248,26 @@ void K_RollbackTicRunning(dboolean running);
   * frontier, and how many were held back before it (WORLDWIDE.md 8.109). */
 dboolean K_RollbackChatSilenced(void);
 
+struct thinker_t;
+
+/** The karts' bodies' reference counts (WORLDWIDE.md 8.111). In a PARANOIA
+  * build, P_SetTarget reports every change of an MT_PLAYER's count with its
+  * caller's file and line, the loader its claims of a player's body, and
+  * P_RemoveMobj and P_RemoveThinkerDelayed a body's removal and its end; a
+  * count going below zero prints the body's ledger, site by site, and what
+  * still points at it. */
+void K_RollbackRefTrace(struct mobj_t *mo, int32_t delta, const char *file, int32_t line);
+void K_RollbackRefNegative(struct mobj_t *mo, const char *file, int32_t line);
+void K_RollbackRefRemoved(struct mobj_t *mo);
+void K_RollbackRefFreed(struct thinker_t *th);
+
+/** Around every load of the network archive -- a rollback restore, the join's,
+  * a resend's: a load frees every object and brings the objects back, so the
+  * bodies followed start again, and a collision pointer left holding a freed
+  * object is checked against what lives at its address after (8.111). */
+void K_RollbackRefLoadBegin(void);
+void K_RollbackRefLoadEnd(dboolean loaded);
+
 // rollback_keepspec -- track A (WORLDWIDE.md 8.60, 8.73): leave the speculation
 // standing across a pass, and rebuild it only when the tics the server confirms
 // are not the ones it ran. Off by default; while off, nothing below does

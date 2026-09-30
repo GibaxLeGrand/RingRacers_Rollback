@@ -434,6 +434,10 @@ void P_RemoveThinkerDelayed(thinker_t *thinker)
 		return;
 	}
 
+#ifdef PARANOIA
+	K_RollbackRefFreed(thinker); // a kart's body stops being followed
+#endif
+
 	R_DestroyLevelInterpolators(thinker);
 
 	/* Note that currentthinker is guaranteed to point to us,
@@ -509,6 +513,10 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 		(*mop)->thinker.references--;
 
 #ifdef PARANOIA
+		// A kart's body, followed site by site (WORLDWIDE.md 8.111).
+		if ((*mop)->type == MT_PLAYER)
+			K_RollbackRefTrace(*mop, -1, source_file, source_line);
+
 		if ((*mop)->thinker.references < 0)
 		{
 			CONS_Printf(
@@ -520,6 +528,9 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 					source_file,
 					source_line
 			);
+
+			if ((*mop)->type == MT_PLAYER)
+				K_RollbackRefNegative(*mop, source_file, source_line);
 		}
 
 		(*mop)->thinker.debug_time = leveltime;
@@ -531,6 +542,9 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 		targ->thinker.references++;
 
 #ifdef PARANOIA
+		if (targ->type == MT_PLAYER)
+			K_RollbackRefTrace(targ, 1, source_file, source_line);
+
 		targ->thinker.debug_time = leveltime;
 #endif
 	}

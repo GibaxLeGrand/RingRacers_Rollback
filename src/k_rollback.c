@@ -3548,6 +3548,7 @@ static uint32_t g_specus;           // and running the speculation forward
 // raised and had refused, or a gamedata guard that changed what the tic did.
 // Each of those rebuilds, and the loop runs the tic for real.
 static dboolean g_keepspec;                 // the switch
+static void K_PrintRefs(void);              // the karts' bodies' counts, 8.111
 
 // rollback_keepearly (WORLDWIDE.md 8.97, 8.98): a tic the standing speculation
 // ran on this machine's input is checked again as soon as that input is known
@@ -4413,6 +4414,8 @@ static void Command_RollbackKeepSpec_f(void)
 		"again from a tic this machine's newest input changed, %u tics in all\n",
 		g_keepearly ? "on" : "off", g_keepearlyn, g_keepearlytics);
 
+	K_PrintRefs();
+
 	if (g_phase >= 0)
 		K_PrintPhases("so far");
 
@@ -4970,6 +4973,397 @@ dboolean K_RollbackChatSilenced(void)
 	}
 
 	return false;
+}
+
+// ----------------------------------------------------------------------------
+// The karts' bodies' reference counts (WORLDWIDE.md 8.111)
+// ----------------------------------------------------------------------------
+
+// A body whose count goes below zero was let go of once more than it was held:
+// a holder that took it without counting, or a stale holder letting go of
+// whatever lives where the body it held used to. On the client, 1 to 18 bodies
+// a race between the join and the race map, never explained (8.97, 8.110).
+//
+// Two things are followed. Every change of a body's count, site by site, from
+// the first time this machine sees the body: P_SetTarget passes its caller's
+// file and line in a PARANOIA build -- the build that prints the alert. And
+// the three collision pointers, which hold counted references: P_MapEnd lets
+// go of g_tm.thing after every tic, but g_tm.floorthing and g_tm.hitthing
+// keep theirs, and a restore frees every object and brings them back, maybe
+// at the same addresses. A pointer left holding a freed object then lets go,
+// at its next change, of whatever lives at that address.
+
+#define REFS_BODIES 48      // bodies followed at once
+#define REFS_SITES 20       // sites a body's ledger keeps apart
+#define REFS_PRINTS 12      // bodies below zero, and stale pointers, printed whole
+
+enum
+{
+	REFCTX_CONFIRMED,
+	REFCTX_SPECULATED,
+	REFCTX_REPLAY,
+	REFCTX_LOAD,
+	REFCTX_BETWEEN,
+};
+
+static const char *const g_refctxname[] = {
+	"a confirmed tic", "a speculated tic", "a replay", "a load", "between tics"
+};
+
+typedef struct
+{
+	const char *file;
+	int32_t line;
+	uint32_t up, down;
+} refsite_t;
+
+typedef struct
+{
+	mobj_t *mo;                 // NULL: a free slot
+	tic_t seen;                 // the gametic it was first seen on
+	uint8_t seenctx;
+	tic_t removed;              // and removed on, when removedctx is not -1
+	int8_t removedctx;
+	int32_t nsites;
+	uint32_t otherup, otherdown; // changes from sites past the table
+	refsite_t site[REFS_SITES];
+} refbody_t;
+
+static refbody_t g_refbody[REFS_BODIES];
+static dboolean g_inload;
+static uint32_t g_refloads;         // loads of the archive so far
+static uint32_t g_refnegative;      // counts gone below zero
+static uint32_t g_refprinted;
+static uint32_t g_refunfollowed;    // bodies seen with the table full
+
+static const char *const g_tmname[3] = { "thing", "floorthing", "hitthing" };
+static mobj_t *g_tmheld[3];         // what each held when the load began
+static mobjtype_t g_tmheldtype[3];
+static int32_t g_tmheldplayer[3];
+static uint32_t g_tmheldn[3];       // loads it held an object at
+static uint32_t g_tmreused[3];      // and a live object sat at that address after
+static uint32_t g_tmreusedbody[3];  // a kart's body
+static uint32_t g_tmprinted;
+
+static uint8_t K_RefContext(void)
+{
+	if (g_inload)
+		return REFCTX_LOAD;
+	if (g_replaying)
+		return REFCTX_REPLAY;
+	if (g_speculating)
+		return REFCTX_SPECULATED;
+	if (g_intic)
+		return REFCTX_CONFIRMED;
+	return REFCTX_BETWEEN;
+}
+
+static const char *K_RefBaseName(const char *file)
+{
+	const char *slash = strrchr(file, '/');
+	const char *back = strrchr(file, '\\');
+
+	if (back != NULL && (slash == NULL || back > slash))
+		slash = back;
+
+	return (slash != NULL) ? slash + 1 : file;
+}
+
+static int32_t K_RefPlayer(const mobj_t *mo)
+{
+	return (mo->player != NULL) ? (int32_t)(mo->player - players) : -1;
+}
+
+static refbody_t *K_RefBody(mobj_t *mo, dboolean create)
+{
+	refbody_t *empty = NULL;
+	int32_t i;
+
+	for (i = 0; i < REFS_BODIES; i++)
+	{
+		if (g_refbody[i].mo == mo)
+			return &g_refbody[i];
+		if (empty == NULL && g_refbody[i].mo == NULL)
+			empty = &g_refbody[i];
+	}
+
+	if (create == false)
+		return NULL;
+
+	if (empty == NULL)
+	{
+		g_refunfollowed++;
+		return NULL;
+	}
+
+	memset(empty, 0, sizeof *empty);
+	empty->mo = mo;
+	empty->seen = gametic;
+	empty->seenctx = K_RefContext();
+	empty->removedctx = -1;
+	return empty;
+}
+
+void K_RollbackRefTrace(mobj_t *mo, int32_t delta, const char *file, int32_t line)
+{
+	refbody_t *b = K_RefBody(mo, true);
+	int32_t i;
+
+	if (b == NULL)
+		return;
+
+	for (i = 0; i < b->nsites; i++)
+	{
+		if (b->site[i].line == line
+			&& (b->site[i].file == file || strcmp(b->site[i].file, file) == 0))
+			break;
+	}
+
+	if (i == b->nsites)
+	{
+		if (b->nsites == REFS_SITES)
+		{
+			if (delta > 0)
+				b->otherup++;
+			else
+				b->otherdown++;
+			return;
+		}
+
+		b->site[i].file = file;
+		b->site[i].line = line;
+		b->nsites++;
+	}
+
+	if (delta > 0)
+		b->site[i].up++;
+	else
+		b->site[i].down++;
+}
+
+void K_RollbackRefRemoved(mobj_t *mo)
+{
+	refbody_t *b = K_RefBody(mo, false);
+
+	if (b == NULL)
+		return;
+
+	b->removed = gametic;
+	b->removedctx = (int8_t)K_RefContext();
+}
+
+void K_RollbackRefFreed(thinker_t *th)
+{
+	refbody_t *b = K_RefBody((mobj_t *)th, false);
+
+	if (b != NULL)
+		b->mo = NULL;
+}
+
+static void K_RefAppend(char *buf, size_t size, size_t *len, const char *text)
+{
+	const size_t n = strlen(text);
+
+	if (*len + n + 1 >= size)
+		return;
+
+	memcpy(buf + *len, text, n + 1);
+	*len += n;
+}
+
+void K_RollbackRefNegative(mobj_t *mo, const char *file, int32_t line)
+{
+	const refbody_t *b = K_RefBody(mo, false);
+	char buf[1536], part[160];
+	size_t len = 0;
+	thinker_t *th;
+	int32_t i, holders = 0;
+
+	g_refnegative++;
+
+	if (g_refprinted >= REFS_PRINTS)
+		return;
+
+	g_refprinted++;
+
+	if (b == NULL)
+		snprintf(part, sizeof part, "not followed");
+	else if (b->removedctx < 0)
+		snprintf(part, sizeof part, "first seen on tic %u, in %s; not removed",
+			(unsigned)b->seen, g_refctxname[b->seenctx]);
+	else
+		snprintf(part, sizeof part, "first seen on tic %u, in %s; removed on tic %u, in %s",
+			(unsigned)b->seen, g_refctxname[b->seenctx],
+			(unsigned)b->removed, g_refctxname[b->removedctx]);
+
+	CONS_Printf("rollback_refs: a kart's body went below zero -- %p (player %d), "
+		"references %d, let go of at %s:%d on tic %u, in %s; %s\n",
+		(void *)mo, K_RefPlayer(mo), mo->thinker.references,
+		K_RefBaseName(file), line, (unsigned)gametic, g_refctxname[K_RefContext()], part);
+
+	// Its ledger: which sites took a reference and which let one go.
+	buf[0] = '\0';
+	if (b != NULL)
+	{
+		for (i = 0; i < b->nsites; i++)
+		{
+			snprintf(part, sizeof part, "%s%s:%d +%u -%u", (i > 0) ? ", " : "",
+				K_RefBaseName(b->site[i].file), b->site[i].line,
+				b->site[i].up, b->site[i].down);
+			K_RefAppend(buf, sizeof buf, &len, part);
+		}
+		if (b->otherup || b->otherdown)
+		{
+			snprintf(part, sizeof part, ", elsewhere +%u -%u", b->otherup, b->otherdown);
+			K_RefAppend(buf, sizeof buf, &len, part);
+		}
+	}
+	CONS_Printf("rollback_refs:   its count by site since -- %s\n", (len > 0) ? buf : "(nothing)");
+
+	// And what still points at it: the one letting go of it now among them,
+	// since P_SetTarget changes the pointer only after the count.
+	len = 0;
+	buf[0] = '\0';
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		const mobj_t *m = (const mobj_t *)th;
+		const struct { mobj_t *p; const char *name; } fields[] = {
+			{ m->target, "target" }, { m->tracer, "tracer" }, { m->hnext, "hnext" },
+			{ m->hprev, "hprev" }, { m->itnext, "itnext" }, { m->terrainOverlay, "terrainOverlay" },
+			{ m->punt_ref, "punt_ref" }, { m->owner, "owner" },
+		};
+		size_t f;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		for (f = 0; f < sizeof fields / sizeof fields[0]; f++)
+		{
+			if (fields[f].p != mo)
+				continue;
+			snprintf(part, sizeof part, "%s%s.%s", (holders > 0) ? ", " : "",
+				K_MobjTypeName(m->type), fields[f].name);
+			K_RefAppend(buf, sizeof buf, &len, part);
+			holders++;
+		}
+	}
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (playeringame[i] && players[i].mo == mo)
+		{
+			snprintf(part, sizeof part, "%splayers[%d].mo", (holders > 0) ? ", " : "", i);
+			K_RefAppend(buf, sizeof buf, &len, part);
+			holders++;
+		}
+	}
+	{
+		mobj_t *const tm[3] = { g_tm.thing, g_tm.floorthing, g_tm.hitthing };
+		for (i = 0; i < 3; i++)
+		{
+			if (tm[i] != mo)
+				continue;
+			snprintf(part, sizeof part, "%sg_tm.%s", (holders > 0) ? ", " : "", g_tmname[i]);
+			K_RefAppend(buf, sizeof buf, &len, part);
+			holders++;
+		}
+	}
+	CONS_Printf("rollback_refs:   still pointing at it (%d) -- %s\n", holders, (len > 0) ? buf : "nothing");
+}
+
+/** Every object is freed and brought back: what the collision pointers hold
+  * now, and none of the bodies followed survives as itself. */
+void K_RollbackRefLoadBegin(void)
+{
+	mobj_t *const held[3] = { g_tm.thing, g_tm.floorthing, g_tm.hitthing };
+	int32_t i;
+
+	for (i = 0; i < 3; i++)
+	{
+		g_tmheld[i] = held[i];
+		g_tmheldtype[i] = (held[i] != NULL) ? held[i]->type : MT_NULL;
+		g_tmheldplayer[i] = (held[i] != NULL) ? K_RefPlayer(held[i]) : -1;
+	}
+
+	for (i = 0; i < REFS_BODIES; i++)
+		g_refbody[i].mo = NULL;
+
+	g_inload = true;
+}
+
+static mobj_t *K_RefLiveAt(mobj_t *mo)
+{
+	thinker_t *th;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if ((mobj_t *)th != mo)
+			continue;
+		return (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed) ? NULL : mo;
+	}
+
+	return NULL;
+}
+
+void K_RollbackRefLoadEnd(dboolean loaded)
+{
+	mobj_t *const now[3] = { g_tm.thing, g_tm.floorthing, g_tm.hitthing };
+	char was[64], is[64];
+	int32_t i;
+
+	g_inload = false;
+
+	if (loaded == false)
+		return;
+
+	g_refloads++;
+
+	for (i = 0; i < 3; i++)
+	{
+		mobj_t *live;
+
+		if (g_tmheld[i] == NULL || now[i] != g_tmheld[i])
+			continue;
+
+		g_tmheldn[i]++;
+
+		live = K_RefLiveAt(now[i]);
+		if (live == NULL)
+			continue;
+
+		g_tmreused[i]++;
+		if (live->type == MT_PLAYER)
+			g_tmreusedbody[i]++;
+
+		if (g_tmprinted >= REFS_PRINTS)
+			continue;
+
+		g_tmprinted++;
+		snprintf(was, sizeof was, "%s (player %d)", K_MobjTypeName(g_tmheldtype[i]), (int)g_tmheldplayer[i]);
+		snprintf(is, sizeof is, "%s (player %d)", K_MobjTypeName(live->type), (int)K_RefPlayer(live));
+		CONS_Printf("rollback_refs: the load of tic %u left g_tm.%s holding a %s it freed; "
+			"a %s lives at that address now, with %d references -- the next change of "
+			"g_tm.%s takes one of them\n",
+			(unsigned)gametic, g_tmname[i], was, is, live->thinker.references, g_tmname[i]);
+	}
+}
+
+static void K_PrintRefs(void)
+{
+	CONS_Printf("rollback_refs: %u loads of the archive; the collision pointers held an "
+		"object at %u of them (thing %u, floorthing %u, hitthing %u), and a live object sat "
+		"at its address after the load at %u (a kart's body at %u); %u karts' bodies' counts "
+		"went below zero%s\n",
+		g_refloads, g_tmheldn[0] + g_tmheldn[1] + g_tmheldn[2],
+		g_tmheldn[0], g_tmheldn[1], g_tmheldn[2],
+		g_tmreused[0] + g_tmreused[1] + g_tmreused[2],
+		g_tmreusedbody[0] + g_tmreusedbody[1] + g_tmreusedbody[2],
+		g_refnegative,
+#ifdef PARANOIA
+		(g_refunfollowed > 0) ? " (some bodies not followed, the table full)" : ""
+#else
+		" -- counted only in a PARANOIA build"
+#endif
+		);
 }
 
 /** True when two inputs say the player pressed different things.
