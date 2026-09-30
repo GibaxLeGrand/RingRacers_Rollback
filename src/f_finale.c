@@ -130,6 +130,21 @@ static patch_t *kts_eggman; // dr. robotnik himself
 static patch_t *kts_tails; // tails himself
 static patch_t *kts_tails_tails; // tails' tails
 static patch_t *kts_electricity[6]; // ring o' electricity
+
+// WORLDWIDE: the globe and the ring a flash brings onto the stock title, from
+// data/worldwide.pk3. Each is drawn at the origin like the layers above, so
+// where they sit is the lumps' own offsets; without the file, the stock title.
+static patch_t *kts_wwback; // behind everything: the globe, the ring's far side
+static patch_t *kts_wwfront; // over the logo: the ring's near side, the banner
+
+#define WWFLASHTIC (3*TICRATE/2) // when the flash comes, as the version fades in
+#define WWFLASHLEN (TICRATE/3) // how long the white takes to clear
+#define WWLOGOLIFT (24) // how far the logo rises to make room for the banner
+
+static dboolean F_WorldwideTitleShown(void)
+{
+	return ((kts_wwback != NULL || kts_wwfront != NULL) && finalecount >= WWFLASHTIC);
+}
 static patch_t *kts_copyright; // (C) SEGA
 
 #define NOWAY
@@ -1742,6 +1757,9 @@ static void F_CacheTitleScreen(void)
 			{
 				kts_electricity[i] = W_CachePatchName(va("KTSELCT%.1d", i+1), PU_PATCH_LOWPRIORITY);
 			}
+
+			kts_wwback = W_LumpExists("KTSWWBK1") ? W_CachePatchName("KTSWWBK1", PU_PATCH_LOWPRIORITY) : NULL;
+			kts_wwfront = W_LumpExists("KTSWWFR1") ? W_CachePatchName("KTSWWFR1", PU_PATCH_LOWPRIORITY) : NULL;
 			break;
 		}
 
@@ -2045,13 +2063,21 @@ void F_TitleScreenDrawer(void)
 				}
 				tailsColormap = R_GetTranslationColormap(TC_DEFAULT, tailsColor, GTC_MENUCACHE);
 
+				const dboolean worldwide = F_WorldwideTitleShown();
+
+				if (worldwide && kts_wwback != NULL)
+					V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_wwback, NULL);
+
 				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_tails_tails, tailsColormap);
 				V_DrawFixedPatch(0, 0, FRACUNIT, V_ADD, kts_electricity[finalecount % 6], NULL);
 
 				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_eggman, eggColormap);
 				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_tails, tailsColormap);
 
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_bumper, NULL);
+				V_DrawFixedPatch(0, (worldwide ? -WWLOGOLIFT : 0) * FRACUNIT, FRACUNIT, 0, kts_bumper, NULL);
+
+				if (worldwide && kts_wwfront != NULL)
+					V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_wwfront, NULL);
 			}
 
 			break;
@@ -2080,6 +2106,13 @@ void F_TitleScreenDrawer(void)
 	}
 
 	V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_copyright, NULL);
+
+	// The flash the globe and the ring come in on, clearing over WWFLASHLEN.
+	if (curttmode == TTMODE_RINGRACERS && F_WorldwideTitleShown()
+		&& finalecount < WWFLASHTIC + WWFLASHLEN)
+	{
+		V_DrawFadeScreen(0, 10 - ((finalecount - WWFLASHTIC) * 10) / WWFLASHLEN); // 0: white
+	}
 
 luahook:
 	// The title drawer is sometimes called without first being started
@@ -2136,6 +2169,12 @@ void F_TitleScreenTicker(dboolean run)
 		}
 
 		finalecount++;
+
+		if (cache_gametrulystarted && curttmode == TTMODE_RINGRACERS
+			&& finalecount == WWFLASHTIC && F_WorldwideTitleShown())
+		{
+			S_StartSound(NULL, sfx_s3kaf); // "To Special Stage": the giant ring's flash
+		}
 
 		if (!cache_gametrulystarted && finalecount > GONERTYPEWRITERWAIT)
 		{

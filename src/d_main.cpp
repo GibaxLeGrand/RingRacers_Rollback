@@ -1449,6 +1449,15 @@ static void IdentifyVersion(void)
 	D_AddFile(startupiwads, num_startupiwads++, va(pandf,srb2waddir,"patch.pk3"), ASSET_HASH_PATCH_PK3);
 #endif
 
+	// WORLDWIDE's own graphics -- the title's globe and ring -- if the file is
+	// there. A main file like the ones above, before the music: never sent,
+	// never checked against a server's list, and the game runs without it.
+	{
+		const char *worldwidepath = va(spandf,srb2waddir,"data","worldwide.pk3");
+		if (FIL_ReadFileOK(worldwidepath))
+			D_AddFile(startupiwads, num_startupiwads++, worldwidepath, NULL);
+	}
+
 #define MUSICTEST(str) \
 		musicpath = va(spandf,srb2waddir,"data",str);\
 		handle = W_OpenWadFile(&musicpath, NULL, false); \
