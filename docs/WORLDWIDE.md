@@ -6127,3 +6127,65 @@ them, stopping there -- and starting again in its white fade -- is the fix.
 docs as `b1c0c7444`; CI run 36683749563. The build to install for the
 measuring session is that one: the same `wwwindows` race reads 8.100's
 drawn steps and this section's phases.
+
+### 8.102 What is drawn: no interpolation at all while a speculation is kept -- found, fixed, not pushed
+
+Measured on 2026-09-30, binary `b1c0c7444` (sha256 `a5c4b744...`, CI run
+36683749563, the previous exe kept as `.bak_6209f17`), Gibax's go-ahead
+("allez tu peux lancer"), **both driven**, same session, Skyscraper Leaps:
+`wwwindows` (WORLDWIDE mode) then `frames_off` (no prediction). Processor at
+17%; no crash. Predictions in 8.100 and 8.101.
+
+**The drawn steps** (race windows; `wwwindows` by differences of its
+cumulative reports):
+
+| per 1000 tics | `wwwindows`, frames without a pass: even / short / long / back | with a pass | `frames_off`, without a pass | with a pass |
+|---|---|---|---|---|
+| kart, w0 | 5 / 3096 / 5 / 3 | 4 / 14 / 981 / 1 | 2877 / 47 / 186 / 2 | 977 / 17 / 3 / 2 |
+| kart, w1 | 0 / 3070 / 0 / 0 | 0 / 10 / 977 / 0 | 2793 / 39 / 263 / 2 | 976 / 11 / 5 / 2 |
+| kart, w2 | 0 / 3112 / 0 / 0 | 0 / 1 / 999 / 0 | 2821 / 28 / 263 / 0 | 986 / 9 / 4 / 0 |
+| view | the same as the kart | the same | 2624 to 2707 even | 972 to 980 even |
+
+- **With prediction, the kart and the view as drawn do not move between
+  passes and jump a whole tic on the frame with one**: about 3100 "short"
+  (still) steps and 980 "long" ones a window, 0 even. Without prediction,
+  about 3800 even steps a window. **The drawn world moves at 35 Hz in steps
+  on a 140-frame screen: the slight "rollback" Gibax sees.** 8.100's
+  prediction holds and more (irregular steps not twice but twenty-odd times
+  as many, the view with the kart: both "irregular together"), but its
+  reading -- frame pacing -- is wrong: nothing is interpolated at all.
+- **Why, read in the code**: `TryRunTics` marks the game stopped
+  (`hu_stopped = true`) whenever its loop ran no confirmed tic, and the next
+  frame is drawn with `timeisprogressing` false, so `rendertimefrac =
+  FRACUNIT` (`d_main.cpp`): no interpolation. A kept pass runs no confirmed
+  tic -- the speculation's are kept -- so **every kept pass was marked
+  stopped**, and with `rollback_keepspec` nearly every pass is kept. The
+  music's resync, which also reads `hu_stopped`, stood still too.
+- **Fix, `9f3f8a1c1`** (local branch `wip/hustopped`, not pushed; syntax
+  checked, errors injected at its four places reported): when the
+  speculation ran at least one tic this pass (`K_RollbackSpeculatedLastPass`),
+  `hu_stopped` goes back to false -- what is drawn moved on.
+  **Prediction**: on a build with it, `wwwindows` draws the kart as
+  `frames_off` does -- even steps the rule, "short" and "long" a few percent.
+
+**Where the rebuilds fall** (`rollback_phases`, the client of `wwwindows`):
+
+| map, phase (leveltime) | passes | kept | rebuilt: this machine's input / another's / other |
+|---|---|---|---|
+| RR_TESTRUN, join (575 to 788) | 213 | 209 | 2 / 0 / 2 |
+| RR_TESTRUN, race (789 to 893) | 105 | 70 | 35 / 0 / 0 |
+| RR_TESTRUN restarted, race (0 to 504) | 505 | 334 | 169 / 0 / 2 |
+| RR_SKYSCRAPERLEAPS, race (0 to 776) | 777 | 512 | **253** / 10 / 2 |
+| RR_SKYSCRAPERLEAPS, race (776 to 3770) | 3000 | 2996 | **4** / 0 / 0 |
+
+- **8.101's first prediction fails**: the join rebuilt 2 times, the waiting
+  map's play 204, and **the race map's first 777 tics 253** -- the intro,
+  `POSITION` and the start -- against 4 in the 3000 after. The rebuilds are
+  at the start of each level, not at the join.
+- The instrument did not split `intro` and `POSITION` from `race` here:
+  every level read as `race` from leveltime 0. Not examined.
+- The client's `PARANOIA` line is at the join, as predicted.
+- So 8.101's alternative stands: most of the pre-race rebuilds are at a
+  level's start, where stopping prediction until the start (and starting it
+  again at the white fade) would remove them -- once the phases are told
+  apart.
