@@ -13,7 +13,7 @@ rest lives in the private notes only -- `README.md`, the entry point (working
 rules, decisions, environment); `ROLLBACK.md`, the closed journal from before
 the pivot; and `AUDIT_20260909.md`, the comparison with SRB2 NetPlus and Odamex.
 
-## Current state (2026-09-29) -- read this first
+## Current state (2026-09-30) -- read this first
 
 This block is the only part of this file that is rewritten to stay current.
 Everything after it is a dated journal: when a later section overturns an
@@ -23,141 +23,113 @@ earlier one, the earlier one gets a ⚠ pointing forward, and is not rewritten.
 rollback. Two clocks: `gametic` runs only the tics the server has confirmed, in
 unmodified lockstep; the speculation runs `rollback_twoclock N` tics above it
 from a snapshot and is rebuilt every pass -- or, with `rollback_keepspec`
-(track A, 8.73), kept as it stands when the server confirms the tics it ran. A
-light correction channel (`PT_STATECORRECTION`, server to client every
-`rollback_correct N` tics) puts back each kart that is not already where the
-server has it (8.75), in place of the stock full-state resend.
-Every piece is behind a switch that is off by default, except
-`rollback_cleancmds`, on by default since 2026-09-21 (8.36). A server's
-`worldwide On` switches them on for the clients that join it (8.80, pushed,
-not yet run).
+(8.73), kept as it stands when the server confirms the inputs it ran, and
+extended by a tic. `rollback_history` (8.39, 8.41) replays the inputs still in
+flight instead of repeating the newest, and R1 (`rollback_histreal`, 8.89)
+gives each sample the tics the server gives it. A light correction channel
+(`PT_STATECORRECTION`, server to client every `rollback_correct N` tics) puts
+back each kart that is not already where the server has it (8.75, 8.77), in
+place of the stock full-state resend. B2's `rollback_rawsnap` (8.88) saves and
+restores the level's four object pools as raw memory instead of through the
+network archive.
+
+**Switches.** One server switch, `worldwide On` (8.80), advertises the mode,
+sends light corrections in place of resends and refuses clients that do not
+declare themselves WORLDWIDE; a client that joins such a server switches on
+`rollback_twoclock 4`, `rollback_history 12`, `rollback_keepspec` and applied
+corrections, and puts its settings back when it leaves (8.80; the join and a
+race run end to end in 8.97, the leave never checked).
+Outside that mode every piece is off by default except `rollback_cleancmds`
+(8.36) and `rollback_histreal` (8.89). Off by default and waiting:
+`rollback_rawsnap` (open item 3), `rollback_keepearly` (8.99, 8.100),
+`rollback_smooth` (never measured).
+
+**Builds.** Installed on the measuring machine: `6209f1786` (8.99). **To
+install next: `771bec680`** (CI run 36637283049, green), which carries 8.100's
+instrument for what is drawn and `rollback_keepearly` off.
 
 **Measured and holding.**
 
 | | |
 |---|---|
 | input lag, client's seat | gone -- "ça répond tout de suite", seven races, both cleancmds races included (8.36) |
-| snapshot determinism | 12/12 replays byte-identical; 0/330 resim checks (8.9); leak soak 1/260 after the `playing`/`exiting` fix (8.34), the one failure being `itemList.cap`, known and harmless |
-| confirmed-tic inputs | with `rollback_cleancmds`, 0 to 0.1% of confirmed tics run an input the server did not, against 64-85% (local kart) and 23-80% (bots) without it -- two driven races (8.35, 8.37) |
-| full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16) |
-| residual drift | **0.000 units on 6741 kart samples, 0 checksum refusals, 87 of 87 blame samples identical** with `rollback_cleancmds` on throughout -- one driven race, Skyscraper Leaps (8.44), with a same-session control that does diverge (8.45). The 0.12 to 0.86 units (worst 13 to 97) of the off/on/off races come from off windows and what they leave behind (8.38, 8.45) |
-| cost of a pass | 4.9 ms at 2 karts, 8.3 at 8, **9.5 at 9 with a driver** -- 33% of a 28.6 ms tic. On Opulence (3700 objects), rebuilt every pass: 25 to 35 ms, 9 to 33 frames a second (8.62-8.77) |
-| cost of a pass kept (`rollback_keepspec`) | one tic and one save: **2 ms on Skyscraper Leaps, 9 ms on Opulence, 117 frames a second there against 10** -- unattended; on Opulence the local player spectated (8.76, 8.77). Driven on Opulence: 65 to 69% kept, 54 to 65 frames a second (8.78) |
-| Opulence's confirmed world | **0.000 units, 0 of 6714 kart samples with a state field off, 0 karts put back**, corrections applied (8.77) -- the drift it had came from the put-back itself (8.76) |
-| restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
+| snapshot determinism | 12/12 replays byte-identical; 0/330 resim checks (8.9); network-restore leak soaks 0 or 1 failure in about 300 checks on Skyscraper Leaps, Opulence, Coastal Temple and Carnival Night, the one failure being `itemList.cap`, known and harmless (8.34, 8.59, 8.62, 8.94) |
+| confirmed-tic inputs | with `rollback_cleancmds`, 0 to 0.1% of confirmed tics run an input the server did not, against 64-85% (local kart) and 23-80% (bots) without it (8.35, 8.37) |
+| full-state resends | 7 to 9 a race without the channel, **0** with it (8.6, 8.8, 8.16), none in a WORLDWIDE race (8.97) |
+| residual drift | **0.000 units in every driven race since 8.94** -- Opulence with `keep` and `keepraw`, Skyscraper Leaps in WORLDWIDE mode: no kart state field off in 6696 to 10305 kart samples a race, no kart put back (8.94, 8.95, 8.97, 8.99). First read on Skyscraper Leaps with a same-session control that does diverge (8.44, 8.45) |
+| this machine's wrong inputs, R1 | **0 in three windows on Opulence**, 99.4 to 100% of passes kept, against 29 to 125 a window and a loop in the control without R1 (8.92); 3 and 4 in the races since, all in the first window (8.94, 8.95) |
+| rebuilds in a race, WORLDWIDE mode | 0 to 1 a window of 1000 tics with `rollback_keepearly` off, the default; driven, Skyscraper Leaps (8.99) |
+| cost of a kept pass, driven | Opulence: **6.9 to 7.6 ms, 127 to 131 frames a second** with network snapshots (8.94); **5.6 to 6.4 ms, 133 to 137** with raw ones (8.95). Skyscraper Leaps in WORLDWIDE mode: 2.0 to 2.5 ms, about 143 frames a second (8.99). A rebuilt pass on Opulence was 25 to 35 ms (8.62-8.77) |
+| a save / a restore, Opulence | network archive: 2.5 to 2.9 ms / about 6.5 ms; **raw: 1.1 ms / 1.9 ms** (8.95) |
+| raw snapshots, exactness | Opulence soaks 0 of 278 and 0 of 379 failures; the archive identical after 1668 of 1668 and 1128 of 1137 restores (8.94) |
+| WORLDWIDE mode | the declared client joins and switches on, an undeclared one is refused, a race runs to its end at 0.000 with no full-state resend, and a predicting client records no replay (8.97) |
 | listen-server host's input delay | 170-200 ms, now **0** (8.27) |
+| restore, relink step | 4.7 ms before the index, **under 0.1 ms** after (8.34) |
 
 **Open, in priority order.**
 
-1. **The drift's cause (Phase A) -- answered on Skyscraper Leaps (8.44,
-   8.45).** With `rollback_cleancmds` on from the first tic, the driven
-   `correct_on` race read like `nospec`: 0.000 units on 6741 kart samples, 0
-   checksum refusals, the once-a-second blame samples (8.43) identical on both
-   machines, 0 wrong inputs. The same-session control (`correct`, same build)
-   shows the same instruments see a divergence when there is one: refusals
-   from 12 tics into its first off window, and blame samples that part and
-   never agree again. The driven kart parts first by thousandths of a unit,
-   then a bot, then the seed sum, which the channel never repairs. The drift
-   was 8.31's mechanism -- the speculation writing the local input over tics
-   already received -- and what it left behind (8.38). **The other maps
-   (item 6) found two more leaks, both through the restore:** the plane of a
-   dynamic slope, which the first tic after every restore read from the tics
-   before it (8.58, fixed and measured, 8.59), and polyobject flags and
-   translucency, which a reload never put back to their spawn values (8.59,
-   fixed as `8142e07c4`; its soak holds, 8.62). **A third was the correction
-   channel itself** (8.76): putting back a kart the server never moves relinks
-   it at the head of its chains, and on Opulence that reordered collisions.
-   With the put-back skipped when a kart already matches (`69e65f0ac`),
-   Opulence reads 0.000 with corrections applied (8.77).
-2. **Feel: replaying the inputs still in flight** (`rollback_history`, 8.39,
-   8.41 -- off by default). Instead of repeating the newest input over a 4-tic
-   speculation, the speculation replays every input sent but not yet applied,
-   in the order it was made, and goes as deep as the newest one needs. **Run
-   once on 2026-09-23 (8.46):** it works as designed on the display side --
-   the applied input found on every pass, 7 inputs in flight, no more jumps of
-   the drawn world than with it off -- at 1.6 to 1.9 times the cost. **But the
-   confirmed world parted inside its window**, for the first time in a race
-   with `rollback_cleancmds` on throughout: a refusal at tic 4101, two bots
-   out by 15 and 22 units, one bump on the server and not on the client. Not
-   a mechanism yet; one event. The leak soak at its depth (12 tics) finds no
-   leak through the archive (8.47), and plain speculation at 12 tics holds
-   for 1000 tics -- but without a driver (8.48). **A second driven history
-   race held (8.50)**: 0 refusals, 0.000 units, and no kart state differing
-   in 6741 samples (8.49's new comparison). One divergence in 2000 history
-   tics: rare, not explained. Next, when a driver is free: history on
-   throughout a race, for three times the history tics. The driver felt the
-   history window "mieux". It stays off by default until then.
-3. **Cost at sixteen karts** late in a race (Phase B) -- the gate for the alpha,
-   and heavier if `rollback_history` stays on. **Measured on Opulence
-   (8.60-8.69)**: a speculated tic is 3.4 to 4 ms, 83% of it the map's
-   decorations, and a pass rebuilt every tic is most of a tic. Depth 2
-   halves it (8.71). **Keeping the speculation (`rollback_keepspec`, 8.73 to
-   8.77) makes a pass one tic and one save**: 9 ms on Opulence, 117 frames a
-   second -- unattended, with the local player a spectator. **Driven, with
-   the player in (8.78): 65 to 69% kept, 54 to 65 frames a second against
-   12**, each rebuild a hitch of about 60 ms, and the camera stutters. Who
-   is wrong on those rebuilds is the next measure (8.79). **B2 started on
-   2026-09-29 (8.81)**: the saves are about 40% of a driven pass; the save
-   is now timed step by step (`ba1e43523`), and every thinker turns out
-   to live in four fixed-block pools, which a raw snapshot can copy whole;
-   they snapshot and restore themselves in `df8ed24e9` (8.82): a copy is
-   0.4 ms against a 2.9 ms save, round trip exact (8.84). **Step 3 merged**
-   (8.88, `371ca7419`, merge `49daf1196`): `rollback_rawsnap`, raw snapshots
-   with every reference count rebuilt (choice E2), and a verify mode -- not
-   yet run. **The rebuilds of a driven race** are the history replayed one
-   sample ahead after each late frame (8.87); **R1** (8.89, `7a455f6fe`, not
-   pushed) replays each sample on the tics the server gives it.
-4. **Vanilla compatibility** against the policy below. The savegame misread of
-   8.28 is fixed in code (8.29), never checked against a stock build. **WORLDWIDE
-   mode written (8.80), pushed as `51ba899d6` (CI green), not yet run**: one server switch,
-   `worldwide On`, which advertises the mode, sends corrections in place of
-   resends and refuses clients that do not declare themselves WORLDWIDE; a
-   client switches its prediction on or off by what the server it joins
-   advertises. Still missing: a release base -- CI builds a release-config
-   exe, but the branch still sits on upstream's development line (8.30) --
-   a menu entry, and a mark in the server browser.
-5. **The relabel histogram's `+2` cluster** (8.27) -- **read in `correct_on`,
-   probably harmless (8.44).** 8.32's prediction fails on its label: the
-   waiting map `RR_TESTRUN` counts as a race. On the counts, every `+2` falls
-   before the first measurement window: the host's before `rollback_correct`
-   is set, the client's before its `rollback_lag 6`. A split by "before or
-   after the scenario's settings" would prove it.
-6. **Never run under prediction:** a person playing on the host; a full race;
-   Battle, Grand Prix, Encore; anything longer than a scripted race; **any map
-   but one**. Every driven race ran on `RR_SkyscraperLeaps`, one of the 30
-   race maps out of 152 with no water, no polyobject, no linedef executor and
-   no ACS (8.40). The harness now runs any scenario on any map (`map=<lump>`),
-   and `harnais/maps.py` lists what each map exercises. **First other map, on
-   2026-09-28 (8.51):** Northern District's leak soak holds (only
-   `itemList.cap`), but its ACS drives a ring's reference count negative six
-   times -- read as an ACS thread releasing a `mo` from before a restore. Its
-   resim soak holds, with no such warning (8.52). **The guard (`src/acs/`,
-   `9652ccc7c`) is measured: the same soak prints 0 such warnings instead of
-   6 (8.53).** Carnival Night's leak soak (8.54): a spray can's look is
-   re-derived at every load from `gamedata`, this install's unlock progress,
-   which a grab inside a tic changes and saves -- so a speculated grab would
-   unlock a can for good -- and a player's reference count goes negative,
-   not explained. Labyrinth's leak soak (8.55): 15 failures in 267, all on
-   pairs of `MT_THOK` -- the trick-panel timing visual, placed from the local
-   camera, drawn only (8.57). Resim soaks (8.56): Labyrinth 0 of 312;
-   Carnival Night 2 of 347, a player riding a Garden Top whose restore loses
-   something the ride reads. Coastal Temple (8.57): 9 leak failures from
-   polyobject ownership, which a load nulls, so a second polyobject action
-   can start after a restore -- ⚠ the mechanism is wrong (8.59); 6 resim
-   failures, not analysed. Death Egg (8.58): holds. **Opulence (8.58): 37
-   failures in each soak, on kart speed and angle, in one stretch of the
-   lap** -- the first tic after a restore steered on a dynamic slope's plane
-   left by the tics before it. **Four fixes pushed on 2026-09-28**
-   (`12c2fa755` to `8749842d6`) and **measured (8.59): Opulence 0 of 292 and
-   1 of 386** (the first check's `chainorder_block`, set aside), Carnival Night
-   only `itemList.cap`, `roundconditions` no longer in the walker -- **but
-   Coastal Temple still 9 of 261**: a reload leaves polyobject translucency
-   and flags as the last tics made them. Fixed as `8142e07c4`, pushed and
-   measured: 1 of 261, `itemList.cap` (8.62).
-   **Cost and stutter (8.60):** one pass a tic, whole, inside one frame -- 10
-   ms on Skyscraper Leaps, an estimated 15 or more on Opulence -- and every
-   sound waits for the confirmed tic. Tracks proposed there, measurement
-   first; measured and in progress, see item 3.
+1. **The stutter Gibax feels** in WORLDWIDE mode: "le kart avait toujours
+   l'impression de rollback très très légèrement ... c'est jouable, pas un
+   souci, mais ça se remarque" (8.99). **Not a rebuild**: in the race windows,
+   0 to 1 rebuild per 1000 tics with `rollback_keepearly` off (0 to 13 with
+   it), and 0 to 7 moves of the drawn world against the clock, in both --
+   8.97's 488 rebuilds were before the race (8.99). What the numbers do show: **one frame in four
+   -- one a tic, the one that carries the pass -- lasts 8.3 to 16.7 ms**,
+   against under 8.3 for the others. Leads, none measured: the frame pacing
+   (the pass frame drawn late, the next one catching up); the drawn head
+   advancing unevenly from one pass to the next; the view or the camera
+   interpolated from something a confirmed tic or a restore touched (8.78);
+   the rare corrections, which `rollback_smooth` would ease. 8.100's
+   instrument steps the drawn kart and the view frame by frame, split by
+   whether the frame carried a pass, with prediction on or off. **Next
+   measure: `771bec680` installed, a driven `wwwindows` race and a driven race
+   without prediction, same session** (predictions in 8.100).
+2. **Before the race** (the join and the waiting map): about 200 rebuilds for
+   a wrong input in 1599 passes (8.99), and 1 to 4 `PARANOIA` lines on the
+   client at the join -- `*Guest entered the game.` printed twice, then an
+   `MT_PLAYER` at -1 from `P_MobjThinker`: the entry ran twice around a
+   restore (8.97, 8.99). None during the race, none on the server. Not
+   explained.
+3. **B2, before `rollback_rawsnap` goes on by default**: the players-block
+   difference after 9 of 1137 raw restores on Opulence (8.90, 8.94), not
+   explained; the double claim, one kart rebuilt at 67 references against 66
+   live (8.94); `floorspriteslope`, which after a raw restore may point at a
+   freed plane (only Lua creates one, 8.93); the level interpolators, which a
+   raw restore does not rebuild (8.88, drawing only).
+4. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
+   flight, not from the tics R1 gives them, so the newest input may reach the
+   drawn world a tic or two late -- a matter of feel, possibly part of item 1;
+   and the instrument counts some replayed tics as guessed. The measuring
+   machine's local `wip/histgaps` is a reference for both.
+5. **Never run under prediction**:
+   - **two humans on two machines** -- the largest unknown. A remote human is
+     guessed by repeating their last input, which may multiply rebuilds and
+     make their kart shake. A cheap stand-in, not written: a switch that
+     guesses the bots as if they were remote humans;
+   - **a real network** -- `rollback_lag` only delays, with no jitter and no
+     loss. R1 is exact only in that case; R2 (samples filed by sequence
+     number) is the remedy for a real one, and the harness needs jitter first;
+   - a person driving on the host;
+   - **sixteen karts** late in a race, Phase B's gate: a speculated tic on
+     Opulence is 3.4 to 4 ms, 83% of it the map's decorations (8.66, 8.69) --
+     the tic itself is now most of a kept pass (8.95);
+   - Battle, Grand Prix, Encore; items used on purpose; a driven race on any
+     map but Skyscraper Leaps and Opulence (soaks ran on seven maps,
+     8.51-8.62, 8.94).
+6. **Vanilla compatibility** against the policy below: a release base -- CI
+   builds a release-config exe, but the branch still sits on upstream's
+   development line (8.30); a WORLDWIDE client on a real vanilla server,
+   which needs that base; a menu entry and a mark in the server browser. The
+   savegame misread of 8.28 is fixed in code (8.29), never checked against a
+   stock build.
+7. **Older, left open**: the Garden Top ride (Carnival Night resim, 2 of 347,
+   8.56); Coastal Temple's 6 resim failures, not analysed (8.57);
+   `chainorder_block` (8.59); an object removed in a speculated tic stops its
+   sounds (8.73); the cameras put back by every restore, a lead for the
+   camera's stutter on rebuilds, not checked (8.78); the one
+   divergence in 2000 history tics (8.46), not seen since (8.50); the network
+   load not counting a delayed executor's caller (8.88); the relabel
+   histogram's `+2` cluster, probably harmless (8.27, 8.44).
 
 **Compatibility policy, decided by Gibax on 2026-09-21: the server decides.** A
 server in WORLDWIDE mode runs client-side prediction and accepts WORLDWIDE
@@ -204,6 +176,11 @@ launch without Gibax's explicit go-ahead, each time.**
 | 8.55 | its pairs are named in 8.57: the trick-panel timing visual, placed from the camera. Its candidate (the bubble waves) was wrong |
 | 8.57 | its three fixes are pushed, with a fourth (8.58). Its polyobject mechanism is wrong (8.59): the ownership fix changed nothing on Coastal Temple |
 | 8.35, 8.37 | their input results stand. Their drift readings -- "no effect" and "a large one" -- are both confounded: an off window's divergence carries into the on window (8.38) |
+| 8.80 | "not yet run": run in 8.96, where both scenarios crashed at the waiting map's restart, and end to end after two fixes (8.97) |
+| 8.89 | two gaps are noted under it (⚠): the depth and the instrument still count samples, not the tics R1 gives them. Its predictions are measured in 8.92 |
+| 8.90 | its three differences are read in 8.91, fixed in 8.93 and measured in 8.94: the slope planes and the sign are gone, the kart's reference mostly (a double claim left), the players-block difference stays |
+| 8.97 | its reading of the stutter -- rebuilds on guessed tics -- is wrong: those rebuilds were before the race, not in it (8.99) |
+| 8.98 | its predictions fail (8.99): there was nothing in the race for the early rerun to remove; `rollback_keepearly` is off by default since 8.100 |
 
 ## 0. The rename, and what it actually commits to
 
