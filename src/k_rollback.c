@@ -4943,6 +4943,35 @@ dboolean K_RollbackSoundsSilenced(void)
 	return g_speculating;
 }
 
+static uint32_t g_chatheld;     // chat lines held back as a rerun's
+
+dboolean K_RollbackChatSilenced(void)
+{
+	const dboolean silenced = K_RollbackSoundsSilenced();
+
+	if (silenced)
+	{
+		g_chatheld++;
+		return true;
+	}
+
+	// A line a tic writes on a tic this machine has not run: the first run of
+	// that tic, in this world. One join still wrote three (WORLDWIDE.md 8.109),
+	// so each of them landed on a tic past the horizon -- say which.
+	if (g_intic && g_twoclock > 0)
+	{
+		CONS_Printf("rollback_chat: a tic's line written on tic %u (leveltime %u, %s, gamestate %d) -- "
+			"the horizon at %u, the frontier at %u, the standing speculation's head at %u; "
+			"%u held back so far\n",
+			(unsigned)gametic, (unsigned)leveltime,
+			g_speculating ? "speculated" : "confirmed", (int)gamestate,
+			(unsigned)g_soundhorizon, (unsigned)g_confirmedtic, (unsigned)g_keephead,
+			(unsigned)g_chatheld);
+	}
+
+	return false;
+}
+
 /** True when two inputs say the player pressed different things.
   *
   * Not a memcmp. A ticcmd also carries latency and flags, and neither is

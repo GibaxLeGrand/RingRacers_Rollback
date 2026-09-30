@@ -243,6 +243,11 @@ dboolean K_RollbackSoundsSilenced(void);
   * K_RollbackSoundsSilenced, what the menus start between tics is not. */
 void K_RollbackTicRunning(dboolean running);
 
+/** K_RollbackSoundsSilenced for a chat line, and in WORLDWIDE mode a console
+  * line for each one a tic writes: on which tic, against the horizon and the
+  * frontier, and how many were held back before it (WORLDWIDE.md 8.109). */
+dboolean K_RollbackChatSilenced(void);
+
 // rollback_keepspec -- track A (WORLDWIDE.md 8.60, 8.73): leave the speculation
 // standing across a pass, and rebuild it only when the tics the server confirms
 // are not the ones it ran. Off by default; while off, nothing below does

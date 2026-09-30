@@ -15,7 +15,7 @@
 #include "doomdef.h"
 #include "byteptr.h"
 #include "hu_stuff.h"
-#include "k_rollback.h" // K_RollbackSoundsSilenced
+#include "k_rollback.h" // K_RollbackChatSilenced
 #include "font.h"
 
 #include "k_menu.h" // highlightflags
@@ -504,7 +504,7 @@ void HU_AddChatText(const char *text, dboolean playsound)
 	// machine runs the tic, as its sounds are: every rerun of a speculation
 	// wrote it again, 17 times for one join (WORLDWIDE.md 8.108). Chat from
 	// netxcmds comes before G_Ticker in the tic loop and is never held back.
-	if (K_RollbackSoundsSilenced())
+	if (K_RollbackChatSilenced())
 		return;
 
 	if (playsound && cv_consolechat.value != 2)	// Don't play the sound if we're using hidden chat.
