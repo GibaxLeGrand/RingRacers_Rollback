@@ -6369,3 +6369,36 @@ long, 0 to 4 backwards a window, the frames without a pass).
 a loopback to 285 ms. Past about 340 ms, `rollback_history 12` is what
 limits it; raising the cap (up to 34, 8.39) or setting it from the round
 trip would carry it further, at the cost of deeper rebuilds when one comes.
+
+Gibax's feel of the sweep: "au niveau du feeling c'était... parfait. En fait
+j'ai senti aucun lag, j'ai même soupçonné qu'il y avait un problème" -- no lag
+felt at any of the five latencies, the 428 ms one included.
+
+### 8.108 Muted menus and a join printed 17 times: the "already heard" rule applied outside a tic
+
+Reported by Gibax on 2026-09-30 after the sweep: the title sound and the
+menus' sounds muted; the join message printed over and over. Read in the
+logs and the code; nothing launched.
+
+- **17 "`*Guest entered the game.`" for one join** in the 15-tic race's
+  client log (`latest-log.txt`; "has joined" once). The line is written by
+  a tic (`P_PlayerThink`, `p_user.c:3856`, `HU_AddChatText`), and every run
+  of that tic -- the speculation's, its reruns, the confirmed run -- wrote
+  it again. Sounds have had a rule since 8.73 (heard the first time this
+  machine runs a tic); chat lines had none.
+- **The muted sounds**: `K_RollbackSoundsSilenced` held a sound back when
+  `gametic` was behind the sound horizon -- a tic already heard. But a kept
+  pass hands the netcode the **frontier's** clock (`K_RollbackKeepArm`),
+  and `NetUpdate` processes the menus' input then: `gametic` is the
+  frontier's, behind the horizon, and every menu sound was taken for a
+  rerun's. A map load run by the tic loop's netxcmds is in the same place.
+  (If the title screen outside any level is muted too, this does not
+  explain it -- to ask.)
+- **Fix, `0e7382258`** (local branch `wip/echo`, not pushed; syntax checked,
+  errors injected at its five places reported): the tic loop and the
+  speculation say when `G_Ticker` runs a tic (`K_RollbackTicRunning`), and
+  the horizon applies only then; `HU_AddChatText` follows the same rule.
+  Chat from netxcmds runs before `G_Ticker` in the tic loop and is never
+  held back.
+- **Prediction**: on a build with it, one "entered the game" a join; the
+  pause menu's and the title card's sounds heard in WORLDWIDE mode.
