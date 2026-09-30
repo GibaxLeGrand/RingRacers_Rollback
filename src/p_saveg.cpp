@@ -6892,7 +6892,19 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 					I_Error("P_UnarchiveSpecials: Unknown tclass %d in savegame", tclass);
 			}
 			if (th)
+			{
+				// P_AddThinker starts the count at 0, and a loaded object already
+				// holds what its loader claimed for it: players[].mo (8.93), the
+				// waypoint and tracker caps. Starting it over lost those claims:
+				// every body a load brought back was one reference short, and let
+				// go of at a join or a bot's removal it went to -1 (WORLDWIDE.md
+				// 8.112). An object's memory starts zeroed (P_AllocateMobj);
+				// the other thinkers' loaders promise nothing, and keep a 0.
+				const int32_t references = (tclass == tc_mobj) ? th->references : 0;
+
 				P_AddThinker((thinklistnum_t)i, th);
+				th->references = references;
+			}
 		}
 
 		CONS_Debug(DBG_NETPLAY, "%u thinkers loaded in list %d\n", numloaded, i);
