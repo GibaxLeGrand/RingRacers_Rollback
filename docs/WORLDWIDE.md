@@ -6402,3 +6402,69 @@ logs and the code; nothing launched.
   held back.
 - **Prediction**: on a build with it, one "entered the game" a join; the
   pause menu's and the title card's sounds heard in WORLDWIDE mode.
+
+> ⚠ 8.109: pushed as `af4104553`, the sounds came back; the join line did
+> not drop to one (3 on the next race). And the 17 was the 15-tic race
+> only: the sweep's other races wrote it 1 to 4 times.
+
+### 8.109 The fix on a race: the sounds back, the join line still three times
+
+`af4104553` (the fix of 8.108, cherry-picked from `wip/echo`), installed
+in both folders (sha256 `b724ec90…`, the previous exe kept as
+`.bak_da59225`). `playtest.sh wwwindows dedicated`, RR_SkyscraperLeaps,
+`rollback_lag 6` (171 ms), driven by Gibax, 2026-09-30 19:02
+(`playlog_wwwindows_20260930-190215_af41045.txt`). No crash.
+
+- **Sounds: prediction met.** Gibax, during the race: "LES SONS sont fix".
+  The menus and the title are heard in WORLDWIDE mode.
+- **Join line: prediction missed.** "has joined the game" once, but
+  "`*Guest entered the game.`" 3 times on the client (twice in the join
+  phase, once in POSITION, all on RR_TESTRUN before the race map). The
+  server wrote it once.
+- **The earlier count, redone over every kept log.** The 17 of 8.108 was
+  the 15-tic race. The rest of the sweep (`da5922575`) wrote it 2, 4, 1
+  and 4 times at 0, 3, 6 and 10 tics. The two `020b1d6` races wrote 5
+  and 2, `b1c0c74`'s wwwindows 2. `frames_off` (no prediction) and
+  `vanillajoin` wrote it once. At 6 tics, 3 is inside what the builds
+  without the fix wrote (1, 2, 5, 2): **the fix has not been shown to change
+  the join line below 15 tics**, and at 15 tics it has not been measured.
+- **What the 3 mean.** The rule holds back a line only on a tic this
+  machine has already run. `G_Ticker` has no early return, and the horizon
+  moves at its end on every tic (`K_RollbackTicker`). So each copy was
+  written on a tic past the horizon: a tic this machine had never run, in
+  a world where the player had not yet entered. The join depends on an
+  input. A spectator's `BT_ATTACK` toggles `PF_WANTSTOJOIN`
+  (`p_user.c:4625`), and `K_CheckSpectateStatus` lets the player in during
+  that same tic (`k_kart.c:16948`). A world where this machine's input
+  landed on another tic joins on another tic. **Hypothesis, not measured.**
+- **PARANOIA:** 2 `MT_PLAYER` mobjs go to `references=-1` (4 lines), as in
+  every WORLDWIDE race since `6209f17` (3 to 4 lines). `frames_off` and
+  `vanillajoin` have one mobj (2 lines), and the 15-tic race had 64 lines.
+  This is the join-time alert already open, not something the fix brought.
+- **The race, three windows of 1000 passes.**
+  - 1000/1000 kept in each window, 0 rebuilt, 0 wrong inputs.
+  - About 8.0 tics deep, 8.0 inputs in flight.
+  - 2.05, 2.04 and 2.22 ms a pass, and about 4110 frames a window.
+  - No gap between two drawn frames over 16.7 ms.
+  - State off 0/2000, nothing put back.
+  - The drawn kart without a pass: about 620 long steps a window,
+    against 2330 to 2470 even. This is the long-step item already open.
+- **Instrument, `d84878e97`** (local branch `wip/chat`, not pushed; syntax
+  checked, errors injected at its three places reported).
+  - `HU_AddChatText` asks `K_RollbackChatSilenced`: the same rule, which
+    also counts the lines it holds back.
+  - In two-clock mode, each line a tic writes prints `rollback_chat:` with:
+    - the tic and its leveltime;
+    - speculated or confirmed;
+    - the gamestate;
+    - the horizon, the frontier and the standing speculation's head;
+    - the number held back so far.
+- **Prediction for the instrument:**
+  - The extra lines come from speculated passes.
+  - Each one is on a tic at or past the horizon, and later than the one
+    before.
+  - A rebuild for this machine's input comes between two of them (the
+    `rollback_phases` counts).
+  - Two or more lines from confirmed passes would rule the hypothesis out.
+    So would a line behind the horizon, which can only print when the
+    WORLDWIDE branch of the rule is off.
