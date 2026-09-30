@@ -552,6 +552,20 @@ and the whole speculation again.
   leveltime, speculated or confirmed, the gamestate, the horizon, the
   frontier, the standing speculation's head, and how many lines were held
   back so far.
+- From `04db0cf71` (8.111, 8.112), the report ends with a `rollback_refs:`
+  line. It gives the loads of the network archive so far, how often the
+  collision pointers (`g_tm.thing`, `floorthing`, `hitthing`) held an
+  object at one and a live object sat at its address after, and how many
+  kart bodies' reference counts went below zero.
+  - In a `PARANOIA` build (the CI's dev build), a body going below zero
+    prints, without a command:
+    - its ledger since this machine first saw it, by the file and line
+      that took or let go of a reference;
+    - where it was first seen and removed;
+    - what still points at it.
+  - A load that leaves a collision pointer on a freed object, whose address
+    holds a live one after, prints a line too.
+  - 12 of each at most.
 - Measured on Skyscraper Leaps with `rollback_history 12`: 99 to 100% of
   passes kept, a pass of 1.9 to 2.4 ms (each save counted once), as many
   frames as with no speculation, drift 0.000 (8.76, 8.77). Driven on

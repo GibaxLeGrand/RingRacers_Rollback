@@ -71,13 +71,14 @@ asked for first.**
 
 **Blocking an alpha:**
 
-1. **The `MT_PLAYER` alerts at the join** (8.97, 8.109, 8.110): 1 to 18
-   objects a race whose reference count goes to -1 on the client, between
-   the join and the race map; none in a race, none on the server. First an
-   instrument -- which reference is dropped, around which restore or
-   rebuild -- then the fix. A count below zero can end in a use after free,
-   and strangers joining and leaving will run this path far more often than
-   the bench does.
+1. **The `MT_PLAYER` alerts at the join**: explained (8.112).
+   - The load of the network archive claims each kart body for
+     `players[].mo`, then `P_AddThinker` sets the count back to 0.
+   - Every body a rebuild or a join brings back is one reference short,
+     which can end in a use after free.
+   - Fix `7c3e996ca`, written: push it, then the same two runs
+     (`wwwindows dedicated` and `frames_off dedicated`, driven); no body
+     below zero predicted.
 2. **A second human.** (a) A switch that guesses the bots as a remote human
    is guessed -- their last input repeated -- to see unattended the rebuilds
    and the shaking a remote human would cause. (b) Two people on two
@@ -128,8 +129,8 @@ says sixteen, and the known-broken list stated up front.
    the depth from the tics R1 gives, and the instrument counting the same way
    (⚠ under 8.89; the measuring machine's `wip/histgaps` as a reference).
 10. **Small, seen**: "`*Guest entered the game.`" printed more than once a
-    join on the client -- 1 to 5 times, 17 at 15 tics; `rollback_chat`
-    watches it (8.109, 8.110); the drawn kart's long steps, 430 to 760 a
+    join on the client -- 1 to 5 times, 17 at 15 tics, each rebuild moving
+    the join later (8.109, 8.112); the drawn kart's long steps, 430 to 760 a
     window against about 263 without prediction (8.103, 8.107);
     `rollback_keepearly`, off, to remove or keep; a predicting client
     records no replay (8.96); the title's "WORLDWIDE" banner a little

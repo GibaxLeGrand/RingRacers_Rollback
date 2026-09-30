@@ -49,11 +49,12 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 `rollback_rawsnap` (open item 7), `rollback_keepearly` (8.99, 8.100),
 `rollback_smooth` (never measured).
 
-**Builds.** Installed on the measuring machine: `968dc2063`, with
-`data/worldwide.pk3` -- the title screen's Earth and ring, a flash bringing
-them in (not netcode; the private notes' `titre/`). Its netcode is
-`f13231534`'s: 8.110's `rollback_chat` on top of `af4104553` (8.109). Nothing
-waits to be installed.
+**Builds.** Installed on the measuring machine: `04db0cf71` (8.111's
+`rollback_refs`), with `data/worldwide.pk3` -- the title screen's Earth and
+ring (not netcode; the private notes' `titre/`). Written, not pushed:
+`7c3e996ca`, the fix for the join's `MT_PLAYER` alerts (8.112), and
+`cbd6d35a4`, the `WORLDWIDE Mode` menu entry, saved, and its state on the
+host screen.
 
 **Measured and holding.**
 
@@ -80,13 +81,15 @@ waits to be installed.
 needs; `ROADMAP.md`, *Next, in order*, has the order of work and the proposed
 scope.
 
-1. **The `MT_PLAYER` alerts at the join**: on the client, 1 to 18 objects a
-   race whose reference count goes to -1 (`P_SetTarget`, then
-   `P_RemoveThinkerDelayed`), all between the join and the race map; none in
-   a race, none on the server, no crash so far (8.97, 8.109, 8.110). Not
-   explained, and the count does not follow the rebuilds in any simple way.
-   A count below zero can end in a use after free; strangers joining and
-   leaving would run this path far more often than the bench.
+1. **The `MT_PLAYER` alerts at the join: explained (8.112).**
+   - On the client, 1 to 18 kart bodies a race went to -1 (8.97, 8.110):
+     the joiner's old body, a bot removed to make room, and now and then
+     one in a race.
+   - The load of the network archive claims each body for `players[].mo`,
+     then its caller's `P_AddThinker` sets the count back to 0.
+   - Every body a rebuild or the join's load brings back is one reference
+     short, which can end in a use after free.
+   - Fix `7c3e996ca` written; to push and measure (prediction in 8.112).
 2. **A second human on two machines**: never run, the largest unknown. A
    remote human is guessed by repeating their last input, which may multiply
    rebuilds and make their kart shake. A cheap stand-in, not written: a
@@ -123,9 +126,9 @@ scope.
    purpose; a driven race on any map but Skyscraper Leaps and Opulence
    (soaks ran on seven maps, 8.51-8.62, 8.94).
 10. **Small, seen, not blocking**: "`*Guest entered the game.`" printed 1 to 5
-    times a join on the client, 17 at 15 tics -- each copy on a tic this
-    machine had not run, why not known; `rollback_chat` watches it (8.109,
-    8.110). The drawn kart's extra long steps (above). `rollback_keepearly`,
+    times a join on the client, 17 at 15 tics -- each copy in a new world
+    where the join, driven by this machine's input, landed later, each
+    rebuild moving it (8.109, 8.112). The drawn kart's extra long steps (above). `rollback_keepearly`,
     off, to remove or keep. A predicting client records no replay (8.96).
 11. **Older, left open**: the Garden Top ride (Carnival Night resim, 2 of 347,
     8.56); Coastal Temple's 6 resim failures, not analysed (8.57);
@@ -5725,6 +5728,10 @@ one: `072542eb2`, `492118879`, `e2da72742`, `cc6ca1c0e` (the four above,
 put on top of the docs); the build to install is `cc6ca1c0e`'s, CI run
 36629162827.
 
+> ⚠ 8.112: the claim of `players[].mo` in `LoadMobjThinker` never held in a
+> load of the network archive: the caller's `P_AddThinker` set the count back
+> to 0 right after. Every body a network load brought back stayed one short.
+
 ### 8.94 The four fixes measured: no kart off in a driven race, and raw snapshots exact on Opulence
 
 Measured on 2026-09-29, binary `cc6ca1c0e` (sha256 `95e5ca79...`, CI run
@@ -6603,3 +6610,90 @@ Read on 2026-09-30, evening; nothing launched. The first item of
   - **If not**, the ledger names the site that let go without having
     taken, or the claim that is missing, and the hypothesis is dropped.
   - Nothing else changes: the instrument only counts and prints.
+
+> ⚠ 8.112: the collision pointers held nothing at any of 37 loads -- the
+> hypothesis is wrong. The ledgers named the cause: the load's own claim of
+> the body, wiped by `P_AddThinker`.
+
+### 8.112 The `MT_PLAYER` alerts explained: the load's claim of a body, wiped by `P_AddThinker`
+
+`04db0cf71` (8.111's instrument), pushed on Gibax's go-ahead ("oui, pousse,
+installe et lance les deux, je pilote"), CI run 36765959959 green, installed
+in both folders (sha256 `65be9958…`, the previous exe kept as
+`.bak_968dc20`). Processor at 6%. Both runs **driven by Gibax**, 6 tics of
+lag, dedicated (no host player), no crash:
+`playtest.sh wwwindows dedicated` at 21:34
+(`playlog_wwwindows_20260930-213648_04db0cf.txt`), then the control
+`playtest.sh frames_off dedicated`, with no prediction, at 21:37
+(`playlog_frames_off_20260930-213949_04db0cf.txt`). Prediction in 8.111.
+
+- **The collision pointers: the hypothesis is wrong.** In the WORLDWIDE
+  race, `floorthing` and `hitthing` held an object at none of the 37 loads
+  of the archive: `rollback_refs: 37 loads …; the collision pointers held an
+  object at 0 of them`.
+- **Bodies below zero: 3 in the WORLDWIDE race, 1 in the control.**
+  - WORLDWIDE, tic 320, at POSITION's start on the waiting map: the
+    joiner's spectator body, let go at the join (`p_user.c:3840`), and a
+    bot's body removed to make room for the joiner (`d_clisrv.c:2683`).
+  - WORLDWIDE, tic 1337, in the race: a body removed in a speculated tic.
+  - Control, tic 93: again a bot's body removed at the join
+    (`d_clisrv.c:2683`).
+  - In every case, the last holder let go at `p_mobj.c:10831`
+    (`MT_AMPAURA`, `MT_TRIPWIREAPPROACH`, `MT_BROLY`).
+- **What the ledgers say.** In all four, the recorded changes **balance
+  exactly**, and yet the count is -1:
+  - 33 up and 33 down, then 21 and 21, 23298 and 23298, and 1599 and 1599
+    in the control.
+  - Each body was first seen in a load, through the claim at
+    `p_saveg.cpp:5643`.
+
+  So the count lost one change the ledger kept: the claim itself.
+- **The cause, read in the code.** `LoadMobjThinker` claims `players[].mo`
+  for the body it loads (`mobj->thinker.references++`, the fix of 8.93).
+  It also counts the waypoint and tracker caps with `P_SetTarget`. Its
+  caller then runs `P_AddThinker` (`p_saveg.cpp:6895`), which sets the
+  count to 0 (`p_tick.c:343`).
+  - **Every body a load of the network archive brings back is therefore one
+    reference short**: each rebuild, and the join's own load, which is why
+    the control, with no prediction, has it too.
+  - When the body is let go -- the joiner's old body, a bot making room --
+    the release of `players[].mo` takes a reference that is not there.
+  - The last holders then take the count to -1, and the body is never
+    freed. In the other order, it would be freed while still pointed at.
+- **Fix, `7c3e996ca`** (local branch `wip/refsfix`, not pushed; syntax
+  checked with and without `PARANOIA`, 2 injected errors reported). The
+  count an object's loader left survives `P_AddThinker`. Other thinkers
+  keep the 0 they had: their memory is not promised zeroed, while
+  `P_AllocateMobj`'s is. `P_RelinkPointers` never relinks `players[].mo`,
+  so nothing is counted twice.
+- **In passing, 8.109's join lines, caught.** This race wrote "entered the
+  game" three times.
+  - The three `rollback_chat` lines are on tics 318, 320 and 322, each at
+    the horizon and in a speculated pass, with the frontier at 312, 314 and
+    316, and nothing held back.
+  - So each copy came from a different world, in which the join landed on a
+    tic that no earlier world had reached, 2 tics later each time.
+  - The join phase had 3 rebuilds for this machine's input.
+
+  8.109's hypothesis holds on its clauses: the join follows this machine's
+  input, and each rebuild moved it later.
+- **The race.**
+  - 999, 1000 and 1000 passes kept of 1000, and 0 rebuilt for an input.
+  - 2.1 to 2.4 ms a pass, about 4100 frames a window.
+- **Also written, not pushed: `cbd6d35a4`** (local branch `wip/menu`;
+  syntax checked, 3 injected errors reported). Gibax's ask:
+  - `WORLDWIDE Mode` in Server Options > Advanced > Network Connection;
+  - `worldwide` saved in the config -- a server variable, not a netvar, so
+    a client saves only what it set itself;
+  - on the host screen, `(WORLDWIDE: On/Off)` under `(Public: …)`.
+
+  The harness starts every server with `+worldwide off`
+  (`playtest.sh`, `soak.sh`), and the four WORLDWIDE scenarios turn it on.
+- **Prediction for the fix**, the same two runs on a build with
+  `7c3e996ca`:
+  - **no body below zero** in either: no `MT_PLAYER` PARANOIA line and no
+    `rollback_refs` dump;
+  - the race's figures as before.
+
+  A body still going below zero would carry its ledger, with a different
+  site.
