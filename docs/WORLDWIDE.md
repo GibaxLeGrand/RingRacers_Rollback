@@ -6220,3 +6220,5 @@ Prediction in 8.102.
 **So what Gibax saw as a slight rollback was no interpolation at all while
 a speculation was kept**; it is gone. Left: the rebuilds at a level's start,
 and the few extra long steps.
+
+Gibax's feel of this race: "ouais c'est largement plus fluide".
