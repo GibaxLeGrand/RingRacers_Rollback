@@ -12,14 +12,15 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-29** — 29 commands, checked against
+**Up to date as of 2026-09-30** — 30 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
 `rollback_vanillajoin` exist from `51ba899d6` (`WORLDWIDE.md` 8.80);
 `rollback_poolcopy` from `df8ed24e9` (8.82); `rollback_rawsnap` from
 `371ca7419` (8.88, merged as `49daf1196`); `rollback_histreal` from
-`7a455f6fe` (8.89, not yet pushed).
+`7a455f6fe` (8.89); `rollback_keepearly` from `6209f1786` (8.98), off by
+default from `771bec680` (8.100).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -217,6 +218,13 @@ on. Setting it resets the counts; snapshots already taken are read the way
 they were written. About 5 MB a snapshot on Opulence. Harness: `soak.sh
 leakraw`, `soak.sh wwraw` (mode 2), `playtest.sh keepraw` (mode 1).
 
+Measured on Opulence (`WORLDWIDE.md` 8.94, 8.95): a save 1.1 ms against 2.5
+to 2.9, a restore 1.9 ms against about 6.5, a kept pass 5.6 to 6.4 ms
+driven; soaks 0 failures, the archive identical after all but 9 of 2805
+verified restores. **Stays off by default** until the players-block
+difference and the double claim of 8.94 are understood; `floorspriteslope`
+and the level interpolators are not put back (8.88, 8.93).
+
 ### `rollback_poolcopy [times]`
 **Diagnostic, in a level** (`WORLDWIDE.md` 8.82). Times a raw copy of the four
 level pools every thinker and sector node lives in -- what a raw snapshot
@@ -332,7 +340,14 @@ itself.
   - `rollback_frames` — the main loop's iterations with and without a pass,
     their work before the sleep in buckets, the gaps between drawn frames,
     how many frames were drawn and how many iterations ran past a tic (the
-    frame after each is skipped);
+    frame after each is skipped). From `e5fb1c61a` (`WORLDWIDE.md` 8.100),
+    two more lines, for the frames drawn while the local kart moves (over 2
+    units a tic): how the kart's **drawn** position (`R_InterpolateMobjState`
+    at `rendertimefrac`) and the **view**'s stepped from the frame before,
+    against the kart's speed and the time between the two frames -- even,
+    short (under half), long (over one and a half) or backwards -- split by
+    whether the frame carried a pass. Counted with prediction on or off, so a
+    race without it is the control;
   - `rollback_hits` — of the passes that confirmed tics the speculation had
     run, how many had every input right, the first wrong tic, whose input
     was wrong (this machine, bots, people) and in which ticcmd fields. ⚠ It
@@ -433,7 +448,8 @@ reported no difference between it off and on (8.36).
   then on.
 
 ### `rollback_history [maxdepth]`
-**Client side, two-clock mode. Off by default** (`0`). With a depth above 0,
+**Client side, two-clock mode. Off by default** (`0`); WORLDWIDE mode sets
+`12` at the join. With a depth above 0,
 the speculation replays **your own inputs still in flight** -- sent, but not
 yet applied by the server -- one per tic, in the order you made them, instead
 of repeating your newest input over every speculated tic (`WORLDWIDE.md` 8.39).
@@ -448,11 +464,13 @@ in the last second, raises it at once, and lowers it by one tic a second at
 most. The picture then advances one tic per tic instead of jumping with every
 jitter (`WORLDWIDE.md` 8.40, 8.41).
 
-- Meant to change only what is **drawn**, never the confirmed world. ⚠ In its
+- Meant to change only what is **drawn**, never the confirmed world. In its
   first run the confirmed world parted inside the window where it was on,
-  not yet explained (`WORLDWIDE.md` 8.46): **leave it off** outside a test.
+  not explained (`WORLDWIDE.md` 8.46); not seen again since, with it on
+  throughout every driven race from 8.50 (0.000 units, 8.94 to 8.99).
 - About doubles the speculation's cost at 171 ms: measured 1.6 to 1.9 times,
-  at 8 tics deep on average (8.46).
+  at 8 tics deep on average (8.46). With `rollback_keepspec`, only a rebuild
+  pays it.
 - Needs `rollback_cleancmds` on (the default); with it off, it does nothing
   and says so.
 - No argument: the state; how often the drawn world moved against the
@@ -520,8 +538,27 @@ and the whole speculation again.
   Opulence (8.78): 65 to 69% kept, 54 to 65 frames a second against 12
   before, each rebuild a hitch of about 60 ms, the camera stuttering. With
   R1 (8.92), driven on Opulence: 99.4 to 100% kept, a pass of 7.3 to 8.6 ms,
-  121 to 129 frames a second all race long. Still off by default: **leave it
-  off** outside a test until it is judged in a real network.
+  121 to 129 frames a second all race long; with raw snapshots
+  (`rollback_rawsnap 1`, 8.95), 5.6 to 6.4 ms, 133 to 137. In WORLDWIDE
+  mode on Skyscraper Leaps, driven: 2.0 to 2.5 ms a pass, 0 to 1 rebuild in
+  1000 tics (8.99). Off by default, and on in WORLDWIDE mode; not yet judged
+  on a real network or against a remote human.
+- From `6209f1786`, the report ends with `rollback_keepearly`'s counts.
+
+### `rollback_keepearly [0|1]`
+**Client side, with `rollback_keepspec` and `rollback_history`. Off by
+default** since `771bec680` (`WORLDWIDE.md` 8.99, 8.100). On: a tic the
+standing speculation ran on this machine's input is checked again as soon as
+that input is known -- the pass after `NetUpdate` makes the sample -- instead
+of when the server confirms the tic, a round trip later. If the input R1
+gives it differs from what the tic ran, that tic's saved start is put back
+and the speculation runs again from there to the head, instead of the whole
+depth at the frontier (8.98). No argument: the state, how many standing
+speculations were run again early, and the tics they ran. Setting it resets
+the counts. Measured (8.99): in a driven WORLDWIDE race there was nothing
+for it to remove (the control rebuilt 0 or 1 time in 1000 tics), and before
+the race it fired on most passes to no effect. Harness: `playtest.sh
+wwwindows` runs with the default, `wwwindows_noearly` with `0`.
 
 ### `rollback_nullspec [0|1]`
 Saves and restores the frontier on **every pass** without speculating
@@ -550,6 +587,8 @@ position to the new one instead of snapping instantly. Deliberately kept
 separate from `rollback_loop`/`rollback_twoclock`: a race is read once to
 learn whether the number of resyncs dropped (a number), and a second time to
 learn whether the visual snapping is gone (that, only a human can say).
+**Never measured** (`ROADMAP.md`, Phase D). Since 8.94 no correction moves
+a kart in a driven race, so it has had nothing to smooth.
 
 ### `rollback_correct [tics] [suppress]`
 **Server side.** Asks the server to send every client a light state correction
