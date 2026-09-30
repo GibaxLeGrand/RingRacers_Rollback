@@ -6295,3 +6295,34 @@ window. Processor at 17%; no crash
    `rollback_twoclock` -- the floor then applies only without the history.
    A `src/` change; what the drawn world does on a near server would change
    with it: less ahead, as far ahead as the round trip.
+
+### 8.106 No floor under the history's depth, the latency from the join, and a latency sweep
+
+Written on 2026-09-30 on Gibax's go-ahead ("on fait dans l'ordre aller"),
+after his two questions: why is it smoother with 171 ms than without, and was
+any other latency ever tried? (8.105 answers the first; the second: **no --
+all 33 client scenarios had `rollback_lag 6`**, and the WORLDWIDE ones ran
+their first 1600 tics on a loopback by accident.)
+
+1. **`737455184`** (local branch `wip/nofloor`, not pushed; syntax checked,
+   an injected error reported): with `rollback_history` the depth is what the
+   inputs in flight reach, one tic at least -- `rollback_twoclock` is no
+   longer its floor, and stays the depth without the history.
+2. **Harness (`700bbed`)**: `rollback_lag` first in the WORLDWIDE client
+   scenarios (`worldwide`, `wwwindows`, `wwwindows_noearly`), and
+   `playtest.sh <scenario> lag=<tics>` for any scenario -- a generated copy
+   with every `rollback_lag` line swapped, the logs named `_lag<tics>`.
+3. **The sweep, on a build with 1**: `playtest.sh wwwindows dedicated
+   lag=N` for N = 0, 3, 6, 10, 15 (0, 86, 171, 286, 429 ms), driven, same
+   session -- dedicated, so no host player takes a stray key.
+
+**Predictions:**
+- At 0, 3, 6 and 10 tics: **this machine's wrong inputs a handful a
+  window**, none guessed past the history, the depth close to the round
+  trip (about 1, 4, 8, 11 tics); no rebuild at the race map's start any more.
+- At 15 tics: the round trip is past `rollback_history 12`'s cap, so the
+  speculation stops short of the newest input's tic -- **the drawn world
+  behind the input again** (the cap cuts every pass short) but no guessing,
+  hence few rebuilds; Gibax should feel the input late by about 3 tics.
+- The pass's cost grows with the depth only on rebuilds; kept passes stay at
+  one tic and one save (about 2 ms on Skyscraper Leaps).
