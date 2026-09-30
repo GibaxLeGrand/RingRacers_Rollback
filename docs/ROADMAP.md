@@ -6,7 +6,8 @@ evening, 2026-09-20). Nothing they said was dropped: their conclusions are
 folded into the phases below, and the order is brought up to date. The
 evidence for every line lives in `WORLDWIDE.md`; this file only says what is
 left, in what order, and what each step has to prove. *Where this starts
-from* and *Next, in order* were rewritten on 2026-09-30.
+from* and *Next, in order* were rewritten twice on 2026-09-30, the second
+time from an audit of what an alpha still needs.
 
 The old phase numbering (1 to 7, in `ROLLBACK.md`) was retired on 2026-09-10:
 it described an architecture where the authoritative clock ran ahead.
@@ -18,27 +19,36 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
 ## Where this starts from
 
 - **Solved, from the client's seat: input lag.** "Ça répond tout de suite"
-  (8.36), and again after the architecture changed underneath it.
+  (8.36), and none felt at any latency from 0 to 428 ms in the sweep of
+  8.107: "parfait".
 - **Architecture settled.** `gametic` runs only confirmed tics; the speculation
   runs above it on a snapshot, is kept as it stands when the server confirms
   the inputs it ran (`rollback_keepspec`), and replays the inputs still in
-  flight on the tics the server will give them (`rollback_history`, R1). A
-  light correction channel replaces the stock full-state resend: **0 resends
-  a race**, against 7 to 9 without it.
+  flight on the tics the server will give them (`rollback_history`, R1), as
+  deep as they reach (8.106). A light correction channel replaces the stock
+  full-state resend: **0 resends a race**, against 7 to 9 without it.
 - **One switch.** A server's `worldwide On` turns all of it on for the
   clients that join it and refuses the others; run end to end (8.97).
 - **The confirmed world holds.** 0.000 units and no kart state off in every
   driven race since 8.94, on Skyscraper Leaps and Opulence. The drift's
   mechanisms were found and fixed one by one (8.31, 8.58, 8.59, 8.76, 8.93).
-- **The cost, on the heaviest map.** Driven on Opulence, a kept pass is 6.9
-  to 7.6 ms, 127 to 131 frames a second; 5.6 to 6.4 ms, 133 to 137, with
-  B2's raw snapshots (8.94, 8.95) -- against 25 to 35 ms and about 10 frames
-  a second when every pass was rebuilt (8.62-8.77).
+- **The picture.** The stutter Gibax still saw was no interpolation at all
+  while a speculation was kept (8.102); fixed, the kart is drawn in even
+  steps as without prediction (8.103): "largement plus fluide". The rebuilds
+  at a level's start came from predicting on a loopback under a depth floor;
+  gone (8.105 to 8.107).
+- **The cost.** A kept pass is one tic and one save: about 2 ms on Skyscraper
+  Leaps at every latency, 144 frames a second (8.107); 5.6 to 7.6 ms on
+  Opulence, 127 to 137 frames a second (8.94, 8.95) -- against 25 to 35 ms
+  and about 10 frames a second when every pass was rebuilt (8.62-8.77).
 - **Unattended bench.** Six bots move the world without a driver, so a
   measurement can be repeated instead of being n=1.
-- **Open:** a slight stutter the driver still sees (8.99); everything that
-  needs a second human or a real network; the cost at sixteen karts; and
-  vanilla compatibility's release base.
+- **A title screen of its own** (not netcode): a flash brings in WORLDWIDE's
+  Earth and ring around the logo, from an optional `data/worldwide.pk3`
+  (`968dc2063`).
+- **Open:** everything that needs a second human or a real network; the
+  `MT_PLAYER` alerts at the join; sixteen karts; the release base. The audit
+  of 2026-09-30 orders them below.
 
 ## Ground rules for every step
 
@@ -53,72 +63,84 @@ docs entry point and `ROLLBACK.md` live in the private notes only.
 
 ## Next, in order
 
-State on 2026-09-30. Items 1 to 9 of the previous list (2026-09-21 to
-2026-09-29) are done or folded below; their record is `WORLDWIDE.md` 8.34 to
-8.100 -- the cleancmds fix and the leak soak (8.34-8.37), the drift's
-mechanism on Skyscraper Leaps (8.44, 8.45), the history races (8.46-8.50),
-seven maps soaked and the restore's leaks fixed (8.51-8.62), the cost
-instruments and track A (8.60-8.79), R1 (8.84-8.92), B2 up to raw snapshots
-(8.81-8.95), and WORLDWIDE mode (8.80, 8.96, 8.97). **Every launch is asked
-for first.**
+State on 2026-09-30, evening, from an audit of what an alpha still needs.
+Items 1 and 2 of the list before it are done -- the stutter (8.102, 8.103)
+and the rebuilds before the race (8.105 to 8.107) -- except the join's
+alerts, item 1 here; its other items are folded below. **Every launch is
+asked for first.**
 
-1. **The stutter** (8.99). **Ready on the measuring machine:** install
-   `b1c0c7444` (CI run 36683749563; it carries item 2's instrument too --
-   `771bec680`, CI run 36637283049, green, if it fails) and check its sha;
-   then, in one
-   session, each asked for: `playtest.sh wwwindows`, driven, and
-   `playtest.sh frames_off`, driven -- the control, with no prediction. Both
-   run on Skyscraper Leaps and both print 8.100's drawn-step lines
-   (`wwwindows` cumulative from the join, `frames_off` reset every window).
-   Predictions in 8.100. Then, by what it shows:
-   - the kart irregular where the view is regular, mostly on frames that
-     carry a pass: the kart's interpolation across a kept pass -- what
-     `R_InterpolateMobjState` is given when the head advances;
-   - both irregular together on those frames: the frame pacing -- read the
-     render time after the pass, or cap the frame rate at a multiple of 35;
-   - as irregular in the control: not the netcode;
-   - the view stepping back where the kart does not: the camera (8.78).
-   If the head advances unevenly from one pass to the next, the candidate is
-   entity interpolation (Gambetta) applied to our own timeline: draw a fixed
-   fraction of a tic behind the head, between the last speculated states
-   kept. And R1's first gap (item 4) if the newest input reaches the picture
-   late.
-2. **Before the race**: the 1 to 4 `PARANOIA` lines at the join -- the entry
-   run twice around a restore (8.97) -- and the ~200 rebuilds of the join and
-   the waiting map (8.99). **First where they fall**: `b1c0c7444` (8.101)
-   files every pass by the level's phase -- join, intro, POSITION, race,
-   finished -- and item 1's `wwwindows` race reads it. Then, by its
-   predictions: if the intro holds most of them, stop
-   predicting in the intro (Gibax's idea: nothing between the results and
-   POSITION; outside a level nothing is predicted already) and start again
-   in its white fade; if the join does, fix the join.
-3. **A second human.** Write a switch that guesses the bots as a remote human
-   is guessed (their last input repeated), to see unattended the rebuilds and
-   the shaking a remote human would cause; then a race with two people on two
-   machines, and one driven from the host (Phase D). How remote karts are
-   drawn is decided after that (Phase D).
-4. **B2 on by default, and R1's gaps.** B2: the double claim (count only the
+**Blocking an alpha:**
+
+1. **The `MT_PLAYER` alerts at the join** (8.97, 8.109, 8.110): 1 to 18
+   objects a race whose reference count goes to -1 on the client, between
+   the join and the race map; none in a race, none on the server. First an
+   instrument -- which reference is dropped, around which restore or
+   rebuild -- then the fix. A count below zero can end in a use after free,
+   and strangers joining and leaving will run this path far more often than
+   the bench does.
+2. **A second human.** (a) A switch that guesses the bots as a remote human
+   is guessed -- their last input repeated -- to see unattended the rebuilds
+   and the shaking a remote human would cause. (b) Two people on two
+   machines, on a LAN. (c) The same over the Internet. (d) One of them
+   driving on the host (Phase D). How remote karts are drawn is decided
+   after that (Phase D).
+3. **A real network in the harness**: jitter and loss -- `rollback_lag` only
+   delays. Then R2, the samples filed by sequence number, if R1 slips when
+   the server's filing is not steady.
+4. **The release base** (*Compatibility*, below): the branch rebased on the
+   release the public servers run, and its release-config build; then a
+   stock client refused with a readable message, a WORLDWIDE client playing
+   delay-based on a vanilla server, a WORLDWIDE build hosting in vanilla
+   mode for stock clients, and the leave putting the settings back -- none
+   checked yet.
+5. **The alpha kit** (Phase F): a zip of the exe, `worldwide.pk3` and a
+   notice, and none of Kart Krew's files; how to host (`worldwide On` is a
+   console variable: written steps at least); how to join; what to report
+   and how to send `latest-log.txt`; the list of what is known broken; a
+   version label on the title in place of the development revision.
+
+**Strongly advised before announcing:**
+
+6. **Sixteen karts late in a race** (Phase B's gate), measured up to nine
+   only. If it does not fit, the alpha's lobby is capped -- eight -- and
+   says so.
+7. **The history's cap** (8.107): past about 340 ms of round trip,
+   `rollback_history 12` leaves the drawn world behind the newest input
+   (about 5 tics at 428 ms). Raise it (up to 34) or set it from the round
+   trip; a rebuild then goes deeper. A worldwide lobby will have such
+   players.
+8. **Breadth, as far as the alpha's scope** (Phase C): items used on purpose
+   (the roulette under speculation), and two or three more maps driven --
+   water, polyobjects, executors. Battle, Grand Prix and Encore stay out of
+   the alpha unless they are run.
+
+**Order of work:** 1 and 2(a), which need nobody; 3; 4; 2(b) to 2(d) with a
+second person; 6 and 7; 5; then the announcement. **Proposed scope** (the
+audit's, not decided): Race only, Windows, eight players at most unless 6
+says sixteen, and the known-broken list stated up front.
+
+**Then, not blocking:**
+
+9. **B2 on by default and R1's gaps.** B2: the double claim (count only the
    claim that stays), the players-block difference (9 of 1137 restores),
    `floorspriteslope`, the level interpolators (8.88, 8.93, 8.94); then
    `soak.sh leakraw` and `wwraw` again, and `keepraw` in WORLDWIDE mode. R1:
    the depth from the tics R1 gives, and the instrument counting the same way
    (⚠ under 8.89; the measuring machine's `wip/histgaps` as a reference).
-5. **A real network**: jitter and loss in the harness -- `rollback_lag` only
-   delays -- then R2, the samples filed by sequence number, so the replay
-   stays exact when the server's filing is not steady.
-6. **Phase B**: sixteen karts late in a race. The tic itself (Opulence's
-   decorations, 83% of it) is now most of a kept pass.
-7. **Phase C and compatibility**: Battle, Grand Prix, Encore, items used on
-   purpose, driven races on other maps; the release base, a WORLDWIDE client
-   on a real vanilla server, a menu entry and a mark in the server browser,
-   and the leave (settings put back) checked.
-8. **Left open, not blocking**: the Garden Top rider (8.56); Coastal Temple's
-   resim failures (8.57); `chainorder_block` (8.58); a sound cut when a
-   speculated tic removes its object (8.73); the network load not counting a
-   delayed executor's caller (8.88); the slow save of 8.78 (2.5 to 2.9 ms
-   since 8.84, never bisected); the correction-rate sweep (`rollback_correct
-   8`, `16`, `35`), owed since 2026-09-10; Phase A's first *Done when*
-   clause.
+10. **Small, seen**: "`*Guest entered the game.`" printed more than once a
+    join on the client -- 1 to 5 times, 17 at 15 tics; `rollback_chat`
+    watches it (8.109, 8.110); the drawn kart's long steps, 430 to 760 a
+    window against about 263 without prediction (8.103, 8.107);
+    `rollback_keepearly`, off, to remove or keep; a predicting client
+    records no replay (8.96); the title's "WORLDWIDE" banner a little
+    pixelated -- the ring's picture scaled down about five times.
+11. **Left open**: the Garden Top rider (8.56); Coastal Temple's resim
+    failures (8.57); `chainorder_block` (8.58); a sound cut when a
+    speculated tic removes its object (8.73); the network load not counting
+    a delayed executor's caller (8.88); the slow save of 8.78 (2.5 to 2.9 ms
+    since 8.84, never bisected); the correction-rate sweep
+    (`rollback_correct 8`, `16`, `35`), owed since 2026-09-10; Phase A's
+    first *Done when* clause.
 
 ---
 
@@ -217,7 +239,7 @@ to 16 ms a pass at nine karts, and it grows with latency. With
 there are 0 to 1 a window of 1000 tics (8.92, 8.99).
 
 **Done: B2**, raw snapshots of the level pools (8.81-8.95): a save from 2.9
-to 1.1 ms, a restore from about 6.5 to 1.9 ms, off by default until item 4
+to 1.1 ms, a restore from about 6.5 to 1.9 ms, off by default until item 9
 of *Next, in order*. **The next lever is the tic itself.**
 
 **Then two structural levers, in this order:**
@@ -356,9 +378,11 @@ the compatibility section.
 
 **Needs C**, and no log can finish it.
 
-- **The stutter left** (8.99): "le kart avait toujours l'impression de
-  rollback très très légèrement ... c'est jouable, mais ça se remarque". Not
-  a rebuild. *Next, in order*, item 1.
+- **The stutter** (8.99): "le kart avait toujours l'impression de rollback
+  très très légèrement". It was no interpolation at all while a speculation
+  was kept (8.102); fixed, "largement plus fluide", the kart drawn in even
+  steps as without prediction (8.103). Left: a few more long steps than
+  without prediction (*Next, in order*, item 10).
 - **Correction smoothing** (`rollback_smooth`): written, never measured ("maybe
   ça marche"). Since 8.94 no correction moves a kart in a driven race; it
   matters again with remote humans. Measure it against a control in the same
@@ -372,7 +396,9 @@ the compatibility section.
   collisions are resolved, which a racing game feels. Lag compensation does
   not apply: the simulation is a deterministic lockstep, the confirmed world
   decides, and nobody's view can be rewound for them.
-- **The depth**: which lead feels best, which feeds back into B.
+- **The depth**: "parfait" at every latency of the sweep, 0 to 428 ms
+  (8.107); past about 340 ms the history's cap decides it (*Next, in order*,
+  item 7). Which lead feels best feeds back into B.
 - **The inputs still in flight** (`rollback_history`, 8.39): the speculation
   replays every input sent but not yet applied, instead of repeating the
   newest, so quick flicks and releases are drawn as the server will play
@@ -410,6 +436,9 @@ setting.
 - a way to collect logs without asking for file paths;
 - a statement of what is known broken, so reports are about the rest.
 
+*Next, in order*, item 5, spells the kit out, with the audit's proposed
+scope.
+
 **Done when:** somebody who is not Gibax has played it and reported something
 useful.
 
@@ -439,7 +468,7 @@ carried its prediction forward; the two-clock pivot removed the problem it was
 for. Under the compatibility policy a WORLDWIDE server may change the wire
 between WORLDWIDE peers, so this is no longer a compatibility question -- it is
 a cost with nothing to buy. Reopen it only if Phase D shows remote karts need
-real state rather than prediction. R2 (*Next, in order*, item 5) takes back a
+real state rather than prediction. R2 (*Next, in order*, item 3) takes back a
 narrow part of it -- the samples numbered, so the client knows which tic the
 server filed each on -- with no server-side buffer.
 
@@ -458,4 +487,4 @@ far. Only worth revisiting if D fails in a way B cannot pay for.
 - **A person is required for D**, and for every judgement of feel.
 - **No second human has played it yet.** Every driven race is one person
   against bots; a remote human is guessed, and how that looks and what it
-  costs is unknown (*Next, in order*, item 3).
+  costs is unknown (*Next, in order*, item 2).

@@ -456,7 +456,11 @@ of repeating your newest input over every speculated tic (`WORLDWIDE.md` 8.39).
 It finds which input the server applied on the newest tic it has sent by the
 leveltime stamp every ticcmd carries, and replays everything you sent after
 it. The speculation then reaches the tic your newest input will land on --
-never below `rollback_twoclock`, never above `maxdepth` (capped at 34).
+one tic at least, never above `maxdepth` (capped at 34). Since `da5922575`
+(`WORLDWIDE.md` 8.106), `rollback_twoclock` is no longer its floor: with a
+round trip shorter than it, the floor made the speculation guess this
+machine's own input and rebuild at every change (8.105). Without the history,
+the depth is `rollback_twoclock`.
 
 That tic moves with the network's jitter, so the command does not chase it:
 it holds the drawn tic's **lead over the clock** at the largest one asked for
@@ -484,6 +488,10 @@ jitter (`WORLDWIDE.md` 8.40, 8.41).
   the server), how many carry the same stamp as the one before, and on how
   many passes the anchor matched more than one sample.
 - Setting it resets those counts, so the same race can be read off then on.
+- Measured from 0 to 428 ms of lag, driven (8.107): the depth follows the
+  round trip up to 285 ms, and nothing is guessed. At 428 ms, a round trip
+  of 17 tics, the cap of 12 cuts every pass, and the drawn world is about
+  5 tics behind the newest input. For such a round trip, a higher value.
 - Suggested value: `12`.
 
 ### `rollback_histreal [0|1]`
@@ -532,6 +540,18 @@ and the whole speculation again.
   purpose. The field lists (here and in `rollback_hits`) name the flag as
   `received`.
 - Setting it resets the counts.
+- **What is drawn and heard.** From `020b1d653` (`WORLDWIDE.md` 8.102,
+  8.103), the picture is interpolated between two kept passes as between
+  two tics; before, it held still between passes and jumped a tic at each.
+  A tic's sounds and chat lines come the first time this machine runs that
+  tic, never again on a rebuild (8.73). From `af4104553` (8.108, 8.109),
+  that rule holds inside a tic only, so the menus and the title card are
+  heard.
+- From `f13231534` (8.109, 8.110), in two-clock mode, each chat line a tic
+  writes prints a `rollback_chat:` line, without a command: the tic and its
+  leveltime, speculated or confirmed, the gamestate, the horizon, the
+  frontier, the standing speculation's head, and how many lines were held
+  back so far.
 - Measured on Skyscraper Leaps with `rollback_history 12`: 99 to 100% of
   passes kept, a pass of 1.9 to 2.4 ms (each save counted once), as many
   frames as with no speculation, drift 0.000 (8.76, 8.77). Driven on
@@ -587,6 +607,10 @@ what let the rollback loop stay on without ever triggering.
 - Warns if packets were lost (queue full): an artificial delay then becomes
   artificial packet loss, and the two would look alike in the results without
   this warning.
+- A delay only: no jitter and no loss, so it cannot stand in for a real
+  network (`ROADMAP.md`, *Next, in order*, item 3). The WORLDWIDE scenarios
+  set it first, before the join, since 8.106; `playtest.sh <scenario>
+  lag=<tics>` swaps it in any scenario.
 
 ### `rollback_maxdepth [tics]`
 How far back a rollback is allowed to rewind. Beyond this depth, the latency
