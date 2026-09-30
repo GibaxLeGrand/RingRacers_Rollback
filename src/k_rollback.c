@@ -4244,11 +4244,126 @@ void K_RollbackNoteObjectTic(void)
 		g_objtics++;
 }
 
+// ---- where in a level the passes fall ----
+//
+// Asked by Gibax on 2026-09-30: prediction runs through the whole level, the
+// title card's fly-in and the stretch after the finish included, where this
+// machine's input moves nothing -- could it stop there, and start again at
+// POSITION? The rebuilds before the race (about 200 in 1599 passes in
+// WORLDWIDE mode, WORLDWIDE.md 8.99) mix the join, the waiting map, and the
+// race map's intro and POSITION, so first where they fall. Every pass is filed
+// under the phase of the level at the frontier it starts from; within a level
+// the phase only moves forward, so a pass that reads the head a few tics ahead
+// cannot file it back and forth. A line is printed when the phase changes --
+// so a PARANOIA line, or anything else in the log, can be placed -- and a
+// level's table when the next level, or the same one restarted, begins.
+enum
+{
+	KPHASE_JOIN,        // this machine's player not in the game yet, or spectating
+	KPHASE_INTRO,       // the title card and the camera's fly-in (leveltime < introtime)
+	KPHASE_POSITION,    // POSITION (leveltime < starttime), where karts drive
+	KPHASE_RACE,
+	KPHASE_FINISHED,    // this machine's player has crossed the line (exiting)
+	NUMKPHASES
+};
+enum
+{
+	KPC_PASSES, KPC_KEPT,
+	KPC_SELF, KPC_OTHERS, KPC_CORRECTION,   // rebuilt: this machine's input, another's, a correction
+	NUMKPC
+};
+static const char *const g_phasename[NUMKPHASES] = {
+	"join", "intro", "POSITION", "race", "finished"
+};
+static uint32_t g_phasecount[NUMKPHASES][NUMKPC];
+static tic_t g_phasefrom[NUMKPHASES], g_phaseto[NUMKPHASES];   // the leveltimes seen in each
+static int32_t g_phase = -1;        // the phase of the latest pass; -1 before any in this level
+static int16_t g_phasemap;          // the level it is in
+static tic_t g_phaselevel;          // the latest leveltime seen, to see a restart
+
+static const char *K_PhaseMapName(int32_t map)
+{
+	const char *name = G_BuildMapName(map);
+
+	return (name != NULL) ? name : "?";
+}
+
+static void K_PrintPhases(const char *when)
+{
+	int32_t ph;
+
+	for (ph = 0; ph < NUMKPHASES; ph++)
+	{
+		const uint32_t *c = g_phasecount[ph];
+		const uint32_t named = c[KPC_KEPT] + c[KPC_SELF] + c[KPC_OTHERS] + c[KPC_CORRECTION];
+
+		if (c[KPC_PASSES] == 0)
+			continue;
+
+		CONS_Printf("rollback_phases: %s, %s, %s (leveltime %u to %u) -- %u passes, %u kept; "
+			"rebuilt for this machine's input %u, another's %u, a correction %u, otherwise %u\n",
+			K_PhaseMapName(g_phasemap), when, g_phasename[ph],
+			(uint32_t)g_phasefrom[ph], (uint32_t)g_phaseto[ph], c[KPC_PASSES], c[KPC_KEPT],
+			c[KPC_SELF], c[KPC_OTHERS], c[KPC_CORRECTION],
+			(c[KPC_PASSES] > named) ? c[KPC_PASSES] - named : 0);
+	}
+}
+
+static void K_ResetPhases(void)
+{
+	memset(g_phasecount, 0, sizeof g_phasecount);
+	g_phase = -1;
+}
+
+/** The phase of the level at a frontier whose leveltime is lt, never behind
+  * the phase of the passes before it in the same level. A new level -- or the
+  * same one restarted, its clock back near the start -- prints the last one's
+  * table and starts another. */
+static int32_t K_PassPhase(tic_t lt)
+{
+	const int32_t who = g_localplayers[0];
+	int32_t ph;
+
+	if (g_phase >= 0 && (gamemap != g_phasemap || lt + 2*TICRATE < g_phaselevel))
+	{
+		K_PrintPhases("ended");
+		K_ResetPhases();
+	}
+
+	if (who < 0 || who >= MAXPLAYERS || playeringame[who] == false || players[who].spectator)
+		ph = KPHASE_JOIN;
+	else if (players[who].exiting)
+		ph = KPHASE_FINISHED;
+	else if (lt < introtime)
+		ph = KPHASE_INTRO;
+	else if (lt < starttime)
+		ph = KPHASE_POSITION;
+	else
+		ph = KPHASE_RACE;
+
+	if (ph < g_phase)
+		ph = g_phase;
+
+	if (ph != g_phase)
+	{
+		CONS_Printf("rollback_phases: %s -- %s from leveltime %u, tic %u\n",
+			K_PhaseMapName(gamemap), g_phasename[ph], (uint32_t)lt, (uint32_t)gametic);
+		g_phase = ph;
+		g_phasemap = gamemap;
+		g_phasefrom[ph] = lt;
+	}
+
+	g_phaseto[ph] = lt;
+	g_phaselevel = lt;
+	return ph;
+}
+
 /** Switches rollback_keepspec, and forgets every record and count it had.
   * Shared by the command and by WORLDWIDE mode. */
 static void K_SetKeepSpec(dboolean on)
 {
 	g_keepspec = on;
+	K_ResetPhases();
 	memset(g_keepcount, 0, sizeof g_keepcount);
 	memset(g_keeptic, 0xff, sizeof g_keeptic);
 	g_keepcorrnoop = 0;
@@ -4297,6 +4412,9 @@ static void Command_RollbackKeepSpec_f(void)
 	CONS_Printf("rollback_keepspec: rollback_keepearly %s -- %u standing speculations run "
 		"again from a tic this machine's newest input changed, %u tics in all\n",
 		g_keepearly ? "on" : "off", g_keepearlyn, g_keepearlytics);
+
+	if (g_phase >= 0)
+		K_PrintPhases("so far");
 
 	if (g_keepcount[KEEP_INPUT] == 0)
 		return;
@@ -6161,11 +6279,14 @@ static dboolean K_KeepSameInput(int32_t player, const ticcmd_t *a, const ticcmd_
 	return true;
 }
 
-/** A rebuild for a wrong input: who was wrong on the first wrong tic, and how. */
-static void K_NoteKeepMiss(tic_t from, tic_t tic)
+/** A rebuild for a wrong input: who was wrong on the first wrong tic, and how.
+  * Returns KPC_SELF when this machine's own input was among them, KPC_OTHERS
+  * when only others' were, -1 when none differed (a player came or went). */
+static int32_t K_NoteKeepMiss(tic_t from, tic_t tic)
 {
 	const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
 	const int32_t at = (int32_t)(tic - from);
+	int32_t found = -1;
 	int32_t p;
 
 	g_keepmissat[(at < 4) ? at : 4]++;
@@ -6183,6 +6304,9 @@ static void K_NoteKeepMiss(tic_t from, tic_t tic)
 		who = (p == g_localplayers[0]) ? 0 : (players[p].bot ? 1 : 2);
 		g_keepmisswho[who]++;
 		K_CountWrongFields(g_keepmissfield[who], ran, real);
+
+		if (found != KPC_SELF)
+			found = (who == 0) ? KPC_SELF : KPC_OTHERS;
 
 		if (who == 0 && g_keepsrc[s] < NUMKEEPSRC)
 			g_keepmisssrc[g_keepsrc[s]]++;
@@ -6206,6 +6330,8 @@ static void K_NoteKeepMiss(tic_t from, tic_t tic)
 				g_keepmissshift[KEEPSHIFT_OLDER2]++;
 		}
 	}
+
+	return found;
 }
 
 static int32_t K_KeepCheckTic(tic_t tic)
@@ -6235,6 +6361,7 @@ dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds)
 {
 	const tic_t from = g_confirmedtic;
 	int32_t reason = KEEP_KEPT;
+	int32_t missed = -1;
 	tic_t t;
 
 	if (g_keeparmed == false)
@@ -6266,7 +6393,7 @@ dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds)
 			reason = K_KeepCheckTic(t);
 
 			if (reason == KEEP_INPUT)
-				K_NoteKeepMiss(from, t);
+				missed = K_NoteKeepMiss(from, t);
 		}
 
 		// The new frontier's start has to be on file, to come back to. At the
@@ -6278,6 +6405,12 @@ dboolean K_RollbackKeepDecide(tic_t upto, dboolean textcmds)
 	}
 
 	g_keepcount[reason]++;
+
+	// Where in the level: the frontier's leveltime is the clock now.
+	if (reason == KEEP_CORRECTION)
+		g_phasecount[K_PassPhase(leveltime)][KPC_CORRECTION]++;
+	else if (reason == KEEP_INPUT && missed >= 0)
+		g_phasecount[K_PassPhase(leveltime)][missed]++;
 
 	if (reason != KEEP_KEPT)
 	{
@@ -6363,6 +6496,20 @@ static void K_KeepEarlyCheck(tic_t frontier)
 	}
 }
 
+/** Files this pass under the phase of the level at its frontier: with a kept
+  * pass the world is at the head, as many tics past it as the frontier is
+  * below. */
+static void K_NotePassPhase(void)
+{
+	const tic_t above = g_keepkept ? gametic - g_confirmedtic : 0;
+	const int32_t ph = K_PassPhase((leveltime > above) ? leveltime - above : 0);
+
+	g_phasecount[ph][KPC_PASSES]++;
+
+	if (g_keepkept)
+		g_phasecount[ph][KPC_KEPT]++;
+}
+
 /** A kept pass: the frontier has moved on, the world is still at the head, and
   * only the tics the clock now asks for beyond it are run. */
 static void K_KeepExtend(void)
@@ -6421,6 +6568,8 @@ void K_RollbackSpeculate(void)
 
 	if (K_RollbackTwoClock() <= 0)
 		return;
+
+	K_NotePassPhase();
 
 	if (g_keepkept)
 	{
