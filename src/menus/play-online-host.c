@@ -16,6 +16,7 @@
 #include "../mserv.h"
 #include "../v_video.h"
 #include "../m_easing.h"
+#include "../d_clisrv.h" // cv_worldwide
 
 static void draw_routine(void)
 {
@@ -47,6 +48,15 @@ static void draw_routine(void)
 		98,
 		!CV_IsSetToDefault(&cv_advertise) ? warningflags : highlightflags,
 		va("(Public: %s)", cv_advertise.string)
+	);
+
+	// The server's one switch, set in Server Options > Advanced (WORLDWIDE.md
+	// 8.80): under the line it belongs to, which has no room left for it.
+	V_DrawRightAlignedThinString(
+		294 + tx,
+		98 + 11,
+		!CV_IsSetToDefault(&cv_worldwide) ? warningflags : highlightflags,
+		va("(WORLDWIDE: %s)", cv_worldwide.string)
 	);
 
 	M_DrawMasterServerReminder();

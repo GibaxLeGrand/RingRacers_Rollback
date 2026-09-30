@@ -595,11 +595,14 @@ consvar_t cv_sleep = Server("cpusleep", "1").min_max(0, 1000/TICRATE);
 
 // WORLDWIDE mode: client-side prediction and the light correction channel, and
 // WORLDWIDE clients only (k_rollback.c, K_WorldwideServer). A client reads it
-// when it joins, so it cannot change while anybody else is connected. Not
-// saved: set once, it would put every later test server in the mode, and a
-// control run (nospec) would then predict without anyone having asked for it.
+// when it joins, so it cannot change while anybody else is connected. Saved,
+// since the menus set it (Server Options > Advanced) and a host expects it to
+// stay. A server variable, not a netvar: a client never takes the server's
+// value, so only what it set itself is saved. The test harness starts every
+// server with it off and lets the WORLDWIDE scenarios turn it on, or a saved
+// value would put a control run in the mode.
 void Worldwide_OnChange(void);
-consvar_t cv_worldwide = Server("worldwide", "Off").on_off().dont_save().onchange_noinit(Worldwide_OnChange);
+consvar_t cv_worldwide = Server("worldwide", "Off").on_off().onchange_noinit(Worldwide_OnChange);
 
 
 //
