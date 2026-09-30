@@ -6326,3 +6326,46 @@ their first 1600 tics on a loopback by accident.)
   hence few rebuilds; Gibax should feel the input late by about 3 tics.
 - The pass's cost grows with the depth only on rebuilds; kept passes stay at
   one tic and one save (about 2 ms on Skyscraper Leaps).
+
+### 8.107 The latency sweep: clean from 0 to 428 ms, and the history's cap at 15 tics
+
+Pushed on Gibax's go-ahead ("oui, pousse, installe et lance les cinq, je
+pilote") as `da5922575` (`737455184` put on top of the docs), CI run
+36744374272 green; installed (sha256 `493b4700...`, the previous exe kept as
+`.bak_020b1d6`). `playtest.sh wwwindows dedicated lag=N`, N = 0, 3, 6, 10,
+15, **all five driven by Gibax**, one after the other; processor at 13%; no
+crash; each log confirms its latency (`rollback_lag: holding every peer
+packet for N tics`). Predictions in 8.106.
+
+| latency | depth | inputs in flight | cut by the cap | kept, race windows | rebuilt at the race map's start (first ~800 tics) | pass | frames in 1000 tics |
+|---|---|---|---|---|---|---|---|
+| 0 (0 ms) | 1.97 to 2.02 | 1.54 to 1.89 | 0 | 1000 / 1000 / 1000 | **1** | 1.98 to 2.23 ms | 4110 to 4114 |
+| 3 (85 ms) | 4.97 to 5.02 | 4.33 to 4.80 | 0 | 1000 / 1000 / 1000 | **2** | 1.88 to 2.46 | 4108 to 4111 |
+| 6 (171 ms) | 7.99 to 8.06 | 7.45 to 7.95 | 0 to 6 | 1000 / 1000 / 999 | **4** | 2.10 to 2.22 | 4108 to 4113 |
+| 10 (285 ms) | 11.96 to 12.01 | 11.40 to 11.94 | 0 | 1000 / 1000 / 1000 | **7** | 2.06 to 2.25 | 4111 to 4112 |
+| 15 (428 ms) | 11.99 to 12.01 | 16.49 to 17.20 | **every pass** | 1000 / 1000 / 994 | **9** | 1.94 to 2.27 | 4081 to 4113 |
+
+No kart state off and no kart put back in any window; the kart drawn in
+even steps at every latency (2350 to 2610 even, 3 to 32 short, 466 to 757
+long, 0 to 4 backwards a window, the frames without a pass).
+
+- **Holds: from 0 to 10 tics, the depth follows the round trip** (about 2,
+  5, 8, 12 for 1.5, 4.5, 7.7, 11.6 inputs in flight) and **nothing is
+  guessed**: 0 wrong inputs of this machine's in 12 of 12 race windows but
+  one (1, guessed, at 6 tics). **The start's rebuilds are gone**: 1 to 7 in
+  the race map's first 800 tics, against 265 in 8.105 -- no floor, and the
+  latency from the join.
+- **At 15 tics the cap cuts every pass**: 12 tics deep for about 17 in
+  flight, so **the drawn world is about 5 tics behind the newest input**
+  (8.106 said about 3: the round trip at 15 tics of lag is 17, not 15). No
+  guessing, few rebuilds (6 in the last window), but 49 jumps of the drawn
+  world in that window. The latency a driver feels there is the cap's, not
+  the network's alone.
+- **The pass costs the same at every latency**: one tic and one save, about
+  2 ms, 144 frames a second. A kept speculation's cost does not grow with
+  the round trip; only a rebuild's would.
+
+**So:** with the history's depth free of the floor, prediction is clean from
+a loopback to 285 ms. Past about 340 ms, `rollback_history 12` is what
+limits it; raising the cap (up to 34, 8.39) or setting it from the round
+trip would carry it further, at the cost of deeper rebuilds when one comes.
