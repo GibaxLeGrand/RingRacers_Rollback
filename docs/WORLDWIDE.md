@@ -6529,3 +6529,77 @@ crash.
   - State off 0 in 1976, 2000 and 2000 kart samples; nothing put back.
   - The drawn kart without a pass: 625 to 671 long steps a window, as
     before.
+
+### 8.111 The `MT_PLAYER` alerts at the join: read in the code, and an instrument
+
+Read on 2026-09-30, evening; nothing launched. The first item of
+`ROADMAP.md`, *Next, in order*.
+
+- **What the alert says.** `PARANOIA/P_SetTarget: … MT_PLAYER
+  P_RemoveThinkerDelayed references=-1 (p_mobj.c:10831)`, then the same
+  body from `P_RemoveThinkerDelayed`. Line 10831 is `P_MobjThinker` letting
+  go of its `target` because that target was removed. So an object still
+  pointed at a removed kart body whose count was already 0: **one
+  reference was let go of without ever having been counted**.
+- **Why no crash so far.** `P_RemoveThinkerDelayed` frees a thinker only at
+  exactly 0, so a body at -1 is never freed; it leaks until the next load
+  purges it. In the other order, the count reaches 0 first while a holder
+  still points at the body. The body is then freed, and the holder reads
+  freed memory. That is the use after free the audit feared.
+- **A candidate, from the code.**
+  - `g_tm.thing`, `g_tm.floorthing` and `g_tm.hitthing` hold counted
+    references (`P_SetTarget`). `P_MapEnd` lets go of `thing` after every
+    tic, **but not of `floorthing` or `hitthing`**. `floorthing` is the
+    object whose top gave the last position check its floor, `hitthing` the
+    same object when it blocked the move. Both are let go of at the start of
+    every position check and every `P_MobjThinker`
+    (`p_map.c:2361-2362`, `p_mobj.c:10907-10908`), so between tics they
+    hold whatever the tic's last check left there.
+  - A load of the network archive frees every object and brings the saved
+    ones back through the level pools, likely at the same addresses. It
+    does not touch those pointers.
+  - A pointer left holding a freed object would then, at its next change
+    -- the first thinker run after the load -- let go of whatever lives at
+    that address: a reference it never held. If that is a kart's body, the
+    body goes to -1 when it is removed and its holders let it go.
+  - Every rebuild of the speculation is such a load, and the grid's start
+    (join, POSITION) is where the rebuilds are. But
+    `frames_off` and `vanillajoin`, which predict nothing, still had one
+    body at -1. The join's own load (`CL_LoadReceivedSavegame`) is a load
+    too. **A hypothesis: nothing measured.**
+- **Instrument, `2ec71c310`** (local branch `wip/refs`, not pushed; syntax
+  checked with and without `PARANOIA`, 20 injected errors reported where
+  expected).
+  - **Around every `P_LoadNetGame`** (restores, the join's, a resend's):
+    what the three collision pointers hold before the load. After it, when
+    one still holds the same address and a live object sits there, one
+    line: `rollback_refs: the load of tic T left g_tm.<name> holding a
+    <type> (player p) it freed; a <type> (player q) lives at that address
+    now, with N references`.
+  - **In a `PARANOIA` build**, a ledger per kart body, by the file and
+    line `P_SetTarget` passes:
+    - every change of its count from the first time it is seen, the
+      loader's claims of `players[].mo` included;
+    - the tic and what was running (confirmed tic, speculated tic, replay,
+      load);
+    - its removal.
+
+    A body going below zero prints its ledger and what still points at it.
+  - The `rollback_keepspec` report ends with the counts: loads, how often
+    each collision pointer held an object and a live one sat at its address
+    after, and bodies below zero. 12 prints of each kind at most.
+- **Prediction, for `playtest.sh wwwindows dedicated` driven, and the
+  `frames_off` control.** The alerts as before: 1 to 18 bodies in the
+  WORLDWIDE race, 1 or 2 in the control.
+  - **If the hypothesis holds**, three things together:
+    - a `rollback_refs: the load of tic …` line before each body's alert,
+      naming `floorthing` or `hitthing`, with a kart at the address after;
+    - in that body's ledger, a `-1` at a line that lets go of
+      `g_tm.floorthing` or `g_tm.hitthing` (`p_mobj.c:10907-10908`,
+      `p_map.c:2361-2362`), on the first tic after the load, with no `+1`
+      there since the body was first seen in it;
+    - the one letting go of it at `p_mobj.c:10831` listed among what
+      still points at it.
+  - **If not**, the ledger names the site that let go without having
+    taken, or the claim that is missing, and the hypothesis is dropped.
+  - Nothing else changes: the instrument only counts and prints.
