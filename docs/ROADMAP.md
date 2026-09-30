@@ -63,7 +63,9 @@ instruments and track A (8.60-8.79), R1 (8.84-8.92), B2 up to raw snapshots
 for first.**
 
 1. **The stutter** (8.99). **Ready on the measuring machine:** install
-   `771bec680` (CI run 36637283049, green) and check its sha; then, in one
+   `b1c0c7444` (CI run 36683749563; it carries item 2's instrument too --
+   `771bec680`, CI run 36637283049, green, if it fails) and check its sha;
+   then, in one
    session, each asked for: `playtest.sh wwwindows`, driven, and
    `playtest.sh frames_off`, driven -- the control, with no prediction. Both
    run on Skyscraper Leaps and both print 8.100's drawn-step lines
@@ -83,11 +85,10 @@ for first.**
    late.
 2. **Before the race**: the 1 to 4 `PARANOIA` lines at the join -- the entry
    run twice around a restore (8.97) -- and the ~200 rebuilds of the join and
-   the waiting map (8.99). **First where they fall**: `78ca2f8a3` (8.101,
-   written, not pushed) files every pass by the level's phase -- join,
-   intro, POSITION, race, finished. Pushed before item 1's session, its
-   build replaces `771bec680` there and the same `wwwindows` race reads
-   both. Then, by its predictions: if the intro holds most of them, stop
+   the waiting map (8.99). **First where they fall**: `b1c0c7444` (8.101)
+   files every pass by the level's phase -- join, intro, POSITION, race,
+   finished -- and item 1's `wwwindows` race reads it. Then, by its
+   predictions: if the intro holds most of them, stop
    predicting in the intro (Gibax's idea: nothing between the results and
    POSITION; outside a level nothing is predicted already) and start again
    in its white fade; if the join does, fix the join.

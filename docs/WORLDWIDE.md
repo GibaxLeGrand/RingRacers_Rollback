@@ -45,11 +45,10 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 `rollback_smooth` (never measured).
 
 **Builds.** Installed on the measuring machine: `6209f1786` (8.99). **To
-install next: `771bec680`** (CI run 36637283049, green), which carries 8.100's
-instrument for what is drawn and `rollback_keepearly` off. Written, not
-pushed: `78ca2f8a3` on `wip/phases`, where in a level the passes fall
-(8.101); pushed before the measuring session, its build would replace
-`771bec680` there.
+install next: `b1c0c7444`** (CI run 36683749563), which carries 8.101's
+instrument for where in a level the passes fall, on top of `771bec680`'s --
+8.100's instrument for what is drawn and `rollback_keepearly` off. If its CI
+fails, `771bec680` (CI run 36637283049, green) for the stutter alone.
 
 **Measured and holding.**
 
@@ -97,7 +96,7 @@ pushed: `78ca2f8a3` on `wip/phases`, where in a level the passes fall
    POSITION: it already stops outside a level; inside, only the intro and
    the stretch after the finish would gain, and where the rebuilds fall --
    join, waiting map, intro, POSITION -- is not known. 8.101's instrument
-   (written, not pushed) files every pass by phase.
+   (`b1c0c7444`) files every pass by phase.
 3. **B2, before `rollback_rawsnap` goes on by default**: the players-block
    difference after 9 of 1137 raw restores on Opulence (8.90, 8.94), not
    explained; the double claim, one kart rebuilt at 67 references against 66
@@ -6123,3 +6122,8 @@ Nothing prints while nothing is predicted: `frames_off` has none.
 If the first holds, stopping prediction in the intro gains little and the
 join is where to look (*Next, in order*, item 2); if the intro holds most of
 them, stopping there -- and starting again in its white fade -- is the fix.
+
+⚠ Pushed the same day on Gibax's go-ahead ("pousse donc"), put on top of the
+docs as `b1c0c7444`; CI run 36683749563. The build to install for the
+measuring session is that one: the same `wwwindows` race reads 8.100's
+drawn steps and this section's phases.

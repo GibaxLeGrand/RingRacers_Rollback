@@ -544,7 +544,7 @@ and the whole speculation again.
   1000 tics (8.99). Off by default, and on in WORLDWIDE mode; not yet judged
   on a real network or against a remote human.
 - From `6209f1786`, the report ends with `rollback_keepearly`'s counts.
-- From `78ca2f8a3` (`WORLDWIDE.md` 8.101, not yet pushed), where in a level
+- From `b1c0c7444` (`WORLDWIDE.md` 8.101), where in a level
   the passes fall. Every pass is filed under the level's phase at the
   frontier it starts from -- `join` (this machine's player not in the game,
   or spectating), `intro` (before `introtime`), `POSITION` (before
