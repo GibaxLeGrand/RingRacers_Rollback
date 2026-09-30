@@ -6647,8 +6647,11 @@ static int32_t K_SpeculationDepth(int32_t ahead, tic_t frontier)
 	// tic the newest one will land on: the first tic the server has not sent,
 	// plus one tic per input. That tic jitters with the server's filing delay,
 	// so the lead over the clock is held instead (see g_histlead) and the depth
-	// is what reaches it. rollback_twoclock stays the floor, rollback_history
-	// the ceiling. Needs rollback_cleancmds: without it the tic the applied
+	// is what reaches it, rollback_history the ceiling. rollback_twoclock is
+	// not its floor (WORLDWIDE.md 8.105): on a round trip shorter than it, the
+	// tics past the newest input repeated it, a driver's next input made them
+	// wrong, and a kept speculation was rebuilt at every change -- the start
+	// of every WORLDWIDE race, run on a loopback. Needs rollback_cleancmds: without it the tic the applied
 	// input is read from may hold this machine's own overwrite instead of the
 	// server's.
 	if (ahead > 0 && g_histmax > 0 && g_cleancmds)
@@ -6723,8 +6726,9 @@ static int32_t K_SpeculationDepth(int32_t ahead, tic_t frontier)
 			g_histcapped++;
 		}
 
-		if (depth > ahead)
-			ahead = depth;
+		// As deep as the inputs in flight reach, one tic at least so there is
+		// a speculation to keep.
+		ahead = (depth > 1) ? depth : 1;
 
 		g_histdepthsum += (uint64_t)ahead;
 	}
