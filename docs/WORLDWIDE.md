@@ -6468,3 +6468,48 @@ in both folders (sha256 `b724ec90…`, the previous exe kept as
   - Two or more lines from confirmed passes would rule the hypothesis out.
     So would a line behind the horizon, which can only print when the
     WORLDWIDE branch of the rule is off.
+
+### 8.110 `rollback_chat` on a race: one line, on its first run; 28 PARANOIA lines at the join
+
+`f13231534` (8.109's instrument), installed in both folders (sha256
+`a5191154…`, the previous exe kept as `.bak_af41045`). `playtest.sh
+wwwindows dedicated`, RR_SkyscraperLeaps, `rollback_lag 6`, driven by Gibax,
+2026-09-30 19:17 (`playlog_wwwindows_20260930-191739_f132315.txt`). No
+crash.
+
+- **The join line: once.** The client wrote "`*Guest entered the game.`"
+  once, as did the server. One `rollback_chat` line:
+  - on tic 205 (leveltime 204), in a speculated pass;
+  - the horizon at 205, the frontier at 197, the standing speculation's
+    head at 205;
+  - 0 lines held back so far.
+
+  That is the join's first run, 8 tics above the frontier, in a
+  speculation that was then kept. No rerun of that tic wrote it again.
+- **So 8.109's hypothesis is neither confirmed nor refuted:** this race had
+  no extra copy to read. Across races the count is 1 to 5 at 0 to 10 tics,
+  and 17 at 15 tics. The instrument stays; it prints only when a tic writes
+  a line in two-clock mode.
+- **PARANOIA: 28 lines, 9 distinct `MT_PLAYER` mobjs** at `references=-1`
+  (`P_SetTarget` then `P_RemoveThinkerDelayed`). All of them fall between
+  the join and the first "Speeding off to level" (RR_TESTRUN, join and
+  POSITION), and none in the race. It is the join-time alert already open,
+  but with 9 mobjs where 1 or 2 is usual (the 15-tic race had 18, in 64
+  lines).
+  - Rebuilds for this machine's input: 3 in the join phase, 10 in
+    POSITION, plus 3 otherwise.
+  - 8.109's race had 2 and 7, plus 3 otherwise, with 2 mobjs.
+
+  The count does not follow the rebuilds in any simple way.
+- **The race.**
+
+  | window | kept | rebuilt | frame gaps over 16.7 ms | jumps | pass |
+  |---|---|---|---|---|---|
+  | 0 | 998/1000 | 2, for this machine's input (1 replayed, 1 guessed) | 3 (one 16.7-28.6, two 33.3-50) | 7 (10 tics) | 2.29 ms |
+  | 1 | 1000/1000 | 0 | 1 (33.3-50) | 0 | 2.23 ms |
+  | 2 | 1000/1000 | 0 | 0 | 0 | 2.36 ms |
+
+  - About 4100 frames a window, 8.0 tics deep.
+  - State off 0 in 1976, 2000 and 2000 kart samples; nothing put back.
+  - The drawn kart without a pass: 625 to 671 long steps a window, as
+    before.
