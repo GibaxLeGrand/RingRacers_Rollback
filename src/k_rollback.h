@@ -221,6 +221,10 @@ void K_RollbackUnspeculate(void);
   * ahead of what the server has confirmed. */
 void K_RollbackSpeculate(void);
 
+/** How many tics the last K_RollbackSpeculate ran: what is drawn moved on this
+  * pass when it is above zero (WORLDWIDE.md 8.102). */
+int32_t K_RollbackSpeculatedLastPass(void);
+
 /** True while a correction is re-running tics. Sound and other outside-the-world
   * effects should sit those out: the tic already happened once. */
 dboolean K_RollbackReplaying(void);

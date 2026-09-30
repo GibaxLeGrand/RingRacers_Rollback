@@ -7635,7 +7635,18 @@ dboolean TryRunTics(tic_t realtics)
 	// pass, unconditionally: the world was put back at the top of this function,
 	// and leaving it there would show the player the past.
 	if (K_RollbackTwoClock() > 0)
+	{
 		K_RollbackSpeculate();
+
+		// What is drawn is the speculation, and it just ran: the game goes on
+		// for the next frame whether or not the loop above ran a tic. A kept
+		// pass runs none, so the else above marked it stopped, and the next
+		// frame was drawn with no interpolation (d_main.cpp,
+		// timeisprogressing): the kart and the view held still between passes
+		// and jumped a whole tic at each (WORLDWIDE.md 8.102).
+		if (realtics && K_RollbackSpeculatedLastPass() > 0)
+			hu_stopped = false;
+	}
 
 	return ticking;
 }

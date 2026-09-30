@@ -6559,12 +6559,21 @@ static void K_KeepExtend(void)
 	K_NoteDrawnOffset();
 }
 
+static int32_t g_speclastpass;  // tics the last K_RollbackSpeculate ran
+
+int32_t K_RollbackSpeculatedLastPass(void)
+{
+	return g_speclastpass;
+}
+
 void K_RollbackSpeculate(void)
 {
 	int32_t ahead = g_nullspec ? 0 : K_RollbackTwoClock();
 	uint32_t savedbefore;
 	precise_t started;
 	int32_t i;
+
+	g_speclastpass = 0;
 
 	if (K_RollbackTwoClock() <= 0)
 		return;
@@ -6765,6 +6774,8 @@ static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 	const tic_t tic = gametic;
 	const int32_t s = (int32_t)(tic % ROLLBACK_TICS);
 	int32_t p;
+
+	g_speclastpass++;
 
 	if (g_keepspec)
 	{
