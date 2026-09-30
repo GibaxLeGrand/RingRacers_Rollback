@@ -6189,3 +6189,34 @@ cumulative reports):
   level's start, where stopping prediction until the start (and starting it
   again at the white fade) would remove them -- once the phases are told
   apart.
+
+### 8.103 The fix measured: the kart drawn in even steps, as without prediction
+
+Pushed on Gibax's go-ahead ("allez") as `020b1d653` (`9f3f8a1c1` put on top of
+the docs), CI run 36710607479 green; installed (sha256 `43e94680...`, the
+previous exe kept as `.bak_b1c0c74`). `wwwindows`, **driven by Gibax**;
+processor at 11%; no crash. Gibax finished the race inside the session (the
+harness saw the next map), so window 2 may end after the finish line.
+Prediction in 8.102.
+
+| kart as drawn, per window | without a pass: even / short / long / back | with a pass | 8.102, same build before the fix | `frames_off` (8.102) |
+|---|---|---|---|---|
+| w1 | 2646 / 31 / 430 / 0 | 989 / 11 / 0 / 0 | 0 / 3070 / 0 / 0 and 0 / 10 / 977 / 0 | 2793 / 39 / 263 / 2 and 976 / 11 / 5 / 2 |
+| w2 | 2561 / 31 / 507 / 3 | 979 / 13 / 4 / 1 | 0 / 3112 / 0 / 0 and 0 / 1 / 999 / 0 | 2821 / 28 / 263 / 0 and 986 / 9 / 4 / 0 |
+
+- **Holds: the kart is drawn as without prediction** -- even steps the rule
+  (about 3600 a window), short ones 1%, backwards 0 to 4; the view the same.
+  The steps between passes were held still before and move now: the
+  interpolation runs again.
+- **Long steps a little more common than without prediction**: 430 to 507
+  against about 263 a window. Not examined; a candidate is the pass's own
+  frame pacing, since a long step is one frame covering more time than
+  expected.
+- Windows 1 and 2: every pass kept, no rebuild, a pass of 2.0 to 2.1 ms,
+  4107 and 4111 frames. Window 0 held the race's start: 308 rebuilds, 689
+  of 1000 kept -- 8.102's finding again (the rebuilds are at a level's
+  start).
+
+**So what Gibax saw as a slight rollback was no interpolation at all while
+a speculation was kept**; it is gone. Left: the rebuilds at a level's start,
+and the few extra long steps.
