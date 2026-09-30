@@ -544,6 +544,18 @@ and the whole speculation again.
   1000 tics (8.99). Off by default, and on in WORLDWIDE mode; not yet judged
   on a real network or against a remote human.
 - From `6209f1786`, the report ends with `rollback_keepearly`'s counts.
+- From `78ca2f8a3` (`WORLDWIDE.md` 8.101, not yet pushed), where in a level
+  the passes fall. Every pass is filed under the level's phase at the
+  frontier it starts from -- `join` (this machine's player not in the game,
+  or spectating), `intro` (before `introtime`), `POSITION` (before
+  `starttime`), `race`, `finished` (exiting) -- and the phase only moves
+  forward within a level. A line `rollback_phases: <map> -- <phase> from
+  leveltime N, tic T` when the phase changes; a level's table, one line a
+  phase (`rollback_phases: <map>, ended, <phase> (leveltime A to B)`:
+  passes, kept, rebuilt for this machine's input, for another's, for a
+  correction, otherwise), when the next level or a restart begins; the
+  current level's (`so far`) at the end of this report. Printed only while
+  a speculation runs. Setting `rollback_keepspec` resets them.
 
 ### `rollback_keepearly [0|1]`
 **Client side, with `rollback_keepspec` and `rollback_history`. Off by

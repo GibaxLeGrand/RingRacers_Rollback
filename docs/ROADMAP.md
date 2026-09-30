@@ -83,7 +83,14 @@ for first.**
    late.
 2. **Before the race**: the 1 to 4 `PARANOIA` lines at the join -- the entry
    run twice around a restore (8.97) -- and the ~200 rebuilds of the join and
-   the waiting map (8.99). Read in the code first.
+   the waiting map (8.99). **First where they fall**: `78ca2f8a3` (8.101,
+   written, not pushed) files every pass by the level's phase -- join,
+   intro, POSITION, race, finished. Pushed before item 1's session, its
+   build replaces `771bec680` there and the same `wwwindows` race reads
+   both. Then, by its predictions: if the intro holds most of them, stop
+   predicting in the intro (Gibax's idea: nothing between the results and
+   POSITION; outside a level nothing is predicted already) and start again
+   in its white fade; if the join does, fix the join.
 3. **A second human.** Write a switch that guesses the bots as a remote human
    is guessed (their last input repeated), to see unattended the rebuilds and
    the shaking a remote human would cause; then a race with two people on two

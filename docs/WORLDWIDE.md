@@ -46,7 +46,10 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 
 **Builds.** Installed on the measuring machine: `6209f1786` (8.99). **To
 install next: `771bec680`** (CI run 36637283049, green), which carries 8.100's
-instrument for what is drawn and `rollback_keepearly` off.
+instrument for what is drawn and `rollback_keepearly` off. Written, not
+pushed: `78ca2f8a3` on `wip/phases`, where in a level the passes fall
+(8.101); pushed before the measuring session, its build would replace
+`771bec680` there.
 
 **Measured and holding.**
 
@@ -90,7 +93,11 @@ instrument for what is drawn and `rollback_keepearly` off.
    client at the join -- `*Guest entered the game.` printed twice, then an
    `MT_PLAYER` at -1 from `P_MobjThinker`: the entry ran twice around a
    restore (8.97, 8.99). None during the race, none on the server. Not
-   explained.
+   explained. Gibax asked whether prediction could stop from the results to
+   POSITION: it already stops outside a level; inside, only the intro and
+   the stretch after the finish would gain, and where the rebuilds fall --
+   join, waiting map, intro, POSITION -- is not known. 8.101's instrument
+   (written, not pushed) files every pass by phase.
 3. **B2, before `rollback_rawsnap` goes on by default**: the players-block
    difference after 9 of 1137 raw restores on Opulence (8.90, 8.94), not
    explained; the double claim, one kart rebuilt at 67 references against 66
@@ -6055,3 +6062,64 @@ instrument) and `771bec680` (`rollback_keepearly` off) -- the two above,
 put on top of the docs; the build to install is `771bec680`'s, CI run
 36637283049. Not installed, not run. With them, the root README now shows
 Gibax's Ring Racers Worldwide logo (`docs/RRW_logo.png`, `97eb69218`).
+
+### 8.101 Where in a level the passes fall: an instrument
+
+Written on 2026-09-30 on Gibax's go-ahead ("allez écris donc"), on the local
+branch `wip/phases`, **not pushed**: `78ca2f8a3`. No compiler on this
+machine: read line by line, not syntax-checked -- the CI will say.
+
+**Gibax's question.** Prediction runs as soon as it is switched on --
+could it stop at the end of a race (results, table) and start again when
+POSITION begins, and would that spare the ~200 rebuilds before the race
+(8.99)? Read in the code:
+
+- **Already so outside a level**: `K_RollbackTwoClock` returns 0 when
+  `gamestate != GS_LEVEL`, so the results, the table and the vote are never
+  predicted.
+- **Predicted without use, inside a level**: the title card's fly-in
+  (`leveltime < introtime`; 108 + 5 tics with more than two players,
+  `k_kart.c:367`), where the karts do not move, and the stretch between this
+  machine's finish and the results, where whether its input still steers
+  the kart is not read yet.
+- **POSITION has to stay predicted**: karts drive in it (POSITION areas, a
+  fault for crossing the line early, `k_kart.c:11330`); without prediction
+  it would have the input lag back, and a jump at GO.
+- **Stopping costs a jump each way**: off, the picture falls back to the
+  confirmed world, a round trip behind; on again, it jumps forward by as
+  much with a whole rebuild -- in the intro, a jump of the flying camera,
+  unless it is done in the white fade that ends it (5 tics). And it is one
+  more transition, where 8.96 and 8.97 found their bugs.
+- **Where the rebuilds fall is not known**: the harness's "before the race"
+  mixes the join, the waiting map `RR_TESTRUN` -- a level, where the kart
+  drives -- and the race map's intro and POSITION. The `PARANOIA` lines are
+  at the join (8.97).
+
+**The instrument.** Every pass is filed under the level's phase at the
+frontier it starts from -- `join` (this machine's player not in the game, or
+spectating), `intro` (before `introtime`), `POSITION` (before `starttime`),
+`race`, `finished` (exiting) -- and the phase only moves forward within a
+level. Per phase: passes, kept, rebuilt for this machine's input, for
+another's, for a correction, otherwise (a player coming or going, a
+netxcmd, anything else). A `rollback_phases: <map> -- <phase> from leveltime
+N, tic T` line when the phase changes, so the `PARANOIA` lines and the rest
+of the log can be placed; a level's table (`ended`) when the next level or
+a restart begins; the current level's (`so far`) at the end of
+`rollback_keepspec`'s report, which `wwwindows` prints at every window.
+Nothing prints while nothing is predicted: `frames_off` has none.
+
+**Predictions, for a driven `wwwindows` race on a build with it:**
+
+- **More than half of the rebuilds before the race fall in `join` and on
+  the waiting map**; the race map's `intro` and `POSITION` together under
+  20.
+- In the race map's `intro`, this machine's input rebuilds next to nothing
+  (its guess, the last input repeated, is right while nothing is pressed).
+- The client's `PARANOIA` lines fall at the end of `join` on the waiting
+  map.
+- The race map's `race` phase reads like 8.99's windows: 0 or 1 rebuild in
+  1000 tics.
+
+If the first holds, stopping prediction in the intro gains little and the
+join is where to look (*Next, in order*, item 2); if the intro holds most of
+them, stopping there -- and starting again in its white fade -- is the fix.
