@@ -139,11 +139,38 @@ static patch_t *kts_wwfront; // over the logo: the ring's near side, the banner
 
 #define WWFLASHTIC (3*TICRATE/2) // when the flash comes, as the version fades in
 #define WWFLASHLEN (TICRATE/3) // how long the white takes to clear
-#define WWLOGOLIFT (24) // how far the logo rises to make room for the banner
+
+// How far the logo and the characters rise at the flash, in pixels: the logo
+// to make room for the banner, the characters -- Tails, his tails, Eggman and
+// the lightning -- to keep clear of the logo. Two numbers in that order in
+// the pk3's KTSWWSET, so they are tuned with the art, not with a build.
+static int32_t ww_logolift = 24;
+static int32_t ww_charlift = 0;
 
 static dboolean F_WorldwideTitleShown(void)
 {
 	return ((kts_wwback != NULL || kts_wwfront != NULL) && finalecount >= WWFLASHTIC);
+}
+
+static void F_ReadWorldwideTitleSettings(void)
+{
+	int logolift = 24;
+	int charlift = 0;
+
+	if (W_LumpExists("KTSWWSET"))
+	{
+		const lumpnum_t lump = W_GetNumForName("KTSWWSET");
+		const size_t length = W_LumpLength(lump);
+		char *text = Z_Malloc(length + 1, PU_STATIC, NULL);
+
+		W_ReadLump(lump, text);
+		text[length] = '\0';
+		sscanf(text, "%d %d", &logolift, &charlift);
+		Z_Free(text);
+	}
+
+	ww_logolift = min(max(logolift, 0), BASEVIDHEIGHT/2);
+	ww_charlift = min(max(charlift, 0), BASEVIDHEIGHT/2);
 }
 static patch_t *kts_copyright; // (C) SEGA
 
@@ -1760,6 +1787,7 @@ static void F_CacheTitleScreen(void)
 
 			kts_wwback = W_LumpExists("KTSWWBK1") ? W_CachePatchName("KTSWWBK1", PU_PATCH_LOWPRIORITY) : NULL;
 			kts_wwfront = W_LumpExists("KTSWWFR1") ? W_CachePatchName("KTSWWFR1", PU_PATCH_LOWPRIORITY) : NULL;
+			F_ReadWorldwideTitleSettings();
 			break;
 		}
 
@@ -2064,17 +2092,18 @@ void F_TitleScreenDrawer(void)
 				tailsColormap = R_GetTranslationColormap(TC_DEFAULT, tailsColor, GTC_MENUCACHE);
 
 				const dboolean worldwide = F_WorldwideTitleShown();
+				const fixed_t chary = (worldwide ? -ww_charlift : 0) * FRACUNIT;
 
 				if (worldwide && kts_wwback != NULL)
 					V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_wwback, NULL);
 
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_tails_tails, tailsColormap);
-				V_DrawFixedPatch(0, 0, FRACUNIT, V_ADD, kts_electricity[finalecount % 6], NULL);
+				V_DrawFixedPatch(0, chary, FRACUNIT, 0, kts_tails_tails, tailsColormap);
+				V_DrawFixedPatch(0, chary, FRACUNIT, V_ADD, kts_electricity[finalecount % 6], NULL);
 
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_eggman, eggColormap);
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_tails, tailsColormap);
+				V_DrawFixedPatch(0, chary, FRACUNIT, 0, kts_eggman, eggColormap);
+				V_DrawFixedPatch(0, chary, FRACUNIT, 0, kts_tails, tailsColormap);
 
-				V_DrawFixedPatch(0, (worldwide ? -WWLOGOLIFT : 0) * FRACUNIT, FRACUNIT, 0, kts_bumper, NULL);
+				V_DrawFixedPatch(0, (worldwide ? -ww_logolift : 0) * FRACUNIT, FRACUNIT, 0, kts_bumper, NULL);
 
 				if (worldwide && kts_wwfront != NULL)
 					V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_wwfront, NULL);
