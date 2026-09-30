@@ -7554,7 +7554,9 @@ dboolean TryRunTics(tic_t realtics)
 					}
 				}
 
+				K_RollbackTicRunning(true);
 				G_Ticker(run);
+				K_RollbackTicRunning(false);
 			}
 
 			if (Playing() && netgame && (gametic % TICRATE == 0))

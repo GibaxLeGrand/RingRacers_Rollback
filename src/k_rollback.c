@@ -4919,6 +4919,13 @@ dboolean K_RollbackOffTimeline(void)
 	return (g_replaying || g_speculating);
 }
 
+static dboolean g_intic;    // G_Ticker is running a tic
+
+void K_RollbackTicRunning(dboolean running)
+{
+	g_intic = running;
+}
+
 dboolean K_RollbackSoundsSilenced(void)
 {
 	if (g_replaying)
@@ -4926,9 +4933,12 @@ dboolean K_RollbackSoundsSilenced(void)
 
 	// With the speculation kept, most tics are never run again for real, so
 	// waiting for the confirmed run would mean never hearing them. A tic sounds
-	// the first time this machine runs it, and not again on a rebuild.
+	// the first time this machine runs it, and not again on a rebuild. Only a
+	// tic: a menu's sound comes between tics, while a kept pass has handed the
+	// netcode the frontier's clock, and gametic is behind the horizon then --
+	// the menus and the title card went silent (WORLDWIDE.md 8.108).
 	if (g_keepspec && g_twoclock > 0 && gamestate == GS_LEVEL)
-		return (gametic < g_soundhorizon);
+		return (g_intic && gametic < g_soundhorizon);
 
 	return g_speculating;
 }
@@ -6824,7 +6834,9 @@ static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 	{
 		const precise_t ticat = I_GetPreciseTime();
 
+		g_intic = true;
 		G_Ticker(true);
+		g_intic = false;
 		K_NoteSpeculatedTic(I_GetPreciseTime() - ticat);
 	}
 

@@ -234,9 +234,14 @@ dboolean K_RollbackReplaying(void);
   * that ran it is not kept as if it were the real one (rollback_keepspec). */
 dboolean K_RollbackOffTimeline(void);
 
-/** Whether a sound started now should stay silent: a replay, or a tic this
-  * machine has already run once and so already heard (WORLDWIDE.md 8.73). */
+/** Whether a sound or a chat line started now should stay silent: a replay,
+  * or, inside a tic, one this machine has already run once and so already heard
+  * (WORLDWIDE.md 8.73, 8.108). Outside a tic -- a menu, the console -- never. */
 dboolean K_RollbackSoundsSilenced(void);
+
+/** The tic loop runs G_Ticker between these: what a tic starts is judged by
+  * K_RollbackSoundsSilenced, what the menus start between tics is not. */
+void K_RollbackTicRunning(dboolean running);
 
 // rollback_keepspec -- track A (WORLDWIDE.md 8.60, 8.73): leave the speculation
 // standing across a pass, and rebuild it only when the tics the server confirms
