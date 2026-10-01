@@ -934,15 +934,21 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL Windows AND NOT "${SRB2_CONFIG_INTERNAL_LIBRA
 
 		#message(STATUS ADDITIONAL_DLLS="${ADDITIONAL_DLLS}")
 	endif()
-	add_custom_command(TARGET SRB2SDL2 POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			$<TARGET_RUNTIME_DLLS:SRB2SDL2>
-			${ADDITIONAL_DLLS}
+	# A fully static build has no DLL to copy, and copy_if_different refuses a
+	# destination alone: the WORLDWIDE CI turns this off (WORLDWIDE.md 8.114).
+	# Upstream dropped the step after 2.4.
+	option(SRB2_CONFIG_COPY_RUNTIME_DLLS "Copy the runtime DLLs next to the executable." ON)
+	if(SRB2_CONFIG_COPY_RUNTIME_DLLS)
+		add_custom_command(TARGET SRB2SDL2 POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_RUNTIME_DLLS:SRB2SDL2>
+				${ADDITIONAL_DLLS}
 
-			$<TARGET_FILE_DIR:SRB2SDL2>
-		COMMAND_EXPAND_LISTS
-		COMMENT "Copying runtime DLLs"
-	)
+				$<TARGET_FILE_DIR:SRB2SDL2>
+			COMMAND_EXPAND_LISTS
+			COMMENT "Copying runtime DLLs"
+		)
+	endif()
 endif()
 
 # Setup clang-tidy
