@@ -58,7 +58,8 @@ carries:
   (`89aba69fb`, seen in the game in 8.113);
 - the title's second pass: flash at 0.6 s, and space behind the globe --
   which never shows, the stock title running a level behind its art;
-  `8977b9a2a`, written, not pushed, draws it over that level (8.113).
+  a commit on the local `wip/titre3`, not pushed, draws it over that level
+  (8.113).
 
 The previous measuring build is kept as `.bak_04db0cf`, and `89aba69fb` as
 `.bak_89aba69`. Gibax's own release-config build of `04db0cf` sits beside
@@ -6778,8 +6779,8 @@ so **nothing was driven**. He approved each launch.
   - **space never shows**: the stock title runs a level behind its art (the
     title map), and `c7a52b61e` only replaced the sky where no title map
     runs. Then the attract demos cycle, and the title comes back;
-  - `8977b9a2a` (written, not pushed) draws space first from the flash on,
-    over the title map too.
+  - a commit on the local `wip/titre3`, not pushed, draws space first from
+    the flash on, over the title map too.
 - **Next**, for the fix, one of two:
   - the same pair driven by Gibax, with `.bak_04db0cf` as the control in
     the same session;
