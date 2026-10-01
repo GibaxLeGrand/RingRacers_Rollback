@@ -169,6 +169,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/rrsdk;$GITHUB_WORKSPACE/sdl2" \
             -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF \
+            -DSRB2_CONFIG_COPY_RUNTIME_DLLS=OFF \
             -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_FLAGS_RELWITHDEBINFO="-g -gcodeview -O3 -DNDEBUG" \
