@@ -128,12 +128,10 @@ scope.
    (8.95).
 6. **The history's cap** past about 340 ms of round trip (8.107): raise it
    (up to 34) or set it from the round trip; a rebuild then goes deeper.
-7. **B2 on by default** (8.125, written, not yet built): the players-block
-   difference is the item list's capacity, harmless (8.124); the double
-   claim counted once; Lua's `floorspriteslope` goes the network way; the
-   level interpolators are the network load's gap too. Left: the leak soak
-   again (where 8.94 saw the double claim), and the sixteen-kart race on
-   Opulence again, against 8.121's.
+7. **B2 on by default** since `c24d8d205` (8.125): sixteen karts on
+   Opulence, a pass of 6.2 to 6.8 ms (with a host) or 5.7 to 6.6 (fifteen,
+   dedicated), under the gate, against about 10.5 with network snapshots.
+   Left: the leak soak again (where 8.94 saw the double claim).
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -7486,3 +7484,35 @@ not B2's. Written on 2026-10-02, not built, not run.
   6 to 7.5 ms in the two windows nobody touched. Next: the same race again,
   hands off, for a clean third window; and fifteen karts on a dedicated
   server, which draws nothing, to tell the machine's load from B2.
+- **The two control races** (Gibax: "oui lance les deux, je touche à
+  rien"; prediction pushed before, notes `a8e713a`). `c24d8d2`, nobody
+  driving or touching, Opulence, a pass window by window from the
+  cumulative reports:
+
+  | | 16 karts, host, 00:41 | 15 karts, dedicated, 00:44 |
+  |---|---|---|
+  | grid | host, 14 bots, local | 14 bots, local |
+  | window 1 | 6.2 ms | 5.7 ms |
+  | window 2 | 6.8 ms | 6.4 ms |
+  | window 3 | **6.8 ms** | **6.6 ms** |
+  | passes kept, race | 3489 of 3764 | 3799 of 3806 |
+  | rebuilt for another's input / this machine's | 263 / 10 | 0 / 5 |
+  | loop iterations past a tic | 271 | 4 |
+  | frames drawn | 16272 | 18021 |
+  | bodies below zero, PARANOIA | 0, 0 | 0, 0 |
+
+  - **Held: a clean third window, under the gate** (6.8 ms; predicted 6 to
+    8.5). 00:35's runaway did not come back: 10 rebuilds for this
+    machine's input in the whole race, against 168. Whether the click set
+    it off stays unproven, but nothing without one repeated it.
+  - **Held: dedicated, cheaper** -- 5.7 to 6.6 ms in every window, 4
+    iterations past a tic (predicted under 20).
+  - **Wrong: the host's race ran 271 iterations past a tic**, not under 50:
+    the server's window drawing sixteen karts on Opulence on the same
+    machine costs the client frames even when its passes fit.
+  - **The rebuilds for another's input are the host's**: 263 with one, 0
+    without (8.123).
+- **So B2 meets Phase B's gate at sixteen karts on Opulence**, for the
+  race's first 1:48: about 6 to 7 ms a pass, 21 to 24% of a tic. Not yet
+  the gate's whole condition: late in a race (the windows end at 1:48), and
+  at the depth Phase D settles on.

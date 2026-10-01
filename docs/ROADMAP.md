@@ -119,12 +119,12 @@ asked for first.**
 
 6. **Sixteen karts late in a race** (Phase B's gate), measured up to nine
    only. If it does not fit, the alpha's lobby is capped -- eight -- and
-   says so. **Measured on 2026-10-01** (8.121), sixteen karts with a host,
-   nobody driving, Skyscraper Leaps, the race's first 1:48: 6.2 ms a pass,
-   22% of a tic, with the bots computed; 16.6 ms (58%) with every bot
-   guessed. Left for the gate: late in a race, and a heavy map. Sixteen
-   needs a host (a dedicated server has 15 slots, and upstream's code stops
-   if bots take them all).
+   says so. **Measured on 2026-10-01 and 02** (8.121, 8.125), nobody
+   driving, the race's first 1:48: Skyscraper Leaps 6.2 ms a pass at
+   sixteen; Opulence 10.2 to 10.7 ms with network snapshots, **6.2 to 6.8
+   with B2** (5.7 to 6.6 at fifteen, dedicated) -- under the gate. Left for
+   the gate: late in a race. Sixteen needs a host (a dedicated server has
+   15 slots, and upstream's code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
    `rollback_history 12` leaves the drawn world behind the newest input
    (about 5 tics at 428 ms). Raise it (up to 34) or set it from the round
