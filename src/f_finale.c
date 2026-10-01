@@ -140,12 +140,19 @@ static patch_t *kts_wwfront; // over the logo: the ring's near side, the banner
 #define WWFLASHTIC (3*TICRATE/5) // when the flash comes: 0.6 s in
 #define WWFLASHLEN (TICRATE/3) // how long the white takes to clear
 
+// Space, behind the globe from the flash on, in place of the stock sky: the
+// pk3's KTSWWSKY, tiled over the whole screen and scrolled like that sky.
+static dboolean ww_sky;
+
 // How far the logo and the characters rise at the flash, in pixels: the logo
 // to make room for the banner, the characters -- Tails, his tails, Eggman and
-// the lightning -- to keep clear of the logo. Two numbers in that order in
-// the pk3's KTSWWSET, so they are tuned with the art, not with a build.
+// the lightning -- to keep clear of the logo. Then how fast space scrolls, in
+// F_SkyScroll's units (16 is a pixel a tic). Up to four numbers in that order
+// in the pk3's KTSWWSET, so they are tuned with the art, not with a build.
 static int32_t ww_logolift = 24;
 static int32_t ww_charlift = 0;
+static int32_t ww_skyxspeed = -1;
+static int32_t ww_skyyspeed = 0;
 
 static dboolean F_WorldwideTitleShown(void)
 {
@@ -156,6 +163,8 @@ static void F_ReadWorldwideTitleSettings(void)
 {
 	int logolift = 24;
 	int charlift = 0;
+	int skyxspeed = -1;
+	int skyyspeed = 0;
 
 	if (W_LumpExists("KTSWWSET"))
 	{
@@ -165,12 +174,14 @@ static void F_ReadWorldwideTitleSettings(void)
 
 		W_ReadLump(lump, text);
 		text[length] = '\0';
-		sscanf(text, "%d %d", &logolift, &charlift);
+		sscanf(text, "%d %d %d %d", &logolift, &charlift, &skyxspeed, &skyyspeed);
 		Z_Free(text);
 	}
 
 	ww_logolift = min(max(logolift, 0), BASEVIDHEIGHT/2);
 	ww_charlift = min(max(charlift, 0), BASEVIDHEIGHT/2);
+	ww_skyxspeed = min(max(skyxspeed, -64), 64);
+	ww_skyyspeed = min(max(skyyspeed, -64), 64);
 }
 static patch_t *kts_copyright; // (C) SEGA
 
@@ -1787,6 +1798,7 @@ static void F_CacheTitleScreen(void)
 
 			kts_wwback = W_LumpExists("KTSWWBK1") ? W_CachePatchName("KTSWWBK1", PU_PATCH_LOWPRIORITY) : NULL;
 			kts_wwfront = W_LumpExists("KTSWWFR1") ? W_CachePatchName("KTSWWFR1", PU_PATCH_LOWPRIORITY) : NULL;
+			ww_sky = W_LumpExists("KTSWWSKY");
 			F_ReadWorldwideTitleSettings();
 			break;
 		}
@@ -1969,7 +1981,16 @@ void F_TitleScreenDrawer(void)
 	}
 	else if (!curbghide || !titlemapinaction || gamestate == GS_WAITINGPLAYERS)
 	{
-		F_SkyScroll(curbgxspeed, curbgyspeed, curbgname);
+		// WORLDWIDE: space, only where the stock sky would be drawn.
+		if (gamestate == GS_TITLESCREEN && curttmode == TTMODE_RINGRACERS
+			&& ww_sky && F_WorldwideTitleShown())
+		{
+			F_SkyScroll(ww_skyxspeed, ww_skyyspeed, "KTSWWSKY");
+		}
+		else
+		{
+			F_SkyScroll(curbgxspeed, curbgyspeed, curbgname);
+		}
 	}
 
 	// Don't draw outside of the title screen, or if the patch isn't there.
