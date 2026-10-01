@@ -94,7 +94,9 @@ asked for first.**
 4. **The release base** (*Compatibility*, below): ported onto `v2.4` on
    2026-10-01 (`worldwide-2.4`, WORLDWIDE.md 8.114): 15 conflicts, all
    resolved, the wire read as stock; CI builds it, dev and release (8.115).
-   Left: the bench on it, then against the stock 2.4 exe in the game
+   It starts in a stock 2.4 folder since `68f5eb582` (8.117). The stock
+   2.4 exe is 32-bit and ours 64-bit, so every case below also crosses the
+   two. Left: the bench on it, then against the stock 2.4 exe in the game
    folder -- a stock client refused with a readable message, a WORLDWIDE
    client playing delay-based on a vanilla server, a WORLDWIDE build hosting
    in vanilla mode for stock clients, and the leave putting the settings
@@ -152,8 +154,8 @@ says sixteen, and the known-broken list stated up front.
     the join later (8.109, 8.112); the drawn kart's long steps, 430 to 760 a
     window against about 263 without prediction (8.103, 8.107);
     `rollback_keepearly`, off, to remove or keep; a predicting client
-    records no replay (8.96); the title's "WORLDWIDE" banner a little
-    pixelated -- the ring's picture scaled down about five times.
+    records no replay (8.96). (The title's banner, pixelated, is gone with
+    Gibax's second ring, drawn at the game's size, 8.116.)
 11. **Left open**: the Garden Top rider (8.56); Coastal Temple's resim
     failures (8.57); `chainorder_block` (8.58); a sound cut when a
     speculated tic removes its object (8.73); the network load not counting
