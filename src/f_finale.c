@@ -137,7 +137,7 @@ static patch_t *kts_electricity[6]; // ring o' electricity
 static patch_t *kts_wwback; // behind everything: the globe, the ring's far side
 static patch_t *kts_wwfront; // over the logo: the ring's near side, the banner
 
-#define WWFLASHTIC (3*TICRATE/2) // when the flash comes, as the version fades in
+#define WWFLASHTIC (3*TICRATE/5) // when the flash comes: 0.6 s in
 #define WWFLASHLEN (TICRATE/3) // how long the white takes to clear
 
 // How far the logo and the characters rise at the flash, in pixels: the logo
