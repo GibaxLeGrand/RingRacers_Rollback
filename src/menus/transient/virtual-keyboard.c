@@ -10,6 +10,7 @@
 /// \file  menus/transient/virtual-keyboard.c
 /// \brief Keyboard input
 
+#include "../../i_video.h" // I_SetTextInputMode, I_TextInputActive
 #include "../../k_menu.h"
 #include "../../s_sound.h"
 #include "../../console.h" // CON_ShiftChar
@@ -155,6 +156,12 @@ dboolean M_ChangeStringCvar(int32_t choice)
 		default:
 			if (choice >= 32 && choice <= 127)
 			{
+				// A key pressed on the keyboard: with the system's text input
+				// on, the character comes as an ev_text (M_MenuTypingText). The
+				// gamepad's virtual keyboard still writes here.
+				if (menutyping.keyboardtyping && I_TextInputActive())
+					return true;
+
 				len = strlen(menutyping.cache);
 				if (len < menutyping.cachelen)
 				{
@@ -204,6 +211,27 @@ void M_AbortVirtualKeyboard(void)
 
 	if (currentMenu == menutyping.dummymenu)
 		M_GoBack(0);
+}
+
+// A character typed with the system's keyboard layout (I_SetTextInputMode),
+// into the open text box -- once it is open, as M_MenuTypingInput lets keys in.
+void M_MenuTypingText(int32_t c)
+{
+	size_t len;
+
+	if (!menutyping.active || menutyping.menutypingclose || !menutyping.keyboardtyping)
+		return;
+	if (menutyping.menutypingfade < 9 || c < 32 || c > 126)
+		return;
+
+	len = strlen(menutyping.cache);
+	if (len < menutyping.cachelen)
+	{
+		menutyping.cache[len++] = (char)c;
+		menutyping.cache[len] = 0;
+
+		S_StartSound(NULL, sfx_tmxbdn); // Tails
+	}
 }
 
 void M_MenuTypingInput(int32_t key)

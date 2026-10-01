@@ -1116,6 +1116,25 @@ void HU_clearChatChars(void)
 //
 dboolean HU_Responder(event_t *ev)
 {
+	// A character typed with the system's keyboard layout (I_SetTextInputMode).
+	if (ev->type == ev_text)
+	{
+		const int32_t c = ev->data1;
+
+		if (!chat_on)
+			return false;
+		if (CHAT_MUTE || strlen(w_chat) >= HU_MAXMSGLEN)
+			return true;
+		if ((c >= HU_FONTSTART && c <= HU_FONTEND && fontv[HU_FONT].font[c-HU_FONTSTART])
+			|| c == ' ')
+		{
+			memmove(&w_chat[c_input + 1], &w_chat[c_input], strlen(w_chat) - c_input + 1);
+			w_chat[c_input] = c;
+			c_input++;
+		}
+		return true;
+	}
+
 	// Handle Push-to-Talk
 	if (ev->data1 == gamecontrol[0][gc_voicepushtotalk][0]
 		|| ev->data1 == gamecontrol[0][gc_voicepushtotalk][1]
@@ -1283,6 +1302,10 @@ dboolean HU_Responder(event_t *ev)
 		else if ((c >= HU_FONTSTART && c <= HU_FONTEND && fontv[HU_FONT].font[c-HU_FONTSTART])
 			|| c == ' ') // Allow spaces, of course
 		{
+			// With the system's text input on, the character comes as an ev_text.
+			if (I_TextInputActive())
+				return true;
+
 			if (CHAT_MUTE || strlen(w_chat) >= HU_MAXMSGLEN)
 				return true;
 

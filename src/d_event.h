@@ -32,6 +32,7 @@ typedef enum
 	ev_gamepad_axis,
 	ev_gamepad_device_added,
 	ev_gamepad_device_removed,
+	ev_text, // a character typed with the system's keyboard layout, in data1 (ASCII)
 } evtype_t;
 
 // Event structure.

@@ -18,6 +18,9 @@ menuitem_t OPTIONS_HUDOnline[] =
 	{IT_STRING | IT_CVAR, "Show Chat", "Show chat by default or keep it hidden until you open it.",
 		NULL, {.cvar = &cv_consolechat}, 0, 0},
 
+	{IT_STRING | IT_CVAR, "Use System Keyboard Layout", "Chat, console and text boxes use your system's keyboard layout (AZERTY...).",
+		NULL, {.cvar = &cv_textinput}, 0, 0},
+
 	{IT_SPACE | IT_NOTHING, NULL,  NULL,
 		NULL, {NULL}, 0, 0},
 
