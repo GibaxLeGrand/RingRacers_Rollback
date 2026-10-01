@@ -16,6 +16,8 @@ on:
     branches:
       - master
       - rollback-netcode
+      # The same work ported onto the 2.4 release (WORLDWIDE.md 8.114).
+      - worldwide-2.4
     paths-ignore:
       - 'docs/**'
       - '**.md'
