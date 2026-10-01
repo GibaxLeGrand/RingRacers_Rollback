@@ -6867,3 +6867,41 @@ launched.
   (release-config, so version 2.4).
 - **Next** is the same as 8.114's: the bench on this build, then the
   compatibility cases against the stock 2.4 exe.
+
+### 8.116 The second ring, on the title and in the logo
+
+Not netcode. Gibax drew a second ring (`ring_worldwide_v2.png`, in the code
+repo's ignored `etc/`) and asked for it on the title and in
+`docs/RRW_logo.png`. Nothing was launched.
+
+- **What the picture is, measured.** It is his empty ring with three pieces
+  of pixel art over it: the WORLDWIDE lettering and a chequered flag,
+  mirrored on the left. Each piece is enlarged exactly 9 times: every run
+  of colour is a multiple of 9, 116x17 and 14x14 pixels at the game's size.
+  Rebuilt from the empty ring and the pieces, the picture is the same:
+  the same opaque pixels, a mean difference of 0.18, the rest on single
+  source columns at the flags' edges, a ninth of a game pixel. The empty
+  ring itself is smoothed, on no grid (52,000 colours).
+- **The title.** The notes' `titre/build_pk3.py` has a new default,
+  `--ring-method parts`. It finds the pieces in the picture, brings the
+  empty ring down on the lettering's grid (each game pixel the majority
+  colour of its 9x9 cell, as 8.113's ring), then pastes the pieces pixel for
+  pixel. The ring is 236x58. Gibax's flags sit 3.67 and 3.44 game pixels
+  from the lettering; both are put at 4, symmetric. Its gold and its
+  lettering share one centre, put at 152.5: between the first ring's
+  lettering (152) and gold (153), measured on that ring's pk3. Its bottom
+  is where the first ring's gold ended, row 190. Installed in the game
+  folder (sha256 `d95906fe…`; the first ring's pk3 kept as
+  `.bak_1001b`).
+- **The logo.** Gibax's logo turned out to be three layers, each found in
+  it with no difference over every pixel of theirs left visible:
+  - `Worldwide_Earth.png` at 130x131, nearest neighbour, at (53, 0);
+  - the game's own logo (`KTSBUMPR1`) at 210x78, nearest neighbour, at
+    (15, 16);
+  - the ring, its far half under the game's logo and its near half over it.
+
+  The notes' `logo/build_logo.py` rebuilds it around the title's ring, at
+  the game's size. Its witness rebuilds it with the first ring: identical
+  over rows 0 to 63, and different only within that ring (rows 64 to 114),
+  the layer replaced. The new ring is centred where the first was, on 119,
+  and ends on the same row, 114.
