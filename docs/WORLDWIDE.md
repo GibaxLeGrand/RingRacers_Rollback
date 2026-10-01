@@ -7446,3 +7446,41 @@ not B2's. Written on 2026-10-02, not built, not run.
   about 4.6 ms there, down to about 1.5 (Opulence's 1.1 at nine karts, 8.95,
   plus the extra karts), so **a pass of about 7 to 8 ms, under the gate's
   8.6**; a rebuild's restore under 2.5 ms. 0 bodies below zero, 0 PARANOIA.
+
+- **Measured** (Gibax: "oui pousse, installe et lance"): CI run 36935126003
+  green, `c24d8d205` installed (sha256 `a360e3f4…`, `94c7bd4` kept as
+  `.bak_94c7bd4`). Sixteen karts on Opulence with a host, nobody driving,
+  00:35 (`playlog_wwwindows_RR_Opulence_join_k16_20261002-003532_c24d8d2.txt`).
+  The report says "rollback_rawsnap: on -- raw snapshots of the level
+  pools": 9269 raw saves at 780 us, 591 raw restores at 1.6 ms.
+
+  | a pass, window by window | 8.121 (network snapshots) | B2 on |
+  |---|---|---|
+  | window 1 | 10.2 ms | **6.0 ms (21%)** |
+  | window 2 | 10.7 ms | **7.4 ms (26%)** |
+  | window 3 | 10.3 ms | **19.9 ms (70%)** |
+
+  - **Held, in windows 1 and 2**: a pass of 6.0 and 7.4 ms, under the gate,
+    against 10.2 and 10.7 with network snapshots; the save about 1.4 to 1.7
+    ms a pass (a raw save 0.78 ms) against about 4.6; a rebuild's restore
+    1.6 ms, under 2.5. 0 bodies below zero, 0 PARANOIA.
+  - **Window 3 is not a measurement.** Gibax, after the race: he clicked
+    into the game by mistake near the end and pressed the ring button ("j'ai
+    fait un missclick, vers la fin j'ai rejoint et appuyé sur le ring
+    button, pas bcp"); this machine's wrong inputs show it (one each in
+    turning, throwdir and buttons). In that window the client fell behind
+    (1314 tics of leveltime in 1000 passes), 152 of the race's 168 rebuilds
+    for this machine's input fall there, mostly in the latency stamp (176:
+    samples filed late), the speculation went as deep as 8 tics, and 412
+    loop iterations ran past a tic: a pass of 19.9 ms. The touch came only
+    near the end ("mais vers la fin ... donc jsp"); whether it set that off,
+    or it would have happened anyway, this race cannot say.
+  - **The stamp fix under load**: the host's wrong guesses are now 405, all
+    of them in the stamp alone, where 8.121 had 621 (341 in the angle):
+    fewer than before, but the guess of one more a tic is wrong 405 times.
+    A guess, not checked: a loaded host runs several tics in one frame on
+    one built input, so its stamps do not move one a tic.
+- **So**: B2 takes a pass on Opulence at sixteen karts from about 10.5 to
+  6 to 7.5 ms in the two windows nobody touched. Next: the same race again,
+  hands off, for a clean third window; and fifteen karts on a dedicated
+  server, which draws nothing, to tell the machine's load from B2.
