@@ -9039,6 +9039,44 @@ static void Command_RollbackVanillaJoin_f(void)
 			: "off -- joins declare this client WORLDWIDE"));
 }
 
+// rollback_join: the pause menu's Enter Game, from the console. A client
+// nobody drives stays a spectator, so the bench never ran the join's path
+// (WORLDWIDE.md 8.113); the client scenarios call this instead. It asks only
+// as the menu does, for a spectator not already waiting to join: the same
+// message for a player in the race would make that player spectate
+// (Got_Spectate, d_netcmd.c).
+static void Command_RollbackJoin_f(void)
+{
+	const int32_t who = g_localplayers[0];
+	uint8_t buf[2];
+
+	if (!Playing() || who < 0 || who >= MAXPLAYERS || !playeringame[who])
+	{
+		CONS_Printf("rollback_join: not in a game yet -- nothing sent\n");
+		return;
+	}
+	if (!players[who].spectator)
+	{
+		CONS_Printf("rollback_join: player %d is already in the game -- nothing sent\n", who);
+		return;
+	}
+	if (players[who].pflags & PF_WANTSTOJOIN)
+	{
+		CONS_Printf("rollback_join: player %d has already asked to join -- nothing sent\n", who);
+		return;
+	}
+	if (!G_GametypeHasSpectators() || !cv_allowteamchange.value)
+	{
+		CONS_Printf("rollback_join: the game takes no spectator in now -- nothing sent\n");
+		return;
+	}
+
+	buf[0] = (uint8_t)who;
+	buf[1] = 1; // join, as the menu's Enter Game
+	SendNetXCmd(XD_SPECTATE, buf, sizeof buf);
+	CONS_Printf("rollback_join: player %d asked to join the game\n", who);
+}
+
 void K_RegisterRollbackStuff(void)
 {
 	// Debug commands rather than plain ones: they are diagnostics, and being
@@ -9071,6 +9109,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_inputlog", Command_RollbackInputLog_f);
 	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
 	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
+	COM_AddDebugCommand("rollback_join", Command_RollbackJoin_f);
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);

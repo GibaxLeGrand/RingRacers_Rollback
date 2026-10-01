@@ -12,7 +12,7 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-09-30** — 30 commands, checked against
+**Up to date as of 2026-10-01** — 31 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
@@ -20,7 +20,7 @@ sides).
 `rollback_poolcopy` from `df8ed24e9` (8.82); `rollback_rawsnap` from
 `371ca7419` (8.88, merged as `49daf1196`); `rollback_histreal` from
 `7a455f6fe` (8.89); `rollback_keepearly` from `6209f1786` (8.98), off by
-default from `771bec680` (8.100).
+default from `771bec680` (8.100); `rollback_join` from 2026-10-01 (8.119).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -241,6 +241,16 @@ client adds to its join request, as a stock client would: a server running
 `worldwide on` must turn it away with a readable message, and its log says
 `worldwide: refused node`. Off by default. The `vanillajoin` scenario of
 `playtest.sh` uses it.
+
+### `rollback_join`
+**Client side: the pause menu's *Enter Game*, from the console.** A client
+nobody drives stays a spectator, so a scenario run unattended never ran the
+join's path (`WORLDWIDE.md` 8.113). It sends the same request as the menu
+(`XD_SPECTATE`, join) for this machine's first player, and only when that
+player is a spectator who has not already asked: the same request for a
+player in the race would make them spectate. Otherwise it sends nothing and
+says why. `playtest.sh <scenario> join` calls it from a generated copy of
+the client scenario, the windows unmoved.
 
 ### `rollback_lagcheck` — not a command
 Looked for as a command, it is not one: it is an **automatic print**, edge

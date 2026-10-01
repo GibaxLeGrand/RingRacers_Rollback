@@ -7002,3 +7002,30 @@ and the control shows at least one.
   then ran some 3,000 tics with no rebuild at all. The fix covers every
   load of the archive, so that case should be gone too, but it has not
   been seen.
+
+### 8.119 `rollback_join`: a client scenario that enters the race by itself
+
+Written on Gibax's go-ahead ("écris la commande de jonction, pousse le"), so
+that the join's path (8.112, 8.118) and anything else a racing client does
+can be run with nobody driving.
+
+- **What the menu does.** *Enter Game* in the pause menu sends `XD_SPECTATE`
+  with the player and "join" (`M_HandleSpectateToggle`,
+  `menus/transient/pause-game.c`). It sends it only for a spectator who has
+  not already asked: the server's `Got_Spectate` first makes any player
+  who is not a spectator spectate, then sets `PF_WANTSTOJOIN`.
+- **`rollback_join`** (`k_rollback.c`) sends the same request for this
+  machine's first player, under the same conditions as the menu: in a
+  game, a spectator, not already asking, a gametype with spectators, team
+  changes allowed. Otherwise it sends nothing and prints why. It changes
+  nothing else, and nothing when it is not called.
+- **`playtest.sh <scenario> join`** (notes, `harnais/`) writes a copy of the
+  client scenario that calls it twice after its `rollback_lag` line (after
+  105 tics, then 70 more), and takes those 175 tics off the next `wait`, so
+  the windows fall where they did. The logs carry `_join`. The first `wait`
+  after `rollback_lag` is at least 400 tics in every client scenario; only
+  `vanillajoin`, which has no `rollback_lag` and whose join is refused, gets
+  no call.
+- Checked before pushing: the syntax, with the local gcc (`-fsyntax-only`,
+  which caught an error put in on purpose); the generated
+  copy of `wwwindows`, whose waits still add up to 1600. Not built, not run.
