@@ -76,12 +76,13 @@ asked for first.**
      `players[].mo`, then `P_AddThinker` sets the count back to 0.
    - Every body a rebuild or a join brings back is one reference short,
      which can end in a use after free.
-   - Fix pushed (`0412e7760`), installed, not yet measured: a client
-     nobody drives never joins the race, so the bench cannot reach the
-     path (8.113). Either the same two runs driven by Gibax, with the
-     control in the same session, or first a console command that joins
-     (the pause menu's *Enter Game*) for the client scenarios. No body
-     below zero predicted.
+   - Fix pushed (`0412e7760`), **measured at the join** (8.118). Driven
+     by Gibax, it gave 0 bodies below zero, against 2 for the build before
+     it in the same session.
+   - Left: the case in the middle of a race (8.112's tic 1337), which
+     neither race reached. A console command that joins (the pause menu's
+     *Enter Game*) would let the client scenarios run it unattended, and
+     longer.
 2. **A second human.** (a) A switch that guesses the bots as a remote human
    is guessed -- their last input repeated -- to see unattended the rebuilds
    and the shaking a remote human would cause. (b) Two people on two

@@ -52,8 +52,10 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 **Builds.** Installed on the measuring machine: `093a79aeb` (sha256
 `ce744500…`, CI run 36833865387), with the private notes' `titre/worldwide.pk3`. It
 carries:
-- the fix for the join's `MT_PLAYER` alerts (`0412e7760`, 8.112), **not yet
-  measured** (8.113);
+- the fix for the join's `MT_PLAYER` alerts (`0412e7760`, 8.112),
+  **measured at the join** (8.118): 0 bodies below zero against 2 for
+  `04db0cf` in the same session; the case in the middle of a race not
+  reached;
 - the `WORLDWIDE Mode` menu entry, saved, and its state on the host screen
   (`89aba69fb`, seen in the game in 8.113);
 - the title's second pass: flash at 0.6 s, and space behind the globe,
@@ -6961,3 +6963,42 @@ options). Both built green on all three jobs (runs 36841739858 and
     Installed as `ringracers_worldwide-2.4.exe` (`2c53237e…`) and launched
     in the same stock 2.4 folder, **without `-noexchndl`: it starts**, its
     window open and responding, and Gibax confirms.
+
+### 8.118 The `MT_PLAYER` fix measured at the join, against its control
+
+The fix of 8.112 (`0412e7760`), measured as 8.113 asked: driven by Gibax,
+with the build before it as the control in the same session. Both runs:
+`playtest.sh wwwindows dedicated`, 6 tics of lag, RR_SkyscraperLeaps,
+driven by Gibax ("oui j'ai piloté"), no crash. Prediction written and
+pushed before the first race (notes `aff5b50`): 0 bodies below zero and 0
+`MT_PLAYER` alerts with the fix, worth something only if the join happens
+and the control shows at least one.
+
+- **The fix**: `093a79aeb` (sha256 `ce744500…`), which also carries
+  `04db0cf`'s instrument. The code repository's HEAD is further on, but
+  only by `azerty`'s 12 files (text input), so the harness's "not HEAD"
+  warning does not apply. At 19:59
+  (`playlog_wwwindows_20261001-195908_093a79a.txt`):
+  - the client entered the game, on the waiting map (RR_TESTRUN), around
+    tic 107;
+  - **0 PARANOIA lines**, client and server;
+  - **0 bodies below zero**, over 33 loads of the archive.
+- **The control**: `04db0cf` (`65be9958…`), in place of the measuring exe
+  for that run only, then put back (`ce744500…` checked in both folders).
+  At 20:03 (`playlog_wwwindows_20261001-200333_04db0cf.txt`):
+  - the client entered the game, around tic 87;
+  - **2 bodies below zero** at the join, over the same 33 loads, with 4
+    PARANOIA lines on the client and none on the server;
+  - the same two as 8.112's: a bot's body removed to make room for the
+    joiner (`d_clisrv.c:2683`), and the joiner's spectator body, let go at
+    the join (`p_user.c:3840`). Both were first seen in a load, removed in
+    a confirmed tic, and let go of a tic later at `p_mobj.c:10831` by their
+    last holder (`MT_AMPAURA`, `MT_TRIPWIREAPPROACH`).
+- **What it shows.** At the join, the fix holds: the same path, run in both
+  races, leaves no count below zero with the fix, and two without it.
+- **What it does not show.** 8.112's third body came in the middle of a
+  race, removed in a speculated tic (tic 1337). Neither race reached that
+  case. On Skyscraper Leaps, both rebuilt only before the first window,
+  then ran some 3,000 tics with no rebuild at all. The fix covers every
+  load of the archive, so that case should be gone too, but it has not
+  been seen.
