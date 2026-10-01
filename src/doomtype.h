@@ -136,6 +136,10 @@ typedef int32_t boolean;
 #define boolean BOOL
 #endif
 
+// WORLDWIDE on 2.4: the code is written against the development line, which
+// renamed boolean to dboolean after 2.4 (948735af7).
+#define dboolean boolean
+
 #ifndef __cplusplus
 #ifndef _WIN32
 enum {false = 0, true = 1};

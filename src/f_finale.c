@@ -130,6 +130,59 @@ static patch_t *kts_eggman; // dr. robotnik himself
 static patch_t *kts_tails; // tails himself
 static patch_t *kts_tails_tails; // tails' tails
 static patch_t *kts_electricity[6]; // ring o' electricity
+
+// WORLDWIDE: the globe and the ring a flash brings onto the stock title, from
+// data/worldwide.pk3. Each is drawn at the origin like the layers above, so
+// where they sit is the lumps' own offsets; without the file, the stock title.
+static patch_t *kts_wwback; // behind everything: the globe, the ring's far side
+static patch_t *kts_wwfront; // over the logo: the ring's near side, the banner
+
+#define WWFLASHTIC (3*TICRATE/5) // when the flash comes: 0.6 s in
+#define WWFLASHLEN (TICRATE/3) // how long the white takes to clear
+
+// Space, behind the globe from the flash on, in place of the stock sky: the
+// pk3's KTSWWSKY, tiled over the whole screen and scrolled like that sky.
+static dboolean ww_sky;
+
+// How far the logo and the characters rise at the flash, in pixels: the logo
+// to make room for the banner, the characters -- Tails, his tails, Eggman and
+// the lightning -- to keep clear of the logo. Then how fast space scrolls, in
+// F_SkyScroll's units (16 is a pixel a tic). Up to four numbers in that order
+// in the pk3's KTSWWSET, so they are tuned with the art, not with a build.
+static int32_t ww_logolift = 24;
+static int32_t ww_charlift = 0;
+static int32_t ww_skyxspeed = -1;
+static int32_t ww_skyyspeed = 0;
+
+static dboolean F_WorldwideTitleShown(void)
+{
+	return ((kts_wwback != NULL || kts_wwfront != NULL) && finalecount >= WWFLASHTIC);
+}
+
+static void F_ReadWorldwideTitleSettings(void)
+{
+	int logolift = 24;
+	int charlift = 0;
+	int skyxspeed = -1;
+	int skyyspeed = 0;
+
+	if (W_LumpExists("KTSWWSET"))
+	{
+		const lumpnum_t lump = W_GetNumForName("KTSWWSET");
+		const size_t length = W_LumpLength(lump);
+		char *text = Z_Malloc(length + 1, PU_STATIC, NULL);
+
+		W_ReadLump(lump, text);
+		text[length] = '\0';
+		sscanf(text, "%d %d %d %d", &logolift, &charlift, &skyxspeed, &skyyspeed);
+		Z_Free(text);
+	}
+
+	ww_logolift = min(max(logolift, 0), BASEVIDHEIGHT/2);
+	ww_charlift = min(max(charlift, 0), BASEVIDHEIGHT/2);
+	ww_skyxspeed = min(max(skyxspeed, -64), 64);
+	ww_skyyspeed = min(max(skyyspeed, -64), 64);
+}
 static patch_t *kts_copyright; // (C) SEGA
 
 #define NOWAY
@@ -1742,6 +1795,11 @@ static void F_CacheTitleScreen(void)
 			{
 				kts_electricity[i] = W_CachePatchName(va("KTSELCT%.1d", i+1), PU_PATCH_LOWPRIORITY);
 			}
+
+			kts_wwback = W_LumpExists("KTSWWBK1") ? W_CachePatchName("KTSWWBK1", PU_PATCH_LOWPRIORITY) : NULL;
+			kts_wwfront = W_LumpExists("KTSWWFR1") ? W_CachePatchName("KTSWWFR1", PU_PATCH_LOWPRIORITY) : NULL;
+			ww_sky = W_LumpExists("KTSWWSKY");
+			F_ReadWorldwideTitleSettings();
 			break;
 		}
 
@@ -1917,6 +1975,13 @@ void F_TitleScreenDrawer(void)
 	{
 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 31);
 	}
+	else if (gamestate == GS_TITLESCREEN && curttmode == TTMODE_RINGRACERS
+		&& ww_sky && F_WorldwideTitleShown())
+	{
+		// WORLDWIDE: space from the flash on, over the title map as well --
+		// the stock title runs a level behind its art, and space replaces it.
+		F_SkyScroll(ww_skyxspeed, ww_skyyspeed, "KTSWWSKY");
+	}
 	else if (curbgcolor >= 0)
 	{
 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, curbgcolor);
@@ -2045,13 +2110,22 @@ void F_TitleScreenDrawer(void)
 				}
 				tailsColormap = R_GetTranslationColormap(TC_DEFAULT, tailsColor, GTC_MENUCACHE);
 
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_tails_tails, tailsColormap);
-				V_DrawFixedPatch(0, 0, FRACUNIT, V_ADD, kts_electricity[finalecount % 6], NULL);
+				const dboolean worldwide = F_WorldwideTitleShown();
+				const fixed_t chary = (worldwide ? -ww_charlift : 0) * FRACUNIT;
 
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_eggman, eggColormap);
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_tails, tailsColormap);
+				if (worldwide && kts_wwback != NULL)
+					V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_wwback, NULL);
 
-				V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_bumper, NULL);
+				V_DrawFixedPatch(0, chary, FRACUNIT, 0, kts_tails_tails, tailsColormap);
+				V_DrawFixedPatch(0, chary, FRACUNIT, V_ADD, kts_electricity[finalecount % 6], NULL);
+
+				V_DrawFixedPatch(0, chary, FRACUNIT, 0, kts_eggman, eggColormap);
+				V_DrawFixedPatch(0, chary, FRACUNIT, 0, kts_tails, tailsColormap);
+
+				V_DrawFixedPatch(0, (worldwide ? -ww_logolift : 0) * FRACUNIT, FRACUNIT, 0, kts_bumper, NULL);
+
+				if (worldwide && kts_wwfront != NULL)
+					V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_wwfront, NULL);
 			}
 
 			break;
@@ -2080,6 +2154,13 @@ void F_TitleScreenDrawer(void)
 	}
 
 	V_DrawFixedPatch(0, 0, FRACUNIT, 0, kts_copyright, NULL);
+
+	// The flash the globe and the ring come in on, clearing over WWFLASHLEN.
+	if (curttmode == TTMODE_RINGRACERS && F_WorldwideTitleShown()
+		&& finalecount < WWFLASHTIC + WWFLASHLEN)
+	{
+		V_DrawFadeScreen(0, 10 - ((finalecount - WWFLASHTIC) * 10) / WWFLASHLEN); // 0: white
+	}
 
 luahook:
 	// The title drawer is sometimes called without first being started
@@ -2136,6 +2217,12 @@ void F_TitleScreenTicker(boolean run)
 		}
 
 		finalecount++;
+
+		if (cache_gametrulystarted && curttmode == TTMODE_RINGRACERS
+			&& finalecount == WWFLASHTIC && F_WorldwideTitleShown())
+		{
+			S_StartSound(NULL, sfx_s3kaf); // "To Special Stage": the giant ring's flash
+		}
 
 		if (!cache_gametrulystarted && finalecount > GONERTYPEWRITERWAIT)
 		{

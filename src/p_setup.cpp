@@ -25,6 +25,7 @@
 
 #include "p_local.h"
 #include "p_setup.h"
+#include "k_rollback.h" // K_RollbackPredicting
 #include "p_spec.h"
 #include "p_saveg.h"
 
@@ -8193,7 +8194,9 @@ static void P_InitGametype(void)
 
 	// Start recording replay in multiplayer with a temp filename
 	//@TODO I'd like to fix dedis crashing when recording replays for the future too...
-	if (gamestate == GS_LEVEL && !demo.playback && multiplayer && !dedicated)
+	// Not on a client that predicts (K_RollbackPredicting, WORLDWIDE.md 8.96).
+	if (gamestate == GS_LEVEL && !demo.playback && multiplayer && !dedicated
+		&& K_RollbackPredicting() == false)
 	{
 		char buf[MAX_WADPATH];
 		char ver[128];

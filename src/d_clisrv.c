@@ -24,6 +24,7 @@
 #include "i_system.h"
 #include "i_video.h"
 #include "d_net.h"
+#include "k_rollback.h" // K_RollbackNoteArrival
 #include "d_netfil.h" // fileneedednum
 #include "d_main.h"
 #include "g_game.h"
@@ -120,6 +121,13 @@ tic_t jointimeout = (3*TICRATE);
 static boolean sendingsavegame[MAXNETNODES]; // Are we sending the savegame?
 static boolean resendingsavegame[MAXNETNODES]; // Are we resending the savegame?
 static tic_t savegameresendcooldown[MAXNETNODES]; // How long before we can resend again?
+
+// How many full-state resends the light correction channel stood in for.
+// Declared beside the cooldown it shares, and above HandlePacketFromPlayer,
+// which is the function that increments it -- the third time on this branch that
+// a counter has been declared next to the code that prints it instead of the
+// code that uses it first.
+static uint32_t suppressedresends;
 static tic_t freezetimeout[MAXNETNODES]; // Until when can this node freeze the server before getting a timeout?
 
 // Incremented by cv_joindelay when a client joins, decremented each tic.
@@ -161,8 +169,22 @@ static tic_t maketic;
 
 static INT16 consistancy[BACKUPTICS];
 
-static UINT8 player_joining = false;
-UINT8 hu_redownloadinggamestate = 0;
+// Eight players at roughly thirty characters each, plus the tic and the seed sum.
+// The first cut of this was 192 and silently truncated at five players -- and a
+// line that stops early looks exactly like a line with nothing more to say.
+#define BLAMELINE 512
+static char blameline[BACKUPTICS][BLAMELINE];
+static dboolean g_blame;
+
+// The newest tic the authoritative loop actually finished.
+//
+// In the two-clock mode that loop only ever runs confirmed tics, so this is the
+// newest checksum that describes a world built entirely from inputs the server
+// sent -- the only kind worth offering it.
+static tic_t lastconfirmedtic;
+
+static uint8_t player_joining = false;
+uint8_t hu_redownloadinggamestate = 0;
 
 // kart, true when a player is connecting or disconnecting so that the gameplay has stopped in its tracks
 boolean hu_stopped = false;
@@ -388,7 +410,27 @@ void RegisterNetXCmd(netxcmd_t id, void (*cmd_f)(const UINT8 **p, INT32 playernu
 
 void SendNetXCmdForPlayer(UINT8 playerid, netxcmd_t id, const void *param, size_t nparam)
 {
-	if (((UINT16*)localtextcmd[playerid])[0]+3+nparam > MAXTEXTCMD)
+	// Never from a speculated tic.
+	//
+	// localtextcmd is netcode state rather than world state, so the archive does
+	// not carry it and the restore that discards a speculation cannot take back
+	// what that speculation posted. The server would apply a message from a
+	// timeline nobody else ever ran -- a divergence manufactured by the
+	// prediction rather than found by it. Measured: with nothing speculated the
+	// server never disagreed once in fourteen hundred restores; with four tics
+	// speculated a pass it resent the whole gamestate nine times a race.
+	//
+	// Nothing worth keeping is lost. The authoritative loop reaches that tic
+	// later on the server's own inputs, and whatever should raise a message then
+	// raises it in a world both ends agree about. Console, chat and menu actions
+	// are untouched: they do not happen inside a tic.
+	if (K_RollbackSpeculating())
+	{
+		K_RollbackNoteSuppressedXCmd();
+		return;
+	}
+
+	if (((uint16_t*)localtextcmd[playerid])[0]+3+nparam > MAXTEXTCMD)
 	{
 		// for future reference: if (cht_debug) != debug disabled.
 		CONS_Alert(CONS_ERROR, M_GetText("NetXCmd buffer full, cannot add netcmd %d! (size: %d, needed: %s)\n"), id, ((UINT16*)localtextcmd[playerid])[0], sizeu1(nparam));
@@ -606,7 +648,15 @@ ticcmd_t *D_LocalTiccmd(UINT8 ss)
 	return &localcmds[ss][0];
 }
 
-void SendKick(UINT8 playernum, UINT8 msg)
+ticcmd_t *D_LocalTiccmdAge(uint8_t ss, int32_t age)
+{
+	if (age < 0 || age >= MAXGENTLEMENDELAY)
+		return NULL;
+
+	return &localcmds[ss][age];
+}
+
+void SendKick(uint8_t playernum, uint8_t msg)
 {
 	UINT8 buf[2];
 
@@ -671,7 +721,7 @@ void ReadLmpExtraData(UINT8 **demo_pointer, INT32 playernum)
 // end extra data function for lmps
 // -----------------------------------------------------------------
 
-static INT16 Consistancy(void);
+int16_t Consistancy(void);
 
 typedef enum
 {
@@ -1060,6 +1110,17 @@ static boolean CL_SendJoin(void)
 		memcpy(&netbuffer->u.clientcfg.challengeResponse[i], signature, sizeof(signature));
 	}
 
+	// A WORLDWIDE client says so after the stock packet (clientworldwide_pak).
+	// A stock server reads a clientconfig_pak and ignores the rest; a server in
+	// WORLDWIDE mode turns away a join without it (HandleConnect).
+	if (K_WorldwideDeclare())
+	{
+		memcpy(netbuffer->u.clientww.magic, WORLDWIDE_MAGIC, sizeof netbuffer->u.clientww.magic);
+		netbuffer->u.clientww.protocol = WORLDWIDE_PROTOCOL;
+
+		return HSendPacket(servernode, false, 0, sizeof (clientworldwide_pak));
+	}
+
 	return HSendPacket(servernode, false, 0, sizeof (clientconfig_pak));
 }
 
@@ -1118,6 +1179,7 @@ static void SV_SendServerInfo(INT32 node, tic_t servertime)
 
 	netbuffer->u.serverinfo.kartvars = (UINT8) (
 		(gamespeed & SV_SPEEDMASK) |
+		(K_WorldwideServer() ? SV_WORLDWIDE : 0) |
 		(dedicated ? SV_DEDICATED : 0) |
 		(cv_voice_allowservervoice.value ? SV_VOICEENABLED : 0)
 	);
@@ -1341,7 +1403,7 @@ static void SV_SendSaveGame(INT32 node, boolean resending)
 	// Leave room for the uncompressed length.
 	save.p += sizeof(UINT32);
 
-	P_SaveNetGame(&save, resending);
+	P_SaveNetGame(&save, resending, false);
 
 	length = save.p - save.buffer;
 	if (length > NETSAVEGAMESIZE)
@@ -1402,7 +1464,7 @@ static void CL_DumpConsistency(const char *file_name)
 		return;
 	}
 
-	P_SaveNetGame(&save, false);
+	P_SaveNetGame(&save, false, false);
 
 	length = save.p - save.buffer;
 	if (length > NETSAVEGAMESIZE)
@@ -1457,7 +1519,7 @@ static void CL_LoadReceivedSavegame(boolean reloading)
 	automapactive = false;
 
 	// load a base level
-	if (P_LoadNetGame(&save, reloading))
+	if (P_LoadNetGame(&save, reloading, false))
 	{
 		if (!reloading)
 		{
@@ -1971,6 +2033,10 @@ static boolean CL_ServerConnectionSearchTicker(tic_t *asksent)
 
 		if (client)
 		{
+			// The server decides: prediction against a server in WORLDWIDE mode,
+			// the stock netcode against any other (K_WorldwideJoin).
+			K_WorldwideJoin((serverlist[i].info.kartvars & SV_WORLDWIDE) != 0);
+
 #ifdef DEVELOP
 			// Commits do not match? Do not connect!
 			if (memcmp(serverlist[i].info.commit,
@@ -2781,6 +2847,9 @@ void CL_Reset(void)
 	connectiontimeout = (tic_t)cv_nettimeout.value; //reset this temporary hack
 
 	expectChallenge = false;
+
+	// Whatever the last server's WORLDWIDE mode switched on here.
+	K_WorldwideLeave();
 
 #ifdef HAVE_CURL
 	curl_failedwebdownload = false;
@@ -4087,9 +4156,9 @@ static boolean SV_AddWaitingPlayers(SINT8 node, UINT8 *availabilities, player_co
 
 				nobotoverwrite = newplayernum;
 
-				while (playeringame[nobotoverwrite]
-				&& players[nobotoverwrite].bot
-				&& nobotoverwrite < MAXPLAYERS)
+				while (nobotoverwrite < MAXPLAYERS
+				&& playeringame[nobotoverwrite]
+				&& players[nobotoverwrite].bot)
 				{
 					// Overwrite bots if there are NO other slots available.
 					nobotoverwrite++;
@@ -4491,6 +4560,18 @@ static void HandleConnect(SINT8 node)
 		}
 	}
 
+	// What a WORLDWIDE client adds after the stock packet (clientworldwide_pak),
+	// read before any refusal below writes over netbuffer. 0: not there, as
+	// from a stock client, which sends exactly a clientconfig_pak.
+	uint8_t wwprotocol = 0;
+
+	if (doomcom->datalength > 0
+		&& (size_t)doomcom->datalength >= BASEPACKETSIZE + sizeof (clientworldwide_pak)
+		&& memcmp(netbuffer->u.clientww.magic, WORLDWIDE_MAGIC, sizeof netbuffer->u.clientww.magic) == 0)
+	{
+		wwprotocol = netbuffer->u.clientww.protocol;
+	}
+
 	banrecord_t *ban = SV_GetBanByAddress(node);
 	if (ban == NULL)
 	{
@@ -4547,6 +4628,22 @@ static void HandleConnect(SINT8 node)
 		|| netbuffer->u.clientcfg.subversion != SUBVERSION)
 	{
 		SV_SendRefuse(node, va(M_GetText("Different Ring Racers versions cannot\nplay a netgame!\n(server version %d.%d)"), VERSION, SUBVERSION));
+	}
+	// A server in WORLDWIDE mode sends corrections in place of the full-state
+	// resend, which a stock client cannot use: it would drift and never be put
+	// right. So it lets in WORLDWIDE clients only (ROADMAP.md, compatibility).
+	// Node 0 is this machine's own player on a listen server.
+	else if (node != 0 && K_WorldwideServer() && wwprotocol == 0)
+	{
+		CONS_Printf("worldwide: refused node %d -- it did not declare itself WORLDWIDE\n", node);
+		SV_SendRefuse(node, M_GetText("This server runs the WORLDWIDE\nnetcode. Join it with a\nRing Racers WORLDWIDE build."));
+	}
+	else if (node != 0 && K_WorldwideServer() && wwprotocol != WORLDWIDE_PROTOCOL)
+	{
+		CONS_Printf("worldwide: refused node %d -- WORLDWIDE protocol %d, this server's is %d\n",
+			node, wwprotocol, WORLDWIDE_PROTOCOL);
+		SV_SendRefuse(node, va(M_GetText("Different WORLDWIDE versions\ncannot play together.\n(server %d, yours %d)"),
+			WORLDWIDE_PROTOCOL, wwprotocol));
 	}
 	else if (!cv_allownewplayer.value && node)
 	{
@@ -5087,6 +5184,7 @@ static void HandlePacketFromAwayNode(SINT8 node)
 			break;
 
 		case PT_CLIENTCMD:
+		case PT_STATECORRECTION:
 			break; // This is not an "unknown packet"
 
 		case PT_SERVERTICS:
@@ -5700,13 +5798,28 @@ static void HandlePacketFromPlayer(SINT8 node)
 				*/
 			}
 
+			// Measured, not assumed: does this land on the tic the client
+			// itself tagged it with, and does that answer ever change from one
+			// packet to the next.
+			K_RollbackNoteRelabel((int32_t)((int64_t)faketic - (int64_t)realstart),
+				(node == servernode), (gamestate == GS_LEVEL));
+
 			// And if we already have a ticcmd submitted for that time, it's weird packet pacing
 			// or interp messing with ticcmd send/receive timing. Instead of dropping, submit this
 			// ticcmd for the next tic, giving us 1 tic of "buffer".
 			// Remember, if we submitted 2 ticcmds too fast, the next one will probably be too slow!
+			dboolean shifted = false;
+
 			if ((!!(netcmds[faketic % BACKUPTICS][netconsole].flags & TICCMD_RECEIVED))
 				&& (faketic - firstticstosend < BACKUPTICS))
+			{
 				faketic++;
+				shifted = true;
+			}
+
+			// And whether it now lands on one already filed (WORLDWIDE.md 8.85).
+			K_RollbackNoteFiling(netconsole, shifted,
+				(netcmds[faketic % BACKUPTICS][netconsole].flags & TICCMD_RECEIVED) != 0);
 
 			FuzzTiccmd(&netbuffer->u.clientpak.cmd);
 
@@ -5760,6 +5873,33 @@ static void HandlePacketFromPlayer(SINT8 node)
 				&& !resendingsavegame[node] && savegameresendcooldown[node] <= I_GetTime()
 				&& !SV_ResendingSavegameToAnyone())
 			{
+				// With the light correction channel on, a checksum mismatch is
+				// not news. This server has been telling that client where every
+				// kart is a few times a second; answering the mismatch with a
+				// 318 KiB file transfer and a visible hitch would be repairing
+				// with a sledgehammer something a 600 byte packet is already
+				// holding together.
+				//
+				// This is the line where compatibility with stock servers is
+				// given up rather than bent, and it is the point of the whole
+				// exercise: a predicting client stutters *because* a stock server
+				// resends here.
+				//
+				// The cooldown is still stamped, so the notice below throttles at
+				// the same five seconds a real resend would have -- which keeps
+				// the count comparable with every measurement taken before today.
+				if (K_RollbackCorrectSuppress())
+				{
+					savegameresendcooldown[node] = I_GetTime() + 5 * TICRATE;
+					suppressedresends++;
+
+					CONS_Printf("rollback_correct: consistency mismatch for "
+						"player %d at tic %u -- resend suppressed, corrections "
+						"are on (%u so far)\n",
+						netconsole + 1, (uint32_t)realstart, suppressedresends);
+					break;
+				}
+
 				// Tell the client we are about to resend them the gamestate
 				netbuffer->packettype = PT_WILLRESENDGAMESTATE;
 				HSendPacket(node, true, 0, 0);
@@ -5771,6 +5911,13 @@ static void HandlePacketFromPlayer(SINT8 node)
 						netconsole+1, player_names[netconsole],
 						consistancy[realstart%BACKUPTICS],
 						SHORT(netbuffer->u.clientpak.consistancy));
+
+				// And what the checksum was actually looking at, on this side, for
+				// the tic being refused. The client prints its own line for the
+				// same tic, so the two can be read against each other.
+				if (blameline[realstart % BACKUPTICS][0] != '\0')
+					CONS_Printf("rollback_blame: SERVER %s\n",
+						blameline[realstart % BACKUPTICS]);
 				DEBFILE(va("Restoring player %d (synch failure) [%update] %d!=%d\n",
 					netconsole, realstart, consistancy[realstart%BACKUPTICS],
 					SHORT(netbuffer->u.clientpak.consistancy)));
@@ -6005,6 +6152,13 @@ static void HandlePacketFromPlayer(SINT8 node)
 					pak = G_ScpyTiccmd(netcmds[i%BACKUPTICS], pak,
 						netbuffer->u.serverpak.numslots*sizeof (ticcmd_t));
 
+					// The ticcmds above are copied whatever tic they are for --
+					// only the textcmds below are gated on i >= gametic. So an
+					// input for a tic this client has already run lands here, and
+					// this is the one place that can notice it disagreeing with
+					// what that tic was actually run on. Counting only, for now.
+					K_RollbackNoteArrival(i);
+
 					// copy the textcmds
 					numtxtpak = *txtpak++;
 					for (j = 0; j < numtxtpak; j++)
@@ -6012,8 +6166,15 @@ static void HandlePacketFromPlayer(SINT8 node)
 						INT32 k = *txtpak++; // playernum
 						const size_t txtsize = ((UINT16*)txtpak)[0]+2;
 
-						if (i >= gametic) // Don't copy old net commands
+						// Kept even for a tic already run, when the loop is on:
+						// dropping it is how the client and the server ended up
+						// disagreeing about who was a spectator. The tic is handed
+						// back to the real loop below so the message actually runs.
+						if (i >= gametic || K_RollbackPredictAhead() > 0)
 							M_Memcpy(D_GetTextcmd(i, k), txtpak, txtsize);
+
+						if (i < gametic && numtxtpak > 0)
+							K_RollbackNoteMessage(i);
 						txtpak += txtsize;
 					}
 				}
@@ -6030,6 +6191,64 @@ static void HandlePacketFromPlayer(SINT8 node)
 							"IRC or Discord so it can be fixed.\n", (INT32)realstart, (INT32)realend, (INT32)neededtic);*/
 			}
 			break;
+		case PT_STATECORRECTION:
+			// Only accept a correction from the server: it is the only machine
+			// entitled to say where anything is.
+			if (node != servernode)
+			{
+				CONS_Alert(CONS_WARNING, M_GetText("%s received from non-host %d\n"), "PT_STATECORRECTION", node);
+				if (server)
+					SendKick(netconsole, KICK_MSG_CON_FAIL);
+				break;
+			}
+
+			if (server)
+				break;   // a listen server hears its own broadcast
+
+			{
+				const statecorrection_pak *in = &netbuffer->u.statecorrection;
+				struct rollbackkart_t karts[MAXPLAYERS];
+				uint8_t n = in->numkarts;
+				uint8_t k;
+
+				if (n > MAXPLAYERS)
+					n = MAXPLAYERS;
+
+				// Copied field by field into the simulation's own shape rather
+				// than cast: the packet is packed and the struct is not, and a
+				// reinterpret would work on this compiler and rot on the next.
+				for (k = 0; k < n; k++)
+				{
+					karts[k].slot = in->kart[k].slot;
+					karts[k].x = in->kart[k].x;
+					karts[k].y = in->kart[k].y;
+					karts[k].z = in->kart[k].z;
+					karts[k].momx = in->kart[k].momx;
+					karts[k].momy = in->kart[k].momy;
+					karts[k].momz = in->kart[k].momz;
+					karts[k].angle = in->kart[k].angle;
+					karts[k].hitlag = in->kart[k].hitlag;
+					karts[k].rings = in->kart[k].rings;
+					karts[k].itemtype = in->kart[k].itemtype;
+					karts[k].itemamount = in->kart[k].itemamount;
+
+					karts[k].spinouttimer = in->kart[k].spinouttimer;
+					karts[k].nocontrol = in->kart[k].nocontrol;
+					karts[k].flashing = in->kart[k].flashing;
+					karts[k].spinouttype = in->kart[k].spinouttype;
+					karts[k].tumbleBounces = in->kart[k].tumbleBounces;
+					karts[k].wipeoutslow = in->kart[k].wipeoutslow;
+					karts[k].justbumped = in->kart[k].justbumped;
+					karts[k].offroad = in->kart[k].offroad;
+					karts[k].speed = in->kart[k].speed;
+				}
+
+				K_RollbackNoteServerState(in->tic, karts, n,
+					in->damages, in->damagehash,
+					in->inputs, in->inputhash);
+			}
+			break;
+
 		case PT_PING:
 			// Only accept PT_PING from the server.
 			if (node != servernode)
@@ -6081,6 +6300,27 @@ static void HandlePacketFromPlayer(SINT8 node)
 				PT_FileReceived();
 			break;
 		case PT_WILLRESENDGAMESTATE:
+			// Before the state comes back and overwrites everything, say what
+			// this side thought the world was. lastconfirmedtic is the tic this
+			// client last offered, which is the one the server refused.
+			// Wide enough to cover the trip. The server refuses tic N and this
+			// notice arrives several tics later -- six at 171 ms -- so a window
+			// of three printed tics that had nothing to do with the one refused.
+			// And the seed sum changes completely every tic, so lines from two
+			// different tics cannot be compared at all.
+			if (blameline[lastconfirmedtic % BACKUPTICS][0] != '\0')
+			{
+				tic_t t;
+
+				for (t = (lastconfirmedtic > 20) ? (lastconfirmedtic - 20) : 0;
+					t <= lastconfirmedtic; t++)
+				{
+					if (blameline[t % BACKUPTICS][0] != '\0')
+						CONS_Printf("rollback_blame: CLIENT %s\n",
+							blameline[t % BACKUPTICS]);
+				}
+			}
+
 			PT_WillResendGamestate();
 			break;
 		case PT_SENDINGLUAFILE:
@@ -6293,7 +6533,105 @@ static void GetPackets(void)
 // no more use random generator, because at very first tic isn't yet synchronized
 // Note: It is called consistAncy on purpose.
 //
-static INT16 Consistancy(void)
+/** Records the consistency of the world as it stands, as tic's checksum.
+  *
+  * The tic loop does this itself, immediately after each tic; a replay does not,
+  * because it goes around the loop. So after a correction the stored checksum for
+  * every replayed tic still describes the world *before* the correction -- and
+  * that stale value is what gets sent and compared. Exported for the rollback
+  * replay, which is the only other thing that advances a tic.
+  */
+void D_RecordConsistancy(tic_t tic)
+{
+	consistancy[tic % BACKUPTICS] = Consistancy();
+}
+
+tic_t D_NeededTic(void)
+{
+	return neededtic;
+}
+
+// What Consistancy() was looking at, tic by tic.
+//
+// Three theories about this desync have been written and refuted -- speculative
+// checksums, netxcmds escaping a discarded tic, a speculated angle being sent --
+// and each cost a build and a played race. So this stops guessing at the cause
+// and prints the thing itself.
+//
+// The search space is small: Consistancy hashes each player's x, y and itemtype,
+// and the synchronised RNG seeds, and MOBJCONSISTANCY is not defined in this
+// build. A position, an item, or a seed. Those are three different bugs and a
+// single line of text separates them.
+//
+// Both ends keep the same ring, so the client's line for tic N and the server's
+// line for tic N can be read side by side out of two logs on one machine.
+//
+// Called by the tic loop only, once per confirmed tic, so the once-a-second
+// print at the end sees each tic once and never a speculated one.
+static void Consistancy_Describe(tic_t tic)
+{
+	char *out = blameline[tic % BACKUPTICS];
+	uint32_t rngsum = 0;
+	int32_t n = 0;
+	int32_t i;
+
+	if (g_blame == false)
+	{
+		out[0] = '\0';
+		return;
+	}
+
+	n += snprintf(out + n, BLAMELINE - n, "tic %u:", (uint32_t)tic);
+
+	for (i = 0; i < MAXPLAYERS && n < BLAMELINE - 40; i++)
+	{
+		if (!playeringame[i] || !players[i].mo || gamestate != GS_LEVEL)
+			continue;
+
+		n += snprintf(out + n, BLAMELINE - n, " p%d(%d,%d,i%d)",
+			i, (int32_t)players[i].mo->x, (int32_t)players[i].mo->y,
+			(int32_t)players[i].itemtype);
+	}
+
+	if (gamestate == GS_LEVEL)
+	{
+		for (i = 0; i < PRNUMSYNCED; i++)
+			rngsum += P_GetRandSeed((pr_class_t)i);
+	}
+
+	snprintf(out + n, BLAMELINE - n, " rngsum=%u", rngsum);
+
+	// The two prints of this ring both sit on the way to a full-state resend,
+	// and with the correction channel on the resend is suppressed first -- so
+	// no race with the channel on has ever printed a line (WORLDWIDE.md 8.42).
+	// Printing the same tics on both machines, refused or not, lets the two
+	// logs be read side by side: the first tic whose seeds part, against the
+	// first whose positions do. One line a second, about 300 bytes.
+	if (gamestate == GS_LEVEL && tic % TICRATE == 0)
+		CONS_Printf("rollback_blame: SAMPLE %s\n", out);
+}
+
+/** Console command: rollback_blame [0/1]
+  *
+  * Turns the per-tic record on. Run it on both windows: the server prints its own
+  * line for the tic it refused, and the client prints the lines it sent around
+  * the same time, so the two can be compared by tic number. Both also print
+  * the line of every 35th tic, which is all that prints while the correction
+  * channel suppresses resends.
+  */
+void Command_RollbackBlame_f(void)
+{
+	if (COM_Argc() > 1)
+		g_blame = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_blame: %s\n",
+		(g_blame
+			? "on -- what the checksum was looking at is recorded every tic,"
+			  " and printed once a second"
+			: "off"));
+}
+
+int16_t Consistancy(void)
 {
 	INT32 i;
 	UINT32 ret = 0;
@@ -6484,6 +6822,32 @@ static void CL_SendClientCmd(void)
 	size_t packetsize = 0;
 	boolean mis = false;
 
+	// Which tic this client is willing to be judged on.
+	//
+	// The server compares the checksum we send against its own for the tic we
+	// label it with, and on a mismatch it resends the entire gamestate. A
+	// predicting client's world past neededtic is a *guess* -- being different is
+	// what predicting means -- so announcing its checksum is announcing a synch
+	// failure on purpose. Measured before this line existed: seven
+	// "Game state reloaded" in a two-minute race, unmoved by any other fix.
+	//
+	// So we report the newest tic the server has actually confirmed for us.
+	// consistancy[t] is the world at the *start* of tic t, written after tic t-1
+	// ran, so consistancy[neededtic] is the last one built entirely from inputs
+	// the server sent. The guarantee is not weakened: every confirmed tic is
+	// still checked, we simply stop offering speculation as evidence.
+	//
+	// Unchanged when the loop is off, because gametic never passes neededtic then.
+	// In the two-clock mode the authoritative loop never runs a guess, so the
+	// newest tic it finished is the newest honest checksum there is. Otherwise
+	// fall back to the tic index the server has confirmed -- which labels the
+	// value correctly but cannot make it true, and that gap is why the two-clock
+	// mode exists.
+	const tic_t reporttic =
+		(client && K_RollbackTwoClock() > 0 && lastconfirmedtic != 0)
+			? lastconfirmedtic
+			: ((client && gametic > neededtic) ? neededtic : gametic);
+
 	netbuffer->packettype = PT_CLIENTCMD;
 
 	if (cl_packetmissed)
@@ -6492,8 +6856,8 @@ static void CL_SendClientCmd(void)
 		mis = true;
 	}
 
-	netbuffer->u.clientpak.resendfrom = (UINT8)(neededtic & UINT8_MAX);
-	netbuffer->u.clientpak.client_tic = (UINT8)(gametic & UINT8_MAX);
+	netbuffer->u.clientpak.resendfrom = (uint8_t)(neededtic & UINT8_MAX);
+	netbuffer->u.clientpak.client_tic = (uint8_t)(reporttic & UINT8_MAX);
 
 	if (gamestate == GS_WAITINGPLAYERS)
 	{
@@ -6558,7 +6922,7 @@ static void CL_SendClientCmd(void)
 
 		packetsize = sizeof (clientcmd_pak);
 		G_MoveTiccmd(&netbuffer->u.clientpak.cmd, &localcmds[0][0], 1);
-		netbuffer->u.clientpak.consistancy = SHORT(consistancy[gametic % BACKUPTICS]);
+		netbuffer->u.clientpak.consistancy = SHORT(consistancy[reporttic % BACKUPTICS]);
 
 		if (splitscreen) // Send a special packet with 2 cmd for splitscreen
 		{
@@ -6621,6 +6985,116 @@ static void CL_SendClientCmd(void)
 
 // send the server packet
 // send tic from firstticstosend to maketic-1
+/** Sends every client a light state correction: where the karts actually are.
+  *
+  * The stock alternative is SV_SendSaveGame, which is a 120 to 318 KiB file
+  * transfer, one client at a time, with a five second cooldown and a load that
+  * costs about 11 ms on a machine that is drawing. This is 38 bytes a kart --
+  * 608 for a full grid -- so it can go out every few tics instead of being
+  * rationed, which is the difference between a correction and a repair.
+  *
+  * Sent unreliably on purpose: an acknowledgement and a retransmit are worth
+  * nothing here, because the next correction is a few tics behind this one and
+  * says something more recent. A dropped correction costs nothing; a delayed
+  * one is worse than no correction at all.
+  */
+static void SV_SendStateCorrection(void)
+{
+	int32_t i;
+	uint8_t n = 0;
+	size_t size;
+
+	netbuffer->packettype = PT_STATECORRECTION;
+	netbuffer->u.statecorrection.tic = (uint32_t)gametic;
+	netbuffer->u.statecorrection.reserved = 0;
+
+	{
+		uint32_t damages = 0, damagehash = 0;
+
+		// Through locals: statecorrection_pak is packed, so taking the address
+		// of a member of it is an unaligned pointer.
+		K_RollbackLiveDamages(&damages, &damagehash);
+
+		netbuffer->u.statecorrection.damages = damages;
+		netbuffer->u.statecorrection.damagehash = damagehash;
+	}
+
+	{
+		uint32_t inputs = 0, inputhash = 0;
+
+		K_RollbackLiveInputs(&inputs, &inputhash);
+
+		netbuffer->u.statecorrection.inputs = inputs;
+		netbuffer->u.statecorrection.inputhash = inputhash;
+	}
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		statekart_pak *k;
+
+		if (playeringame[i] == false || players[i].mo == NULL)
+			continue;
+
+		k = &netbuffer->u.statecorrection.kart[n++];
+
+		k->slot = (uint8_t)i;
+		k->flags = 0;
+
+		k->x = players[i].mo->x;
+		k->y = players[i].mo->y;
+		k->z = players[i].mo->z;
+
+		k->momx = players[i].mo->momx;
+		k->momy = players[i].mo->momy;
+		k->momz = players[i].mo->momz;
+
+		k->angle = players[i].mo->angle;
+		k->hitlag = players[i].mo->hitlag;
+
+		k->rings = players[i].rings;
+		k->itemtype = players[i].itemtype;
+		k->itemamount = players[i].itemamount;
+
+		k->spinouttimer = players[i].spinouttimer;
+		k->nocontrol = players[i].nocontrol;
+		k->flashing = players[i].flashing;
+		k->spinouttype = players[i].spinouttype;
+		k->tumbleBounces = players[i].tumbleBounces;
+		k->wipeoutslow = players[i].wipeoutslow;
+		k->justbumped = players[i].justbumped;
+		k->offroad = players[i].offroad;
+		k->speed = players[i].speed;
+	}
+
+	netbuffer->u.statecorrection.numkarts = n;
+
+	// The karts array is last in the packed struct, so an unused tail can just
+	// be left off the wire. A two-kart correction is 82 bytes, not 614.
+	size = sizeof (statecorrection_pak)
+		- ((MAXPLAYERS - (size_t)n) * sizeof (statekart_pak));
+
+	for (i = 0; i < MAXNETNODES; i++)
+	{
+		if (nodeingame[i] == false || i == 0)
+			continue;
+
+		// A client that is in the middle of receiving a whole savegame is about
+		// to have everything overwritten anyway.
+		if (resendingsavegame[i] || sendingsavegame[i])
+			continue;
+
+		// And nothing at all until the node is a player in the game. A joining
+		// client is being sent the initial state as a file transfer, and
+		// PT_STATECORRECTION sits below PT_CANFAIL -- privileged, where file
+		// fragments are droppable -- so a correction every four tics during a
+		// handshake would be competing with the join and winning.
+		if (nodetoplayer[i] < 0 || playeringame[nodetoplayer[i]] == false)
+			continue;
+
+		HSendPacket(i, false, 0, size);
+	}
+}
+
 static void SV_SendTics(void)
 {
 	tic_t realfirsttic, lasttictosend, i;
@@ -6809,6 +7283,7 @@ static void SV_Maketic(void)
 				// Copy the input from the previous tic
 				*ticcmd = *prevticcmd;
 				ticcmd->flags &= ~TICCMD_RECEIVED;
+				K_RollbackNoteRepeat(i);
 			}
 
 			// packetloss[i][leveltime%PACKETMEASUREWINDOW] = (cmd->flags & TICCMD_RECEIVED) ? false : true;
@@ -6822,7 +7297,9 @@ static void SV_Maketic(void)
 
 boolean TryRunTics(tic_t realtics)
 {
-	boolean ticking;
+	dboolean ticking;
+	tic_t runto;   // how far the loop below may go: neededtic, plus prediction
+	int32_t predictedthispass = 0;   // and how many of those tics were guesses
 
 	// the machine has lagged but it is not so bad
 	if (realtics > TICRATE/7) // FIXME: consistency failure!!
@@ -6843,6 +7320,39 @@ boolean TryRunTics(tic_t realtics)
 			D_MapChange(-1, 0, encoremode, false, 2, false, forcespecialstage); // finish the map change
 	}
 
+	// Before anything samples the world, and in particular before NetUpdate
+	// builds this machine's ticcmd out of it.
+	//
+	// G_BuildTiccmd takes the angle it sends straight off the player's mobj
+	// (g_build_ticcmd.cpp:211, then :475). With the speculation still standing,
+	// that is a *speculated* angle, and the server applies it to its confirmed
+	// world -- so the player is steered by a heading from a timeline nobody else
+	// ever ran. Driving makes the two angles diverge; sitting still does not,
+	// which is exactly the shape the measurements had:
+	//
+	//   null speculation, driven, 1400 restores : 0 resyncs
+	//   four speculated tics, NOT driven        : 0 resyncs
+	//   four speculated tics, driven            : 9 resyncs
+	//
+	// The restore was never the problem and neither were netxcmds -- the guard
+	// against those refused precisely zero messages in every race. What leaked
+	// was the one thing a client always sends: its own input.
+	// rollback_keepspec (WORLDWIDE.md 8.73): the speculation may be left standing
+	// instead, with the frontier's clock handed to the netcode; whether it is
+	// kept is decided once the server's tics are in, below.
+	if (K_RollbackTwoClock() > 0)
+	{
+		if (demo.playback || client == false || K_RollbackKeepArm() == false)
+			K_RollbackUnspeculate();
+	}
+
+	// Where the rest of this pass spends its time, step by step (WORLDWIDE.md
+	// 8.60). The restore above and the speculation below time themselves.
+	dboolean kept = false;
+	tic_t keptcount = 0;
+	precise_t stepat = I_GetPreciseTime();
+	const tic_t confirmedfrom = gametic;
+
 	NetUpdate();
 
 	if (demo.playback)
@@ -6856,6 +7366,77 @@ boolean TryRunTics(tic_t realtics)
 
 	GetPackets();
 
+	K_RollbackNoteStep(ROLLBACK_STEP_NET, &stepat);
+
+	// Were the tics the authoritative loop would now run the ones the standing
+	// speculation ran? The loop runs from the frontier until it holds
+	// netticbuffer tics in reserve (see its end), at least one; a tic with
+	// netxcmds is never kept, since only the loop runs them.
+	if (K_RollbackKeepArmed())
+	{
+		const tic_t from = gametic;
+		tic_t upto = from;
+		tic_t t;
+		dboolean textcmds = false;
+
+		if (neededtic > from)
+		{
+			const int32_t reserve = (int32_t)neededtic - cv_netticbuffer.value;
+
+			upto = (reserve > (int32_t)from + 1) ? (tic_t)reserve : from + 1;
+		}
+
+		for (t = from; t < upto && textcmds == false; t++)
+		{
+			int32_t p;
+
+			for (p = 0; p < MAXPLAYERS; p++)
+			{
+				if ((playeringame[p] || p == 0) && D_GetExistingTextcmd(t, p) != NULL)
+				{
+					textcmds = true;
+					break;
+				}
+			}
+		}
+
+		if (K_RollbackKeepDecide(upto, textcmds))
+		{
+			// What the loop does after each tic it runs, for the ones kept.
+			for (t = from; t < upto; t++)
+			{
+				int32_t p;
+
+				for (p = 0; p < MAXPLAYERS; p++)
+				{
+					if (playeringame[p])
+						K_RollbackNoteInput((uint32_t)t, (uint8_t)p, &netcmds[t % BACKUPTICS][p]);
+				}
+
+				consistancy[(t + 1) % BACKUPTICS] = K_RollbackKeepConsistancy(t);
+				lastconfirmedtic = t + 1;
+
+				if (client)
+					D_FreeTextcmd(t);
+			}
+
+			K_RollbackKeepCommit();
+			R_UpdateViewInterpolation();
+			kept = true;
+			keptcount = upto - from;
+		}
+	}
+
+	// A correction has to be measured and applied against the *confirmed* world,
+	// which exists exactly here: the speculation was undone above, GetPackets has
+	// just read whatever the server sent, and the authoritative loop below has
+	// not run yet. Anywhere earlier and the karts being compared are speculated;
+	// anywhere later and they have already moved on.
+	if (client && gamestate == GS_LEVEL && kept == false)
+		K_RollbackApplyServerState();
+
+	K_RollbackNoteStep(ROLLBACK_STEP_CORRECTION, &stepat);
+
 #ifdef DEBUGFILE
 	if (debugfile && (realtics || neededtic > gametic))
 	{
@@ -6867,13 +7448,84 @@ boolean TryRunTics(tic_t realtics)
 	}
 #endif
 
-	ticking = neededtic > gametic;
+	// Predict: a client may run past the tics the server has confirmed, on the
+	// last inputs it knows. A server has nothing to predict -- it *is* the thing
+	// everyone else is waiting for -- and outside a level there is no world to
+	// roll back to. Zero unless the loop is switched on, so on a stock run this
+	// line leaves runto equal to neededtic and nothing below changes at all.
+	runto = neededtic;
+
+	// Two-clock mode leaves runto at neededtic, so the loop below is the stock
+	// one -- which is the whole point, and the reason consistancy[] can be
+	// trusted. The world was already put back at the top of this function, which
+	// has to happen before NetUpdate rather than after it.
+	if (K_RollbackTwoClock() > 0)
+	{
+		// nothing further: the speculation is already undone
+	}
+	else if (client && gamestate == GS_LEVEL)
+	{
+		runto += (tic_t)K_RollbackPredictAhead();
+
+		// How far behind the server this client is before it runs anything. If
+		// that is never zero, it never runs out of confirmed tics and predict
+		// cannot fire -- which is a fact about the connection, not the code.
+		K_RollbackNoteTicLoop((int32_t)(neededtic - gametic));
+
+		// Correct: before running anything, put right any tic the network has
+		// since contradicted, so the world the loop below starts from is the
+		// corrected one.
+		K_RollbackCorrect();
+
+		// And if a message landed on a tic already predicted, give that tic back
+		// to this loop rather than replaying it inside a correction: netxcmds are
+		// run by ExtraDataTicker below, which the correction path never reaches.
+		{
+			tic_t back;
+
+			if (K_RollbackRewindWanted(&back) && back < gametic)
+			{
+				if (K_LoadGameState(back))
+				{
+					gametic = back;
+					runto = neededtic + (tic_t)K_RollbackPredictAhead();
+				}
+
+				K_RollbackRewindTaken();
+			}
+		}
+
+		// One predicted tic to a pass, when the pacing switch is on.
+		//
+		// A pass makes exactly one sample of the player's controls: NetUpdate
+		// calls Local_Maketic at the top of this function, and returns early
+		// unless a real tic has elapsed. The loop below then runs every tic the
+		// network has handed us plus the prediction depth, and gives them all
+		// that one sample, while the server -- which receives one sample a pass
+		// and spends one a tic -- has a distinct input for each. Measured as our
+		// own turning and angle frozen across four tics while the server's moved
+		// on every one of them.
+		//
+		// Confirmed tics are never held back by this: they carry their own
+		// inputs, and a client that has fallen behind has to be free to catch up.
+		// Only the guessing is paced.
+		if (K_RollbackPacing())
+		{
+			const tic_t frontier = (gametic > neededtic) ? gametic : neededtic;
+
+			if (runto > frontier + 1)
+				runto = frontier + 1;
+		}
+	}
+
+	ticking = runto > gametic;
 
 	if (ticking)
 	{
 		if (realtics)
 			hu_stopped = false;
 	}
+
 
 	if (player_joining)
 	{
@@ -6882,21 +7534,33 @@ boolean TryRunTics(tic_t realtics)
 		return false;
 	}
 
-	if (ticking)
+	if (ticking && kept == false)
 	{
 		boolean tickInterp = true;
 
 		// run the count * tics
-		while (neededtic > gametic)
+		while (runto > gametic)
 		{
-			boolean dontRun = false;
+			dboolean dontRun = false;
+			const dboolean predicted = (gametic >= neededtic);
+
+			if (predicted)
+			{
+				// Nobody has told us what happens in this tic yet, so repeat
+				// what everyone was last holding.
+				K_RollbackPredictInputs(gametic, (int32_t)(gametic - neededtic));
+				predictedthispass++;
+			}
 
 			DEBFILE(va("============ Running tic %d (local %d)\n", gametic, localgametic));
 
 			ps_prevtictime = ps_tictime;
 			ps_tictime = I_GetPreciseTime();
 
-			dontRun = ExtraDataTicker();
+			// Not on a predicted tic: the netxcmds in that slot belong to a tic
+			// the server has not confirmed, and running them would be acting on
+			// a message nobody has sent yet -- and again for real afterwards.
+			dontRun = predicted ? false : ExtraDataTicker();
 
 			if (levelloading == false
 				|| gametic > levelstarttic + 5) // Don't lock-up if a malicious client is sending tons of netxcmds
@@ -6954,7 +7618,25 @@ boolean TryRunTics(tic_t realtics)
 					tickInterp = false; // do not update again in sped-up tics
 				}
 
+				// The one place both client and server run a confirmed tic for
+				// real -- folded before G_Ticker consumes netcmds[], the first
+				// delivery rather than only a later resend.
+				{
+					int32_t rin;
+
+					for (rin = 0; rin < MAXPLAYERS; rin++)
+					{
+						if (playeringame[rin] == false)
+							continue;
+
+						K_RollbackNoteInput((uint32_t)gametic, (uint8_t)rin,
+							&netcmds[gametic % BACKUPTICS][rin]);
+					}
+				}
+
+				K_RollbackTicRunning(true);
 				G_Ticker(run);
+				K_RollbackTicRunning(false);
 			}
 
 			if (Playing() && netgame && (gametic % TICRATE == 0))
@@ -6969,11 +7651,26 @@ boolean TryRunTics(tic_t realtics)
 
 			gametic++;
 			consistancy[gametic % BACKUPTICS] = Consistancy();
+			lastconfirmedtic = gametic;
+			Consistancy_Describe(gametic);
 
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
 
 			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
-			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
+			//
+			// This is what stops a rollback client predicting, and it took an
+			// afternoon to find because it is at the *end* of the loop rather
+			// than in its condition. The client deliberately stops short, holding
+			// netticbuffer tics in reserve, so gametic settles at neededtic minus
+			// the buffer and the prediction test -- gametic >= neededtic -- can
+			// never be true. Three fixes aimed at how to predict changed nothing
+			// a player could feel, because nothing was predicting at all.
+			//
+			// A reserve is exactly right for a delay-based client: it smooths
+			// jitter by never running dry. It is exactly wrong for a rollback
+			// one, whose whole method is to run ahead and be corrected.
+			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value
+				&& K_RollbackPredictAhead() == 0)
 			{
 				break;
 			}
@@ -6984,6 +7681,11 @@ boolean TryRunTics(tic_t realtics)
 				g_player_voice_frames_this_tic[i] = 0;
 			}
 		}
+
+		// What lead the client is actually left with. Predicting needs one, and
+		// until this was asked nobody knew whether there ever was one.
+		if (client && gamestate == GS_LEVEL)
+			K_RollbackNoteTicLoopEnd((int32_t)(gametic - neededtic));
 
 		if (F_IsDeferredContinueCredits())
 		{
@@ -6999,6 +7701,33 @@ boolean TryRunTics(tic_t realtics)
 	{
 		if (realtics)
 			hu_stopped = true;
+	}
+
+	// How many predicted tics this pass ran, counted for every pass including the
+	// ones that ran nothing -- a pass makes a sample whether or not the loop
+	// spends it, and how many go unspent is half of the question.
+	if (client && gamestate == GS_LEVEL)
+		K_RollbackNotePass(predictedthispass);
+
+	K_RollbackNoteStep(ROLLBACK_STEP_CONFIRMED, &stepat);
+	K_RollbackNoteConfirmedTics((int32_t)(kept ? keptcount : gametic - confirmedfrom));
+
+	// And rebuild the speculation on top of the confirmed world, so what the
+	// player sees and acts in is ahead of what the server has confirmed. Every
+	// pass, unconditionally: the world was put back at the top of this function,
+	// and leaving it there would show the player the past.
+	if (K_RollbackTwoClock() > 0)
+	{
+		K_RollbackSpeculate();
+
+		// What is drawn is the speculation, and it just ran: the game goes on
+		// for the next frame whether or not the loop above ran a tic. A kept
+		// pass runs none, so the else above marked it stopped, and the next
+		// frame was drawn with no interpolation (d_main.cpp,
+		// timeisprogressing): the kart and the view held still between passes
+		// and jumped a whole tic at each (WORLDWIDE.md 8.102).
+		if (realtics && K_RollbackSpeculatedLastPass() > 0)
+			hu_stopped = false;
 	}
 
 	return ticking;
@@ -7111,6 +7840,11 @@ static void UpdatePingTable(void)
 
 	INT32 i;
 
+	// Shared by both branches below: a process is one role or the other, never
+	// both, so one pair of statics covers whichever branch this build runs.
+	static tic_t lastprinted_target_lag = (tic_t)-1;
+	static dboolean lastprinted_valid = false;
+
 	if (server)
 	{
 		if (Playing() && !(gametime % 8)) // Value chosen based on _my vibes man_
@@ -7135,13 +7869,40 @@ static void UpdatePingTable(void)
 			}
 		}
 
-		if (server_lagless)
+		// Rollback exists to pay for latency after the fact instead of up front, so
+		// when prediction is on it takes the delay's job rather than sitting on top
+		// of it. Measured the other way round first, and the measurement was the
+		// point: with the gentleman's delay still in charge it absorbed 171 ms by
+		// itself, the client was starved twenty-five times in three minutes, the
+		// loop corrected eleven -- and the player felt the input lag the delay was
+		// adding, which is exactly the cost rollback is supposed to remove.
+		//
+		// K_RollbackPays() covers rollback_loop AND rollback_twoclock -- asking
+		// K_RollbackPredictAhead() alone (the old loop only) used to mean this
+		// stayed false, and the delay stayed charged, the whole time the pivot
+		// has been measured. See K_RollbackPays()'s own comment.
+		const dboolean rollbackpays = K_RollbackPays();
+
+		if (server_lagless || rollbackpays)
 			target_lag = 0;
 		else
 			target_lag = fastest;
 
-		// Don't gentleman below your mindelay
-		if (target_lag < (tic_t)cv_mindelay.value)
+		// Don't gentleman below your mindelay -- unless rollback is paying, and
+		// this one was decided by a measurement rather than by argument.
+		//
+		// Keeping the floor sounded right: a small fixed delay absorbs jitter
+		// cheaply, and rollback covers the rest. But the floor is what the
+		// sending pipeline shifts the local input by, so with it in place the
+		// client predicts tic N with the input built this frame while the server
+		// applies that same input at tic N plus the floor. The two can never
+		// agree, and the detector said so in one line: every contradiction, 1520
+		// of 1520, was this machine mispredicting *itself*, with the other player
+		// predicted perfectly.
+		//
+		// Jitter absorption is worth having and this is not the way to get it
+		// while prediction is on. It comes back the moment neither is.
+		if (rollbackpays == false && target_lag < (tic_t)cv_mindelay.value)
 			target_lag = (tic_t)cv_mindelay.value;
 
 		pingmeasurecount++;
@@ -7160,10 +7921,65 @@ static void UpdatePingTable(void)
 			case 1:
 				playerdelaytable[nodetoplayer[0]] = target_lag;
 		}
+
+		// Same print as the client branch below, and it is here because the
+		// first reading only covered that branch. A listen server calls
+		// CL_SendClientCmd() for its own node 0 player too (D_ClientServerTic,
+		// `if (server)`), so the wantdelay the server receives comes from *two*
+		// senders computing target_lag in two different places -- and only one
+		// of them was being watched. The comment on K_RollbackPays() argues the
+		// two are symmetric; this measures it instead.
+		if (lastprinted_valid == false || target_lag != lastprinted_target_lag)
+		{
+			// K_RollbackTwoClock() is reported here only to show that it reads 0
+			// on this side by construction; correctrate is the term that can
+			// actually make rollbackpays true on a server.
+			CONS_Printf("rollback_lagcheck: [server] target_lag -> %u (fastest %u, "
+				"rollbackpays %d, twoclock %d, correctrate %d, gamestate %d)\n",
+				(unsigned)target_lag, (unsigned)fastest, (int32_t)rollbackpays,
+				K_RollbackTwoClock(), K_RollbackCorrectRate(), (int32_t)gamestate);
+
+			lastprinted_target_lag = target_lag;
+			lastprinted_valid = true;
+		}
 	}
 	else // We're a client, handle mindelay on the way out.
 	{
-		target_lag = cv_mindelay.value;
+		// The same exemption as above, and it belongs here too: this is the half
+		// that was missed. target_lag leaves as wantdelay on every packet and the
+		// server does faketic += (wantdelay - timegap), so a client with a
+		// mindelay is asking the server to hold that client's *own* input for
+		// that many tics -- and then cannot predict it, because the server
+		// applies it to a tic the client never spent it on. The floor was lifted
+		// in the server branch above and left standing here, which is why the
+		// measured offset saturated at +2 for a default mindelay of 2, at every
+		// prediction depth: 12 and 9 fell on a line, 7 and 5 both read +1.9.
+		//
+		// Measured on one map and one scenario, depth 7, with nothing else
+		// changed: contradictions 292 -> 75, corrections 268 -> 68, replayed
+		// tics 1606 -> 406, and the offset went from +1.89 spread over four
+		// values to a single spike at exactly +1 -- 26 of 26, then 22 of 22,
+		// then 36 of 36.
+		//
+		// That measurement predates the two-clock pivot and was taken under the
+		// old loop, which is the only mode K_RollbackPredictAhead() (now
+		// K_RollbackPays()) recognised at the time -- so it is a fair measurement
+		// of the exemption, just not of the mode this branch has run in since.
+		if (K_RollbackPays())
+			target_lag = 0;
+		else
+			target_lag = cv_mindelay.value;
+
+		if (lastprinted_valid == false || target_lag != lastprinted_target_lag)
+		{
+			CONS_Printf("rollback_lagcheck: [client] target_lag -> %u (predictahead %d, "
+				"twoclock %d, gamestate %d)\n",
+				(unsigned)target_lag, K_RollbackPredictAhead(), K_RollbackTwoClock(),
+				(int32_t)gamestate);
+
+			lastprinted_target_lag = target_lag;
+			lastprinted_valid = true;
+		}
 	}
 }
 
@@ -7497,6 +8313,10 @@ void NetUpdate(void)
 
 	Local_Maketic(realtics); // make local tic, and call menu?
 
+	// How many real tics this one sample stands for (WORLDWIDE.md 8.85).
+	if (client)
+		K_RollbackNoteSample(realtics);
+
 	if (server)
 		CL_SendClientCmd(); // send it
 
@@ -7555,6 +8375,16 @@ void NetUpdate(void)
 				D_Clearticcmd(tictoclear);                    // Clear the maketic the new tic
 
 			SV_SendTics();
+
+			// And, if this server has been asked for them, a light correction on
+			// top of the inputs. After the tics rather than before, so a client
+			// that reads both in one pass measures the correction against a world
+			// it has already advanced with those inputs.
+			if (K_RollbackCorrectRate() > 0 && gamestate == GS_LEVEL
+				&& (gametic % (tic_t)K_RollbackCorrectRate()) == 0)
+			{
+				SV_SendStateCorrection();
+			}
 
 			neededtic = maketic; // The server is a client too
 		}

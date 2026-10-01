@@ -23,6 +23,7 @@
 #include "i_system.h"
 #include "i_sound.h"
 #include "s_sound.h"
+#include "k_rollback.h" // K_RollbackReplaying
 #include "w_wad.h"
 #include "z_zone.h"
 #include "d_main.h"
@@ -441,7 +442,8 @@ void S_StartSoundAtVolume(const void *origin_p, sfxenum_t sfx_id, INT32 volume)
 	listener_t listener[MAXSPLITSCREENPLAYERS];
 	mobj_t *listenmobj[MAXSPLITSCREENPLAYERS];
 
-	if (S_SoundDisabled() || !sound_started)
+	// A replayed tic already made its noise the first time round.
+	if (S_SoundDisabled() || !sound_started || K_RollbackSoundsSilenced())
 		return;
 
 	// Don't want a sound? Okay then...
@@ -1092,7 +1094,77 @@ void S_ClearSfx(void)
 		I_FreeSfx(S_sfx + i);
 }
 
-static void S_StopChannel(INT32 cnum)
+// ---- Sounds across a rollback's local restore (WORLDWIDE.md 8.73) ----
+//
+// P_RemoveSavegameMobj leaves sounds playing through a local restore, so that
+// engine notes and item loops do not cut out thirty-five times a second. But
+// each channel kept pointing at the object it started from, and the restore
+// frees every object and loads it again, most at another address. S_UpdateSounds
+// then placed the sound wherever that memory now was -- another object, or none
+// -- every pass, and the local player's own engine stopped being recognised as
+// its own (c->origin != listenmobj). Gibax heard it as the sound stuttering.
+//
+// Only an origin whose thinker is P_MobjThinker is followed: a sector's or a
+// polyobject's sound origin is a degenmobj_t, which a restore does not move.
+static uint32_t *s_restorenum;       // mobj number of each channel's origin, 0 = not a mobj
+static mobjtype_t *s_restoretype;    // and its type, to refuse a number that now names another
+static dboolean *s_restoremobj;      // the origin was a mobj
+static int32_t s_restorecap;
+
+void S_NoteChannelOrigins(void)
+{
+	int32_t cnum;
+
+	if (numofchannels > s_restorecap)
+	{
+		s_restorecap = numofchannels;
+		s_restorenum = (uint32_t *)Z_Realloc(s_restorenum, sizeof (uint32_t) * s_restorecap, PU_STATIC, NULL);
+		s_restoretype = (mobjtype_t *)Z_Realloc(s_restoretype, sizeof (mobjtype_t) * s_restorecap, PU_STATIC, NULL);
+		s_restoremobj = (dboolean *)Z_Realloc(s_restoremobj, sizeof (dboolean) * s_restorecap, PU_STATIC, NULL);
+	}
+
+	for (cnum = 0; cnum < numofchannels; cnum++)
+	{
+		const thinker_t *th = (const thinker_t *)channels[cnum].origin;
+
+		s_restoremobj[cnum] = false;
+		s_restorenum[cnum] = 0;
+
+		if (channels[cnum].sfxinfo == NULL || th == NULL
+			|| th->function.acp1 != (actionf_p1)P_MobjThinker)
+			continue;
+
+		s_restoremobj[cnum] = true;
+		s_restorenum[cnum] = ((const mobj_t *)th)->mobjnum;
+		s_restoretype[cnum] = ((const mobj_t *)th)->type;
+	}
+}
+
+void S_RelinkChannelOrigins(mobj_t *(*find)(uint32_t mobjnum))
+{
+	int32_t cnum;
+
+	for (cnum = 0; cnum < numofchannels && cnum < s_restorecap; cnum++)
+	{
+		mobj_t *mo;
+
+		if (s_restoremobj[cnum] == false || channels[cnum].sfxinfo == NULL)
+			continue;
+
+		mo = (s_restorenum[cnum] != 0) ? find(s_restorenum[cnum]) : NULL;
+
+		// An object the snapshot does not hold, or a number that now names
+		// another type: the old pointer is freed memory either way.
+		if (mo == NULL || mo->type != s_restoretype[cnum])
+			S_StopChannel(cnum);
+		else
+			channels[cnum].origin = mo;
+
+		s_restoremobj[cnum] = false;
+	}
+}
+
+static void S_StopChannel(int32_t cnum)
 {
 	channel_t *c = &channels[cnum];
 

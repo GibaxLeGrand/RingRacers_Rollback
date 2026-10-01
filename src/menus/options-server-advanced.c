@@ -10,6 +10,7 @@
 /// \brief Advanced Server Options
 
 #include "../k_menu.h"
+#include "../d_clisrv.h" // cv_worldwide
 
 menuitem_t OPTIONS_ServerAdvanced[] =
 {
@@ -26,6 +27,11 @@ menuitem_t OPTIONS_ServerAdvanced[] =
 
 	{IT_HEADER, "Network Connection", NULL,
 		NULL, {NULL}, 0, 0},
+
+	// The server's one switch (WORLDWIDE.md 8.80). It only takes with nobody
+	// else connected: Worldwide_OnChange puts it back otherwise.
+	{IT_STRING | IT_CVAR, "WORLDWIDE Mode", "Enable client-side prediction on this server; only WORLDWIDE players can join.",
+		NULL, {.cvar = &cv_worldwide}, 0, 0},
 
 	{IT_STRING | IT_CVAR, "Delay Limit (tics)", "Players above the delay limit will get kicked from the server.",
 		NULL, {.cvar = &cv_maxping}, 0, 0},

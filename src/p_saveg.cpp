@@ -18,6 +18,7 @@
 #include "d_main.h"
 #include "doomstat.h"
 #include "g_game.h"
+#include "i_system.h" // I_GetPreciseTime(), for the load profile
 #include "m_random.h"
 #include "m_misc.h"
 #include "p_local.h"
@@ -50,6 +51,7 @@
 #include "k_vote.h"
 #include "k_zvote.h"
 #include "k_endcam.h"
+#include "k_rollback.h" // K_RollbackRefTrace
 
 #include <tracy/tracy/TracyC.h>
 
@@ -57,6 +59,135 @@ savedata_t savedata;
 savedata_cup_t cupsavedata;
 
 static savebuffer_t *current_savebuffer;
+
+// Set by P_SaveNetGame for the duration of a save, and left where it is
+// afterwards so P_ArchiveMobjForDiagnostics re-archives an object the same way
+// the last snapshot did.
+static dboolean localsnapshot;
+
+// Set by P_LoadNetGame for a restore that stays on this machine: a rollback
+// putting back a state it took itself, rather than a gamestate arriving from
+// the network. Decoration that is local to this machine can then be left
+// alone instead of being torn down and rebuilt.
+static dboolean localrestore;
+
+// Set for the length of a raw local save or load (rollback_rawsnap,
+// WORLDWIDE.md 8.88). The level pools -- every thinker and sector node -- and
+// the heads that point into them are copied raw beside the archive, so the
+// archive leaves out what they hold: the thinker lists, the chain stamp.
+static dboolean rawsnapshot;
+
+// Defined further down, next to the object archiver it was written for. The
+// players archiver needs it too: a player's pointer to an object is written
+// under the same rule as an object's pointer to another one.
+static inline dboolean MobjIsArchived(const mobj_t *mobj);
+
+// Defined with the rest of the load profiling, further down, but called from
+// the unarchiving functions above it.
+static void P_ProfileStep(const char *name);
+
+// ----------------------------------------------------------------------------
+// Save profiling (WORLDWIDE.md 8.81)
+//
+// The load has had its steps timed since 8.34; the save had only its total,
+// and under rollback_keepspec it is the larger half of a pass (8.78). Every
+// local save adds each step's time and bytes to the step of the same index:
+// P_SaveNetGame's steps come in a fixed order, and only a local save, which
+// is always taken in a level, is counted. Timed in the counter's own units and
+// converted when read, so a step shorter than a microsecond still adds up.
+// Some fifteen clock reads a save, against milliseconds of writing.
+// ----------------------------------------------------------------------------
+
+static savestep_t g_saveprofile[P_SAVEPROFILE_MAX];
+static precise_t g_saveprofileticks[P_SAVEPROFILE_MAX];
+static size_t g_saveprofilecount;   // steps seen so far
+static uint32_t g_saveprofilesaves;
+static dboolean g_saveprofiling;    // inside a local P_SaveNetGame
+static size_t g_savestep;           // the step that save is on
+static precise_t g_savemark;
+static const uint8_t *g_savemarkp;
+
+static void P_SaveProfileStart(const savebuffer_t *save)
+{
+	g_saveprofiling = true;
+	g_savestep = 0;
+	g_savemarkp = save->p;
+	g_savemark = I_GetPreciseTime();
+}
+
+/** Books the time and the bytes since the last step under this one. */
+static void P_SaveProfileStep(const savebuffer_t *save, const char *name)
+{
+	precise_t now;
+
+	if (g_saveprofiling == false)
+		return;
+
+	now = I_GetPreciseTime();
+
+	if (g_savestep < P_SAVEPROFILE_MAX)
+	{
+		g_saveprofile[g_savestep].name = name;
+		g_saveprofile[g_savestep].bytes += (uint64_t)(save->p - g_savemarkp);
+		g_saveprofileticks[g_savestep] += now - g_savemark;
+
+		if (g_savestep + 1 > g_saveprofilecount)
+			g_saveprofilecount = g_savestep + 1;
+	}
+
+	g_savestep++;
+	g_savemarkp = save->p;
+	g_savemark = now;
+}
+
+static void P_SaveProfileEnd(void)
+{
+	if (g_saveprofiling == false)
+		return;
+
+	g_saveprofilesaves++;
+	g_saveprofiling = false;
+}
+
+size_t P_GetSaveProfile(const savestep_t **steps, uint32_t *saves)
+{
+	size_t i;
+
+	for (i = 0; i < g_saveprofilecount; i++)
+		g_saveprofile[i].us = (g_saveprofileticks[i] * (uint64_t)1000000) / I_GetPrecisePrecision();
+
+	*steps = g_saveprofile;
+	*saves = g_saveprofilesaves;
+	return g_saveprofilecount;
+}
+
+void P_ResetSaveProfile(void)
+{
+	memset(g_saveprofile, 0, sizeof g_saveprofile);
+	memset(g_saveprofileticks, 0, sizeof g_saveprofileticks);
+	g_saveprofilecount = 0;
+	g_saveprofilesaves = 0;
+}
+
+// Where each object sits in the chains collision walks. Declared here
+// because SaveMobjThinker, further up the file than the rest of this, is
+// what writes them out.
+#define CHAINORDER_MAX 16384
+
+static uint16_t chainorder_block[CHAINORDER_MAX];
+static uint16_t chainorder_sector[CHAINORDER_MAX];
+static dboolean chainorder_ready;
+
+
+// Where each player's record started, in the last archive written. The players
+// block is written as one run of fields with no markers inside it, so without
+// this a difference reported there is a bare offset into 16 records.
+static size_t playerrecordoffset[MAXPLAYERS];
+
+// Where the players block ends. Without it, an offset anywhere later in the
+// snapshot gets attributed to the last player, and a difference in the thinkers
+// block is reported as "player 15, 128934 bytes into their record".
+static size_t playersblockend;
 
 // Block UINT32s to attempt to ensure that the correct data is
 // being sent and received
@@ -213,9 +344,12 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 	WRITEUINT32(save->p, ARCHIVEBLOCK_PLAYERS);
 
+	memset(playerrecordoffset, 0, sizeof (playerrecordoffset));
+
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
-		WRITESINT8(save->p, (SINT8)adminplayers[i]);
+		playerrecordoffset[i] = (size_t)(save->p - save->buffer);
+		WRITESINT8(save->p, (int8_t)adminplayers[i]);
 
 		for (j = 0; j < PWRLV_NUMTYPES; j++)
 		{
@@ -240,7 +374,17 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEANGLE(save->p, players[i].aiming);
 		WRITEANGLE(save->p, players[i].drawangle);
 		WRITEANGLE(save->p, players[i].viewrollangle);
-		WRITEANGLE(save->p, players[i].tilt);
+
+		// The camera lean is presentation, and only for whoever is being
+		// looked at: R_ViewRollAngle is its one reader. It still goes out on
+		// the wire, where a joining client has to be given some value and the
+		// format is not ours to change -- but a local snapshot has no business
+		// carrying it, and comparing it made a value that exists to look nice
+		// fail 141 checks in 530.
+		if (localsnapshot == false)
+		{
+			WRITEANGLE(save->p, players[i].tilt);
+		}
 		WRITEINT32(save->p, players[i].awayview.tics);
 
 		WRITEUINT8(save->p, players[i].playerstate);
@@ -321,61 +465,84 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 		WRITEUINT8(save->p, players[i].splitscreenindex);
 
-		if (players[i].awayview.mobj)
+		// The inputs of this tic and the one before it. oldcmd is what the
+		// gameplay code compares against to find a button *press* rather than a
+		// button held -- using an item, e-braking, tricks and the bots all turn
+		// on that edge. A restore that does not bring it back mistakes held for
+		// pressed, or the reverse, on its first replayed tic, and the world goes
+		// somewhere else from there.
+		//
+		// ticcmd_t is packed and this snapshot never leaves the machine that
+		// wrote it, so it goes out whole.
+		if (localsnapshot)
+		{
+			WRITEMEM(save->p, &players[i].cmd, sizeof (ticcmd_t));
+			WRITEMEM(save->p, &players[i].oldcmd, sizeof (ticcmd_t));
+
+			// The rest of what the wire format leaves out and drawing does not
+			// own. A local snapshot has no reason to skip anything the
+			// simulation reads.
+			WRITEINT32(save->p, players[i].SPBdistance);
+			WRITEFIXED(save->p, players[i].itemscale);
+			WRITEUINT8(save->p, players[i].enteredGame);
+			WRITEUINT8(save->p, players[i].faultflash);
+		}
+
+		if (MobjIsArchived(players[i].awayview.mobj))
 			flags |= AWAYVIEW;
 
-		if (players[i].followmobj)
+		if (MobjIsArchived(players[i].followmobj))
 			flags |= FOLLOWITEM;
 
-		if (players[i].follower)
+		if (MobjIsArchived(players[i].follower))
 			flags |= FOLLOWER;
 
-		if (players[i].skybox.viewpoint)
+		if (MobjIsArchived(players[i].skybox.viewpoint))
 			flags |= SKYBOXVIEW;
 
-		if (players[i].skybox.centerpoint)
+		if (MobjIsArchived(players[i].skybox.centerpoint))
 			flags |= SKYBOXCENTER;
 
-		if (players[i].hoverhyudoro)
+		if (MobjIsArchived(players[i].hoverhyudoro))
 			flags |= HOVERHYUDORO;
 
-		if (players[i].ballhogreticule)
+		if (MobjIsArchived(players[i].ballhogreticule))
 			flags |= BALLHOGRETICULE;
 
-		if (players[i].stumbleIndicator)
+		if (MobjIsArchived(players[i].stumbleIndicator))
 			flags |= STUMBLE;
 
-		if (players[i].wavedashIndicator)
+		if (MobjIsArchived(players[i].wavedashIndicator))
 			flags |= WAVEDASH;
 
-		if (players[i].trickIndicator)
+		if (MobjIsArchived(players[i].trickIndicator))
 			flags |= TRICKINDICATOR;
 
-		if (players[i].whip)
+		if (MobjIsArchived(players[i].whip))
 			flags |= WHIP;
 
-		if (players[i].hand)
+		if (MobjIsArchived(players[i].hand))
 			flags |= HAND;
 
-		if (players[i].ringShooter)
+		if (MobjIsArchived(players[i].ringShooter))
 			flags |= RINGSHOOTER;
 
-		if (players[i].flickyAttacker)
+		if (MobjIsArchived(players[i].flickyAttacker))
 			flags |= FLICKYATTACKER;
 
-		if (players[i].powerup.flickyController)
+		if (MobjIsArchived(players[i].powerup.flickyController))
 			flags |= FLICKYCONTROLLER;
 
-		if (players[i].powerup.barrier)
+		if (MobjIsArchived(players[i].powerup.barrier))
 			flags |= BARRIER;
 
-		if (players[i].stoneShoe)
+		if (MobjIsArchived(players[i].stoneShoe))
 			flags |= STONESHOE;
 
-		if (players[i].toxomisterCloud)
+		if (MobjIsArchived(players[i].toxomisterCloud))
 			flags |= TOXOMISTERCLOUD;
 
-		if (players[i].flybot)
+		if (MobjIsArchived(players[i].flybot))
 			flags |= FLYBOT;
 
 		WRITEUINT32(save->p, flags);
@@ -442,7 +609,9 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEUINT8(save->p, players[i].kartspeed);
 		WRITEUINT8(save->p, players[i].kartweight);
 
-		WRITEUINT8(save->p, players[i].followerskin);
+		// Signed: -1 is the sentinel for having no follower, and an unsigned
+		// byte turned it into 255. Same one byte on the wire either way.
+		WRITESINT8(save->p, players[i].followerskin);
 		WRITEUINT8(save->p, players[i].followerready);	// booleans are really just numbers eh??
 		WRITEUINT16(save->p, players[i].followercolor);
 		if (flags & FOLLOWER)
@@ -838,6 +1007,40 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 
 		WRITEUINT32(save->p, players[i].itemRoulette.preexpdist);
 		WRITEUINT32(save->p, players[i].itemRoulette.dist);
+
+		// playing and exiting are read by K_GetItemRouletteDistance (item-odds
+		// distance calculation, k_kart.c) and were never archived at all, in
+		// either mode -- not a stock-grammar question, just missed when the
+		// other four roulette fields were added (WORLDWIDE.md 8.14). Found by
+		// rollback_leak (8.34): a restore left them holding whatever the extra
+		// pass's own tics had counted up to, not the snapshot's value.
+		//
+		// Local snapshots only, same reasoning as baseDist below: the netgame
+		// savegame has to keep stock grammar (8.28).
+		if (localsnapshot)
+		{
+			WRITEUINT8(save->p, players[i].itemRoulette.playing);
+			WRITEUINT8(save->p, players[i].itemRoulette.exiting);
+		}
+
+		// baseDist drives the roulette's own spin-speed calculation
+		// (K_RouletteTick, progress/frontRun) and secondToFirst decides
+		// whether an SPB is forced into the result (SPBFORCEDIST) -- both
+		// read every tic the roulette runs, neither archived until now, so a
+		// restore mid-roulette left them holding whatever the world last
+		// computed rather than what this snapshot actually had.
+		//
+		// Local snapshots only: the netgame savegame has to keep stock grammar,
+		// or a stock peer misreads everything after this by 16 bytes a player
+		// (WORLDWIDE.md 8.28).
+		if (localsnapshot)
+		{
+			WRITEUINT32(save->p, players[i].itemRoulette.baseDist);
+			WRITEUINT32(save->p, players[i].itemRoulette.firstDist);
+			WRITEUINT32(save->p, players[i].itemRoulette.secondDist);
+			WRITEUINT32(save->p, players[i].itemRoulette.secondToFirst);
+		}
+
 		WRITEUINT32(save->p, players[i].itemRoulette.index);
 		WRITEUINT8(save->p, players[i].itemRoulette.sound);
 		WRITEUINT32(save->p, players[i].itemRoulette.speed);
@@ -877,6 +1080,15 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		// ACS has read access to this, so it has to be net-communicated.
 		// It is the ONLY roundcondition that is sent over the wire and I'd like it to stay that way.
 		WRITEUINT32(save->p, players[i].roundconditions.unlocktriggers);
+
+		// The rest of them stays off the wire, but not out of a rollback: they
+		// record what happened this round for the challenges -- fell off, hit
+		// in mid-air, top speed -- and a speculated tic that sets one would
+		// count towards an unlock if nothing put it back. Every leak soak has
+		// shown bytes here that a restore did not reset (WORLDWIDE.md 8.11,
+		// 8.57). A plain struct, no pointers.
+		if (localsnapshot)
+			WRITEMEM(save->p, &players[i].roundconditions, sizeof (players[i].roundconditions));
 
 		// powerupvars_t
 		WRITEUINT16(save->p, players[i].powerup.superTimer);
@@ -941,6 +1153,20 @@ static void P_NetArchivePlayers(savebuffer_t *save)
 		WRITEUINT32(save->p, players[i].darkness_end);
 	}
 
+	playersblockend = (size_t)(save->p - save->buffer);
+
+	// The cameras went in here for one reason: the tic computed player->tilt
+	// from them and tilt was archived, so a replay that started from a
+	// different camera ended with a different tilt. That collapsed the
+	// unrepeatable replays from 121 to 14 and left the cameras themselves being
+	// compared instead -- 43 of 44 differences in one played race landed in
+	// these bytes, because a camera is driven by a local view that nothing
+	// archives either.
+	//
+	// With tilt out of a local snapshot there is nothing left that reads them,
+	// so they come out too. A rollback leaving the camera where it is, rather
+	// than rewinding it, is also what you want to look at.
+
 	TracyCZoneEnd(__zone);
 }
 
@@ -983,7 +1209,11 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].aiming = READANGLE(save->p);
 		players[i].drawangle = players[i].old_drawangle = READANGLE(save->p);
 		players[i].viewrollangle = READANGLE(save->p);
-		players[i].tilt = READANGLE(save->p);
+
+		if (localrestore == false)
+		{
+			players[i].tilt = READANGLE(save->p);
+		}
 		players[i].awayview.tics = READINT32(save->p);
 
 		players[i].playerstate = (playerstate_t)READUINT8(save->p);
@@ -1050,10 +1280,16 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].lastsidehit = READINT16(save->p);
 		players[i].lastlinehit = READINT16(save->p);
 
+		// Read in the order P_NetArchivePlayers writes them. They were not:
+		// onconveyor goes out before the two counters and was being read after,
+		// so timeshit took onconveyor's first byte, timeshitprev its second,
+		// and onconveyor itself took its own last two bytes followed by the two
+		// counters. Since onconveyor is almost always zero, the counters came
+		// back as zero and nobody noticed.
+		players[i].onconveyor = READINT32(save->p);
+
 		players[i].timeshit = READUINT8(save->p);
 		players[i].timeshitprev = READUINT8(save->p);
-
-		players[i].onconveyor = READINT32(save->p);
 
 		players[i].jointime = READUINT32(save->p);
 
@@ -1064,61 +1300,108 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 
 		players[i].splitscreenindex = READUINT8(save->p);
 
+		if (localrestore)
+		{
+			READMEM(save->p, &players[i].cmd, sizeof (ticcmd_t));
+			READMEM(save->p, &players[i].oldcmd, sizeof (ticcmd_t));
+
+			players[i].SPBdistance = READINT32(save->p);
+			players[i].itemscale = READFIXED(save->p);
+			players[i].enteredGame = READUINT8(save->p);
+			players[i].faultflash = READUINT8(save->p);
+		}
+
 		flags = READUINT32(save->p);
 
 		if (flags & SKYBOXVIEW)
 			players[i].skybox.viewpoint = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].skybox.viewpoint = NULL;
 
 		if (flags & SKYBOXCENTER)
 			players[i].skybox.centerpoint = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].skybox.centerpoint = NULL;
 
 		if (flags & AWAYVIEW)
 			players[i].awayview.mobj = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].awayview.mobj = NULL;
 
 		if (flags & FOLLOWITEM)
 			players[i].followmobj = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].followmobj = NULL;
 
 		if (flags & HOVERHYUDORO)
 			players[i].hoverhyudoro = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].hoverhyudoro = NULL;
 
 		if (flags & BALLHOGRETICULE)
 			players[i].ballhogreticule = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].ballhogreticule = NULL;
 
 		if (flags & STUMBLE)
 			players[i].stumbleIndicator = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].stumbleIndicator = NULL;
 
 		if (flags & WAVEDASH)
 			players[i].wavedashIndicator = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].wavedashIndicator = NULL;
 
 		if (flags & TRICKINDICATOR)
 			players[i].trickIndicator = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].trickIndicator = NULL;
 
 		if (flags & WHIP)
 			players[i].whip = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].whip = NULL;
 
 		if (flags & HAND)
 			players[i].hand = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].hand = NULL;
 
 		if (flags & RINGSHOOTER)
 			players[i].ringShooter = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].ringShooter = NULL;
 
 		if (flags & FLICKYATTACKER)
 			players[i].flickyAttacker = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].flickyAttacker = NULL;
 
 		if (flags & FLICKYCONTROLLER)
 			players[i].powerup.flickyController = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].powerup.flickyController = NULL;
 
 		if (flags & BARRIER)
 			players[i].powerup.barrier = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].powerup.barrier = NULL;
 
 		if (flags & STONESHOE)
 			players[i].stoneShoe = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].stoneShoe = NULL;
 
 		if (flags & TOXOMISTERCLOUD)
 			players[i].toxomisterCloud = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].toxomisterCloud = NULL;
 
 		if (flags & FLYBOT)
 			players[i].flybot = (mobj_t *)(size_t)READUINT32(save->p);
+		else
+			players[i].flybot = NULL;
 
 		players[i].followitem = (mobjtype_t)READUINT32(save->p);
 
@@ -1129,7 +1412,7 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		players[i].kartspeed = READUINT8(save->p);
 		players[i].kartweight = READUINT8(save->p);
 
-		players[i].followerskin = READUINT8(save->p);
+		players[i].followerskin = READSINT8(save->p);
 		players[i].followerready = READUINT8(save->p);
 		players[i].followercolor = READUINT16(save->p);
 		if (flags & FOLLOWER)
@@ -1497,43 +1780,79 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 			players[i].itemRoulette.itemList.items[q] = READSINT8(save->p);
 		}
 #else
-		players[i].itemRoulette.itemList.cap = (size_t)READUINT32(save->p);
-		players[i].itemRoulette.itemList.len = (size_t)READUINT32(save->p);
-
-		if (players[i].itemRoulette.itemList.cap > 0)
 		{
-			if (players[i].itemRoulette.itemList.items == NULL)
-			{
-				players[i].itemRoulette.itemList.items = (SINT8*)Z_Calloc(
-					sizeof(SINT8) * players[i].itemRoulette.itemList.cap,
-					PU_STATIC,
-					NULL
-				);
-			}
-			else
-			{
-				players[i].itemRoulette.itemList.items = (SINT8*)Z_Realloc(
-					players[i].itemRoulette.itemList.items,
-					sizeof(SINT8) * players[i].itemRoulette.itemList.cap,
-					PU_STATIC,
-					NULL
-				);
-			}
+			// The capacity the snapshot was taken at, read into a local rather
+			// than straight into the structure: what is in there is the size of
+			// the block this player already holds, and overwriting it before
+			// looking at it is what made every restore reallocate. The old code
+			// compared nothing and called Z_Realloc every time, so a soak of a
+			// few hundred checks asked the zone for thousands of blocks across
+			// sixteen players and it eventually refused -- reported as "not
+			// enough memory for item roulette list", an allocation that had
+			// nothing to do with whatever actually exhausted it.
+			//
+			// Growing only. cap then describes the block that is held, which is
+			// what it is for; and since both passes of a check share this
+			// allocation, both archive the same number, so the byte-for-byte
+			// comparison is unaffected. The list only ever grows over a race,
+			// so a restore of an earlier state never needs it smaller.
+			const size_t want = (size_t)READUINT32(save->p);
+			const size_t used = (size_t)READUINT32(save->p);
 
-			if (players[i].itemRoulette.itemList.items == NULL)
-			{
-				I_Error("Not enough memory for item roulette list\n");
-			}
+			players[i].itemRoulette.itemList.len = used;
 
-			for (q = 0; q < players[i].itemRoulette.itemList.len; q++)
+			if (want > 0)
 			{
-				players[i].itemRoulette.itemList.items[q] = READSINT8(save->p);
+				if (players[i].itemRoulette.itemList.items == NULL)
+				{
+					players[i].itemRoulette.itemList.items = (int8_t*)Z_Calloc(
+						sizeof(int8_t) * want,
+						PU_STATIC,
+						NULL
+					);
+					players[i].itemRoulette.itemList.cap = want;
+				}
+				else if (players[i].itemRoulette.itemList.cap < want)
+				{
+					players[i].itemRoulette.itemList.items = (int8_t*)Z_Realloc(
+						players[i].itemRoulette.itemList.items,
+						sizeof(int8_t) * want,
+						PU_STATIC,
+						NULL
+					);
+					players[i].itemRoulette.itemList.cap = want;
+				}
+
+				if (players[i].itemRoulette.itemList.items == NULL)
+				{
+					I_Error("Not enough memory for item roulette list\n");
+				}
+
+				for (q = 0; q < used; q++)
+				{
+					players[i].itemRoulette.itemList.items[q] = READSINT8(save->p);
+				}
 			}
 		}
 #endif
 
 		players[i].itemRoulette.preexpdist = READUINT32(save->p);
 		players[i].itemRoulette.dist = READUINT32(save->p);
+
+		if (localrestore)
+		{
+			players[i].itemRoulette.playing = READUINT8(save->p);
+			players[i].itemRoulette.exiting = READUINT8(save->p);
+		}
+
+		if (localrestore)
+		{
+			players[i].itemRoulette.baseDist = READUINT32(save->p);
+			players[i].itemRoulette.firstDist = READUINT32(save->p);
+			players[i].itemRoulette.secondDist = READUINT32(save->p);
+			players[i].itemRoulette.secondToFirst = READUINT32(save->p);
+		}
+
 		players[i].itemRoulette.index = (size_t)READUINT32(save->p);
 		players[i].itemRoulette.sound = READUINT8(save->p);
 		players[i].itemRoulette.speed = (tic_t)READUINT32(save->p);
@@ -1573,6 +1892,10 @@ static void P_NetUnArchivePlayers(savebuffer_t *save)
 		// ACS has read access to this, so it has to be net-communicated.
 		// It is the ONLY roundcondition that is sent over the wire and I'd like it to stay that way.
 		players[i].roundconditions.unlocktriggers = READUINT32(save->p);
+
+		// See the archiver: the whole of them, in a rollback's own snapshots.
+		if (localrestore)
+			READMEM(save->p, &players[i].roundconditions, sizeof (players[i].roundconditions));
 
 		// powerupvars_t
 		players[i].powerup.superTimer = READUINT16(save->p);
@@ -3148,7 +3471,26 @@ static inline UINT32 SaveMobjnum(const mobj_t *mobj)
 	return 0;
 }
 
-static UINT32 SaveSector(const sector_t *sector)
+/** Is this object one that P_SaveNetGame writes?
+  *
+  * A reference is only worth archiving if its target is archived too, since
+  * the reader resolves it by mobjnum. An object that is not written has no
+  * number of its own -- MF_NOTHINK objects never even reach a thinker list, so
+  * the numbering pass at the top of P_SaveNetGame never sees them -- and the
+  * reference comes back as NULL. Worse, mobjnum is handed out per save and
+  * never cleared, so an unarchived object holding a number from an earlier
+  * save would be resolved to whichever object holds that number now.
+  *
+  * Only meaningful once P_SaveNetGame has assigned the numbers for this save.
+  */
+static inline dboolean MobjIsArchived(const mobj_t *mobj)
+{
+	return (mobj != NULL && mobj->mobjnum != 0
+		&& P_MobjWasRemoved(mobj) == false
+		&& TypeIsNetSynced(mobj->type) != false);
+}
+
+static uint32_t SaveSector(const sector_t *sector)
 {
 	if (sector) return (UINT32)(sector - sectors);
 	return 0xFFFFFFFF;
@@ -3322,9 +3664,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 		diff |= MD_THRESHOLD;
 	if (mobj->lastlook != -1)
 		diff |= MD_LASTLOOK;
-	if (mobj->target)
+	if (MobjIsArchived(mobj->target))
 		diff |= MD_TARGET;
-	if (mobj->tracer)
+	if (MobjIsArchived(mobj->tracer))
 		diff |= MD_TRACER;
 	if (mobj->friction != ORIG_FRICTION)
 		diff |= MD_FRICTION;
@@ -3354,9 +3696,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 		diff2 |= MD2_EXTVAL1;
 	if (mobj->extravalue2)
 		diff2 |= MD2_EXTVAL2;
-	if (mobj->hnext)
+	if (MobjIsArchived(mobj->hnext))
 		diff2 |= MD2_HNEXT;
-	if (mobj->hprev)
+	if (MobjIsArchived(mobj->hprev))
 		diff2 |= MD2_HPREV;
 	if (mobj->standingslope)
 		diff2 |= MD2_SLOPE;
@@ -3368,7 +3710,16 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 		diff2 |= MD2_CEILINGROVER;
 	if (mobj->mirrored)
 		diff2 |= MD2_MIRRORED;
-	if (mobj->rollangle)
+	// Sprite roll is decoration, and on MT_ITEM_DEBRIS it is drawn from
+	// M_RandomKey -- the generator m_random.c itself documents as "not synched in
+	// netgames". Its state is archived nowhere and HUD drawing consumes it
+	// between tics, so a replayed tic rolls a different number; one draw in
+	// thirty is zero, which clears this bit and makes the record four bytes
+	// shorter, and from there the whole tail of the archive is offset and
+	// nineteen thousand bytes differ. It stays on the wire, where a peer has to
+	// be told a value it cannot compute for itself. A snapshot that never leaves
+	// this machine leaves it out, the same way it leaves out tilt.
+	if (mobj->rollangle && localsnapshot == false)
 		diff2 |= MD2_ROLLANGLE;
 	if (mobj->shadowscale)
 		diff2 |= MD2_SHADOWSCALE;
@@ -3402,7 +3753,7 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 		diff2 |= MD2_WAYPOINTCAP;
 	if (mobj == trackercap)
 		diff2 |= MD2_KITEMCAP;
-	if (mobj->itnext)
+	if (MobjIsArchived(mobj->itnext))
 		diff2 |= MD2_ITNEXT;
 	if (mobj->frozen)
 		diff2 |= MD2_FROZEN;
@@ -3413,9 +3764,9 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 		diff3 |= MD3_LIGHTLEVEL;
 	if (mobj->reappear)
 		diff3 |= MD3_REAPPEAR;
-	if (mobj->punt_ref)
+	if (MobjIsArchived(mobj->punt_ref))
 		diff3 |= MD3_PUNT_REF;
-	if (mobj->owner)
+	if (MobjIsArchived(mobj->owner))
 		diff3 |= MD3_OWNER;
 	if (mobj->bakexoff || mobj->bakeyoff || mobj->bakezoff || mobj->bakexpiv ||
 		mobj->bakeypiv || mobj->bakezpiv)
@@ -3603,7 +3954,13 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 		UINT32 rf = mobj->renderflags;
 		UINT32 q = rf & RF_DONTDRAW;
 
-		if (q != RF_DONTDRAW // visible for more than one local player
+		// Which local player can see this object is a property of this machine's
+		// split screen, not of the world, so it is not pushed onto whoever
+		// receives the save. A snapshot that never leaves the machine keeps it:
+		// dropping it would make a rollback pop things in and out of view, and
+		// would leave the state differing from the one it was taken from.
+		if (localsnapshot == false
+		&& q != RF_DONTDRAW // visible for more than one local player
 		&& q != (RF_DONTDRAWP1|RF_DONTDRAWP2|RF_DONTDRAWP3)
 		&& q != (RF_DONTDRAWP4|RF_DONTDRAWP1|RF_DONTDRAWP2)
 		&& q != (RF_DONTDRAWP4|RF_DONTDRAWP1|RF_DONTDRAWP3)
@@ -3721,6 +4078,19 @@ static void SaveMobjThinker(savebuffer_t *save, const thinker_t *th, const UINT8
 	}
 
 	WRITEUINT32(save->p, mobj->mobjnum);
+
+	// Where this object sits in the chains collision walks. Local snapshots
+	// only: a save going over the wire keeps the format it has.
+	if (localsnapshot)
+	{
+		const uint32_t num = mobj->mobjnum;
+
+		WRITEUINT16(save->p, (num < CHAINORDER_MAX) ? chainorder_block[num] : 0);
+		WRITEUINT16(save->p, (num < CHAINORDER_MAX) ? chainorder_sector[num] : 0);
+
+		WRITEFIXED(save->p, mobj->floordrop);
+		WRITEFIXED(save->p, mobj->ceilingdrop);
+	}
 }
 
 static void SaveNoEnemiesThinker(savebuffer_t *save, const thinker_t *th, const UINT8 type)
@@ -4084,7 +4454,80 @@ static void SavePlaneDisplaceThinker(savebuffer_t *save, const thinker_t *th, co
 	WRITEUINT8(save->p, ht->type);
 }
 
-static inline void SaveDynamicLineSlopeThinker(savebuffer_t *save, const thinker_t *th, const UINT8 type)
+// A dynamic slope's plane is recomputed by its thinker, in THINK_DYNSLOPE, the
+// first list P_RunThinkers runs. But P_PlayerThink runs before P_RunThinkers,
+// and P_3dMovement reads the plane under the kart -- zdelta, xydirection, the
+// normal -- to direct its thrust. Nothing archived the plane itself, only the
+// thinker that recomputes it, so the first tic after a restore read whatever
+// the tics run before the restore had left there: a floor mover's slope some
+// tics ahead of the snapshot. Opulence has 41 of them over its bouncing
+// floors, and its leak and resim soaks failed 37 times each on kart speed and
+// angle (WORLDWIDE.md 8.58).
+//
+// So a local snapshot also records the plane, and a local restore puts it
+// back. Local only: a gamestate sent over the network keeps the stock format.
+static void SaveSlopePlane(savebuffer_t *save, const pslope_t *slope)
+{
+	size_t i;
+
+	if (localsnapshot == false)
+		return;
+
+	WRITEUINT8(save->p, slope != NULL);
+	if (slope == NULL)
+		return;
+
+	WRITEFIXED(save->p, slope->o.x);
+	WRITEFIXED(save->p, slope->o.y);
+	WRITEFIXED(save->p, slope->o.z);
+	WRITEFIXED(save->p, slope->normal.x);
+	WRITEFIXED(save->p, slope->normal.y);
+	WRITEFIXED(save->p, slope->normal.z);
+	WRITEFIXED(save->p, slope->d.x);
+	WRITEFIXED(save->p, slope->d.y);
+	WRITEFIXED(save->p, slope->zdelta);
+	WRITEANGLE(save->p, slope->zangle);
+	WRITEANGLE(save->p, slope->xydirection);
+	WRITEFIXED(save->p, slope->lowz);
+	WRITEFIXED(save->p, slope->highz);
+	for (i = 0; i < 4; i++)
+		WRITEFIXED(save->p, slope->constants[i]);
+	WRITESINT8(save->p, slope->lightOffset);
+	WRITEINT16(save->p, slope->hwLightOffset);
+}
+
+static void LoadSlopePlane(savebuffer_t *save, pslope_t *slope)
+{
+	pslope_t unknown;
+	size_t i;
+
+	if (localrestore == false || READUINT8(save->p) == 0)
+		return;
+
+	// Read past it all the same if the id named no slope here.
+	if (slope == NULL)
+		slope = &unknown;
+
+	slope->o.x = READFIXED(save->p);
+	slope->o.y = READFIXED(save->p);
+	slope->o.z = READFIXED(save->p);
+	slope->normal.x = READFIXED(save->p);
+	slope->normal.y = READFIXED(save->p);
+	slope->normal.z = READFIXED(save->p);
+	slope->d.x = READFIXED(save->p);
+	slope->d.y = READFIXED(save->p);
+	slope->zdelta = READFIXED(save->p);
+	slope->zangle = READANGLE(save->p);
+	slope->xydirection = READANGLE(save->p);
+	slope->lowz = READFIXED(save->p);
+	slope->highz = READFIXED(save->p);
+	for (i = 0; i < 4; i++)
+		slope->constants[i] = READFIXED(save->p);
+	slope->lightOffset = READSINT8(save->p);
+	slope->hwLightOffset = READINT16(save->p);
+}
+
+static inline void SaveDynamicLineSlopeThinker(savebuffer_t *save, const thinker_t *th, const uint8_t type)
 {
 	const dynlineplanethink_t* ht = (const dynlineplanethink_t*)th;
 
@@ -4093,6 +4536,7 @@ static inline void SaveDynamicLineSlopeThinker(savebuffer_t *save, const thinker
 	WRITEUINT32(save->p, SaveSlope(ht->slope));
 	WRITEUINT32(save->p, SaveLine(ht->sourceline));
 	WRITEFIXED(save->p, ht->extent);
+	SaveSlopePlane(save, ht->slope);
 }
 
 static inline void SaveDynamicVertexSlopeThinker(savebuffer_t *save, const thinker_t *th, const UINT8 type)
@@ -4108,6 +4552,43 @@ static inline void SaveDynamicVertexSlopeThinker(savebuffer_t *save, const think
 	WRITEMEM(save->p, ht->origsecheights, sizeof(ht->origsecheights));
 	WRITEMEM(save->p, ht->origvecheights, sizeof(ht->origvecheights));
 	WRITEUINT8(save->p, ht->relative);
+	SaveSlopePlane(save, ht->slope);
+}
+
+// Which thinker owns a polyobject -- po->thinker -- is not archived: a load
+// nulls it (P_UnArchivePolyObj) and "the thinkers themselves will fight over
+// who gets the field when they first start to run". Until one has, the
+// polyobject looks idle, and an action that would have been refused ("Don't
+// crowd out another thinker") starts a second thinker on it. A rollback
+// restores every pass, so on Coastal Temple a leak soak saw a second fade
+// thinker start after a restore, the archive grow by exactly its 24 bytes and
+// the polyobject's translucency change (WORLDWIDE.md 8.57) -- and a fade can
+// toggle the polyobject's collision.
+//
+// So a local snapshot also records, for each polyobject thinker, whether it
+// owns its polyobject, and a local restore gives it back before anything
+// runs. Local only: a gamestate sent over the network keeps the stock format.
+static void SavePolyOwner(savebuffer_t *save, const thinker_t *th, int32_t polyObjNum)
+{
+	if (localsnapshot == false)
+		return;
+
+	polyobj_t *po = Polyobj_GetForNum(polyObjNum);
+	WRITEUINT8(save->p, (po != NULL && po->thinker == th) ? 1 : 0);
+}
+
+static void LoadPolyOwner(savebuffer_t *save, thinker_t *th, int32_t polyObjNum)
+{
+	if (localrestore == false)
+		return;
+
+	if (READUINT8(save->p) != 0)
+	{
+		polyobj_t *po = Polyobj_GetForNum(polyObjNum);
+
+		if (po != NULL)
+			po->thinker = th;
+	}
 }
 
 static inline void SavePolyrotatetThinker(savebuffer_t *save, const thinker_t *th, const UINT8 type)
@@ -4115,6 +4596,7 @@ static inline void SavePolyrotatetThinker(savebuffer_t *save, const thinker_t *t
 	const polyrotate_t *ht = (const polyrotate_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->speed);
 	WRITEINT32(save->p, ht->distance);
 	WRITEUINT8(save->p, ht->turnobjs);
@@ -4125,6 +4607,7 @@ static void SavePolymoveThinker(savebuffer_t *save, const thinker_t *th, const U
 	const polymove_t *ht = (const polymove_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->speed);
 	WRITEFIXED(save->p, ht->momx);
 	WRITEFIXED(save->p, ht->momy);
@@ -4137,6 +4620,7 @@ static void SavePolywaypointThinker(savebuffer_t *save, const thinker_t *th, UIN
 	const polywaypoint_t *ht = (const polywaypoint_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->speed);
 	WRITEINT32(save->p, ht->sequence);
 	WRITEINT32(save->p, ht->pointnum);
@@ -4151,6 +4635,7 @@ static void SavePolyslidedoorThinker(savebuffer_t *save, const thinker_t *th, co
 	const polyslidedoor_t *ht = (const polyslidedoor_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->delay);
 	WRITEINT32(save->p, ht->delayCount);
 	WRITEINT32(save->p, ht->initSpeed);
@@ -4170,6 +4655,7 @@ static void SavePolyswingdoorThinker(savebuffer_t *save, const thinker_t *th, co
 	const polyswingdoor_t *ht = (const polyswingdoor_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->delay);
 	WRITEINT32(save->p, ht->delayCount);
 	WRITEINT32(save->p, ht->initSpeed);
@@ -4184,6 +4670,7 @@ static void SavePolydisplaceThinker(savebuffer_t *save, const thinker_t *th, con
 	const polydisplace_t *ht = (const polydisplace_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEUINT32(save->p, SaveSector(ht->controlSector));
 	WRITEFIXED(save->p, ht->dx);
 	WRITEFIXED(save->p, ht->dy);
@@ -4195,6 +4682,7 @@ static void SavePolyrotdisplaceThinker(savebuffer_t *save, const thinker_t *th, 
 	const polyrotdisplace_t *ht = (const polyrotdisplace_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEUINT32(save->p, SaveSector(ht->controlSector));
 	WRITEFIXED(save->p, ht->rotscale);
 	WRITEUINT8(save->p, ht->turnobjs);
@@ -4206,6 +4694,7 @@ static void SavePolyfadeThinker(savebuffer_t *save, const thinker_t *th, const U
 	const polyfade_t *ht = (const polyfade_t *)th;
 	WRITEUINT8(save->p, type);
 	WRITEINT32(save->p, ht->polyObjNum);
+	SavePolyOwner(save, th, ht->polyObjNum);
 	WRITEINT32(save->p, ht->sourcevalue);
 	WRITEINT32(save->p, ht->destvalue);
 	WRITEUINT8(save->p, (UINT8)ht->docollision);
@@ -4220,20 +4709,289 @@ static void WriteMobjPointer(mobj_t *mobj)
 	WRITEUINT32(current_savebuffer->p, SaveMobjnum(mobj));
 }
 
+// ----------------------------------------------------------------------------
+// Chain order
+//
+// A restore recreates every object from the archive and P_SetThingPosition
+// pushes each onto the head of its blockmap cell and its sector list. The
+// chains that come out are therefore in archive order, while the live ones hold
+// the order the world arrived at by moving through those cells. Collision
+// detection walks them, so two worlds holding identical objects resolve a hit
+// differently -- measured, and the reason the soak sees a kart hit on one pass
+// and not on the replay.
+//
+// The archive can carry the order: each object's depth in its chains, two bytes
+// each. Rebuilding then means relinking deepest first, since head insertion
+// puts the last one linked at the front.
+//
+// Local snapshots only. A save going over the wire keeps the format it has, and
+// the receiving machine cannot use our order anyway -- it is rebuilding from a
+// state that was never its own. That leaves the same defect in place for
+// resynchronisation, which is upstream's to have and worth reporting.
+// ----------------------------------------------------------------------------
+
+/** Notes how deep each object sits in its chains.
+  *
+  * Call after P_SaveNetGame has handed out the mobjnums this indexes by, and
+  * before any object is written.
+  */
+static void P_StampChainOrder(void)
+{
+	int32_t cell;
+	size_t s;
+
+	memset(chainorder_block, 0, sizeof (chainorder_block));
+	memset(chainorder_sector, 0, sizeof (chainorder_sector));
+	chainorder_ready = false;
+
+	if (blocklinks == NULL || sectors == NULL)
+		return;
+
+	for (cell = 0; cell < bmapwidth * bmapheight; cell++)
+	{
+		const mobj_t *mo;
+		uint32_t depth = 0;
+
+		for (mo = blocklinks[cell]; mo != NULL; mo = mo->bnext, depth++)
+		{
+			if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX || depth > UINT16_MAX)
+				continue;
+
+			chainorder_block[mo->mobjnum] = (uint16_t)depth;
+		}
+	}
+
+	for (s = 0; s < numsectors; s++)
+	{
+		const mobj_t *mo;
+		uint32_t depth = 0;
+
+		for (mo = sectors[s].thinglist; mo != NULL; mo = mo->snext, depth++)
+		{
+			if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX || depth > UINT16_MAX)
+				continue;
+
+			chainorder_sector[mo->mobjnum] = (uint16_t)depth;
+		}
+	}
+
+	chainorder_ready = true;
+}
+
+static void P_UnlinkFromBlockmap(mobj_t *mo)
+{
+	if (mo->bprev != NULL)
+	{
+		*mo->bprev = mo->bnext;
+
+		if (mo->bnext != NULL)
+			mo->bnext->bprev = mo->bprev;
+	}
+
+	mo->bnext = NULL;
+	mo->bprev = NULL;
+}
+
+static void P_UnlinkFromSector(mobj_t *mo)
+{
+	if (mo->sprev != NULL)
+	{
+		*mo->sprev = mo->snext;
+
+		if (mo->snext != NULL)
+			mo->snext->sprev = mo->sprev;
+	}
+
+	mo->snext = NULL;
+	mo->sprev = NULL;
+}
+
+/** Puts every archived object back in the order it was saved in.
+  *
+  * Relinks deepest first: each link goes to the head, so the object linked last
+  * ends up first, which is the one that was at depth zero.
+  *
+  * Called after everything is loaded and positioned, and only for a local
+  * restore.
+  */
+static void P_RestoreChainOrder(void)
+{
+	thinker_t *th;
+	mobj_t **ordered;
+	uint32_t count = 0;
+	uint32_t deepest = 0;
+	uint32_t depth;
+	uint32_t i;
+
+	if (chainorder_ready == false || blocklinks == NULL)
+		return;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		const mobj_t *mo = (const mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX)
+			continue;
+
+		count++;
+	}
+
+	if (count == 0)
+		return;
+
+	ordered = (mobj_t **)Z_Malloc(sizeof (mobj_t *) * count, PU_STATIC, NULL);
+	if (ordered == NULL)
+		return;
+
+	count = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mo = (mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (mo->mobjnum == 0 || mo->mobjnum >= CHAINORDER_MAX)
+			continue;
+
+		ordered[count++] = mo;
+
+		if (chainorder_block[mo->mobjnum] > deepest)
+			deepest = chainorder_block[mo->mobjnum];
+
+		if (chainorder_sector[mo->mobjnum] > deepest)
+			deepest = chainorder_sector[mo->mobjnum];
+	}
+
+	// Deepest first, so that the head of each chain is the last one linked.
+	// Chains are short, so walking the set once per depth costs less than
+	// sorting it would.
+	for (depth = deepest + 1; depth-- > 0; )
+	{
+		for (i = 0; i < count; i++)
+		{
+			mobj_t *mo = ordered[i];
+
+			if (chainorder_block[mo->mobjnum] != depth)
+				continue;
+
+			// An object off the map, or one that never linked, stays that way.
+			if (mo->bprev == NULL && mo->bnext == NULL)
+				continue;
+
+			P_UnlinkFromBlockmap(mo);
+
+			// The same linking P_LinkToBlockMap does, which is static in
+			// p_maputl.c and so cannot be called from here.
+			{
+				const int32_t blockx = (unsigned)(mo->x - bmaporgx) >> MAPBLOCKSHIFT;
+				const int32_t blocky = (unsigned)(mo->y - bmaporgy) >> MAPBLOCKSHIFT;
+
+				if (blockx >= 0 && blockx < bmapwidth
+					&& blocky >= 0 && blocky < bmapheight)
+				{
+					mobj_t **link = &blocklinks[(blocky * bmapwidth) + blockx];
+
+					mo->bnext = *link;
+
+					if (mo->bnext != NULL)
+						mo->bnext->bprev = &mo->bnext;
+
+					mo->bprev = link;
+					*link = mo;
+				}
+			}
+		}
+
+		for (i = 0; i < count; i++)
+		{
+			mobj_t *mo = ordered[i];
+			mobj_t **link;
+
+			if (chainorder_sector[mo->mobjnum] != depth)
+				continue;
+
+			if (mo->subsector == NULL || (mo->sprev == NULL && mo->snext == NULL))
+				continue;
+
+			P_UnlinkFromSector(mo);
+
+			link = &mo->subsector->sector->thinglist;
+			mo->snext = *link;
+
+			if (mo->snext != NULL)
+				mo->snext->sprev = &mo->snext;
+
+			mo->sprev = link;
+			*link = mo;
+		}
+	}
+
+	Z_Free(ordered);
+}
+
+/** Archives one mobj on its own, for diagnostics.
+  *
+  * Writes exactly what P_NetArchiveThinkers would write for this object, into
+  * a caller-supplied buffer instead of the snapshot. Comparing the same object
+  * before and after a state restore says which object changed and which of its
+  * diff bits moved -- a byte offset into a whole snapshot says neither.
+  *
+  * Only meaningful straight after a P_SaveNetGame, whose numbering pass the
+  * record depends on.
+  *
+  * 
+eturn bytes written, or 0 if the buffer could not hold the record.
+  */
+size_t P_ArchiveMobjForDiagnostics(uint8_t *buffer, size_t size, const mobj_t *mobj)
+{
+	savebuffer_t save = {0};
+	savebuffer_t *previous = current_savebuffer;
+	size_t used;
+
+	// A mobj record is far smaller than this, but the archiver writes through
+	// unchecked macros, so refuse rather than overrun.
+	if (buffer == NULL || size < 4096)
+		return 0;
+
+	if (P_SaveBufferFromExisting(&save, buffer, size) == false)
+		return 0;
+
+	current_savebuffer = &save;
+	SaveMobjThinker(&save, &mobj->thinker, tc_mobj);
+	current_savebuffer = previous;
+
+	used = (size_t)(save.p - save.buffer);
+
+	// The buffer belongs to the caller: no P_SaveBufferFree.
+	return used;
+}
+
 static void P_NetArchiveThinkers(savebuffer_t *save)
 {
 	TracyCZone(__zone, true);
 
 	const thinker_t *th;
-	UINT32 i;
+	uint32_t i;
+
+	// One profile step for each list, named in thinklistnum_t's order.
+	static const char *const listname[NUM_THINKERLISTS] = {
+		"thinkers: slopes", "thinkers: polyobjects", "thinkers: main",
+		"thinkers: objects", "thinkers: slopes (demo)", "thinkers: precipitation"
+	};
 
 	WRITEUINT32(save->p, ARCHIVEBLOCK_THINKERS);
 
 	P_SaveMobjPointers(WriteMobjPointer);
+	P_SaveProfileStep(save, "thinkers: object pointers");
 
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
-		UINT32 numsaved = 0;
+		uint32_t numsaved = 0;
 		// save off the current thinkers
 		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
 		{
@@ -4458,6 +5216,7 @@ static void P_NetArchiveThinkers(savebuffer_t *save)
 		CONS_Debug(DBG_NETPLAY, "%u thinkers saved in list %d\n", numsaved, i);
 
 		WRITEUINT8(save->p, tc_end);
+		P_SaveProfileStep(save, listname[i]);
 	}
 
 	TracyCZoneEnd(__zone);
@@ -4555,6 +5314,60 @@ static void P_NetUnArchiveTubeWaypoints(savebuffer_t *save)
 	TracyCZoneEnd(__zone);
 }
 
+// P_RelinkPointers resolves every pointer through P_FindNewPosition, and a walk
+// of every mobj per pointer made the relink quadratic -- most of a restore
+// (WORLDWIDE.md 8.30). While it runs, this index answers instead. Length 0 means
+// no index, and the walk below is used.
+#define RELINKINDEX_MAX (1u << 18)
+static mobj_t **relinkindex;
+static size_t relinkindexcap;
+static size_t relinkindexlen;
+
+static void P_BuildRelinkIndex(void)
+{
+	thinker_t *th;
+	uint32_t highest = 0;
+
+	relinkindexlen = 0;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (((mobj_t *)th)->mobjnum > highest)
+			highest = ((mobj_t *)th)->mobjnum;
+	}
+
+	if (highest >= RELINKINDEX_MAX)
+		return;
+
+	if ((size_t)highest + 1 > relinkindexcap)
+	{
+		relinkindexcap = (size_t)highest + 1;
+		relinkindex = (mobj_t **)Z_Realloc(relinkindex, relinkindexcap * sizeof (mobj_t *), PU_STATIC, NULL);
+	}
+
+	memset(relinkindex, 0, ((size_t)highest + 1) * sizeof (mobj_t *));
+
+	// First in list order wins, as it does for the walk, should two objects
+	// carry the same number.
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mobj = (mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		// 0 is a blank pointer: an object numbered 0 -- one never archived,
+		// which a raw restore brings back -- must not answer for it.
+		if (mobj->mobjnum != 0 && relinkindex[mobj->mobjnum] == NULL)
+			relinkindex[mobj->mobjnum] = mobj;
+	}
+
+	relinkindexlen = (size_t)highest + 1;
+}
+
 // Now save the pointers, tracer and target, but at load time we must
 // relink to this; the savegame contains the old position in the pointer
 // field copyed in the info field temporarily, but finally we just search
@@ -4563,6 +5376,19 @@ mobj_t *P_FindNewPosition(UINT32 oldposition)
 {
 	thinker_t *th;
 	mobj_t *mobj;
+
+	if (oldposition == 0)
+		return NULL; // a blank pointer, not the first object numbered 0
+
+	if (relinkindexlen != 0)
+	{
+		mobj = (oldposition < relinkindexlen) ? relinkindex[oldposition] : NULL;
+
+		if (mobj == NULL)
+			CONS_Debug(DBG_GAMELOGIC, "mobj %d not found\n", oldposition);
+
+		return mobj;
+	}
 
 	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
 	{
@@ -4691,7 +5517,7 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 	// declare this as a valid mobj as soon as possible.
 	mobj->thinker.function.acp1 = thinker;
 
-	mobj->z = z;
+	mobj->z = mobj->old_z = z;
 	mobj->floorz = floorz;
 	mobj->ceilingz = ceilingz;
 	mobj->floorrover = floorrover;
@@ -4803,7 +5629,19 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 	{
 		i = READUINT8(save->p);
 		mobj->player = &players[i];
+
+		// A player's body is held with a counted reference -- P_SpawnPlayer's
+		// P_SetTarget(&p->mo, mobj), let go with P_SetTarget(&player->mo, NULL).
+		// Given back by plain assignment, every kart was one reference short
+		// after a load, and the count reached -1 when the body was let go
+		// (WORLDWIDE.md 8.54, 8.91). The old player->mo is not let go here: it
+		// may point at an object the purge has freed.
 		mobj->player->mo = mobj;
+		mobj->thinker.references++;
+#ifdef PARANOIA
+		if (mobj->type == MT_PLAYER)
+			K_RollbackRefTrace(mobj, 1, __FILE__, __LINE__); // the claim, not a P_SetTarget
+#endif
 	}
 	if (diff & MD_MOVEDIR)
 		mobj->movedir = READANGLE(save->p);
@@ -5054,6 +5892,21 @@ static thinker_t* LoadMobjThinker(savebuffer_t *save, actionf_p1 thinker)
 	P_SetThingPosition(mobj);
 
 	mobj->mobjnum = READUINT32(save->p);
+
+	if (localrestore)
+	{
+		const uint16_t inblock = READUINT16(save->p);
+		const uint16_t insector = READUINT16(save->p);
+
+		if (mobj->mobjnum < CHAINORDER_MAX)
+		{
+			chainorder_block[mobj->mobjnum] = inblock;
+			chainorder_sector[mobj->mobjnum] = insector;
+		}
+
+		mobj->floordrop = READFIXED(save->p);
+		mobj->ceilingdrop = READFIXED(save->p);
+	}
 
 	if (mobj->player)
 	{
@@ -5607,6 +6460,7 @@ static inline thinker_t* LoadDynamicLineSlopeThinker(savebuffer_t *save, actionf
 	ht->slope = LoadSlope(READUINT32(save->p));
 	ht->sourceline = LoadLine(READUINT32(save->p));
 	ht->extent = READFIXED(save->p);
+	LoadSlopePlane(save, ht->slope);
 	return &ht->thinker;
 }
 
@@ -5625,6 +6479,7 @@ static inline thinker_t* LoadDynamicVertexSlopeThinker(savebuffer_t *save, actio
 	READMEM(save->p, ht->origsecheights, sizeof(ht->origsecheights));
 	READMEM(save->p, ht->origvecheights, sizeof(ht->origvecheights));
 	ht->relative = READUINT8(save->p);
+	LoadSlopePlane(save, ht->slope);
 	return &ht->thinker;
 }
 
@@ -5635,6 +6490,7 @@ static inline thinker_t* LoadPolyrotatetThinker(savebuffer_t *save, actionf_p1 t
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->speed = READINT32(save->p);
 	ht->distance = READINT32(save->p);
 	ht->turnobjs = READUINT8(save->p);
@@ -5648,6 +6504,7 @@ static thinker_t* LoadPolymoveThinker(savebuffer_t *save, actionf_p1 thinker)
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->speed = READINT32(save->p);
 	ht->momx = READFIXED(save->p);
 	ht->momy = READFIXED(save->p);
@@ -5663,6 +6520,7 @@ static inline thinker_t* LoadPolywaypointThinker(savebuffer_t *save, actionf_p1 
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->speed = READINT32(save->p);
 	ht->sequence = READINT32(save->p);
 	ht->pointnum = READINT32(save->p);
@@ -5680,6 +6538,7 @@ static inline thinker_t* LoadPolyslidedoorThinker(savebuffer_t *save, actionf_p1
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->delay = READINT32(save->p);
 	ht->delayCount = READINT32(save->p);
 	ht->initSpeed = READINT32(save->p);
@@ -5702,6 +6561,7 @@ static inline thinker_t* LoadPolyswingdoorThinker(savebuffer_t *save, actionf_p1
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->delay = READINT32(save->p);
 	ht->delayCount = READINT32(save->p);
 	ht->initSpeed = READINT32(save->p);
@@ -5719,6 +6579,7 @@ static inline thinker_t* LoadPolydisplaceThinker(savebuffer_t *save, actionf_p1 
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->controlSector = LoadSector(READUINT32(save->p));
 	ht->dx = READFIXED(save->p);
 	ht->dy = READFIXED(save->p);
@@ -5733,6 +6594,7 @@ static inline thinker_t* LoadPolyrotdisplaceThinker(savebuffer_t *save, actionf_
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->controlSector = LoadSector(READUINT32(save->p));
 	ht->rotscale = READFIXED(save->p);
 	ht->turnobjs = READUINT8(save->p);
@@ -5747,6 +6609,7 @@ static thinker_t* LoadPolyfadeThinker(savebuffer_t *save, actionf_p1 thinker)
 	ht->thinker.size = sizeof (*ht);
 	ht->thinker.function.acp1 = thinker;
 	ht->polyObjNum = READINT32(save->p);
+	LoadPolyOwner(save, &ht->thinker, ht->polyObjNum);
 	ht->sourcevalue = READINT32(save->p);
 	ht->destvalue = READINT32(save->p);
 	ht->docollision = (boolean)READUINT8(save->p);
@@ -5780,9 +6643,25 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 	// a shit ton of time loading mobj thinkers.
 	CalculateDoomednumToMobjtype();
 
+	// Every mobj below leaves the renderer's interpolation list, one linear
+	// search each (R_RemoveMobjInterpolator): quadratic in the number of
+	// objects, and every one of them goes. Emptying the list first makes each
+	// of those searches find nothing at once; LoadMobjThinker puts every
+	// loaded object back. Precipitation, which a local restore keeps, was
+	// never in it (P_SpawnPrecipMobj does not add to it). WORLDWIDE.md 8.60:
+	// the purge is 1.75 ms of Opulence's 6.5 ms load.
+	R_InitMobjInterpolators();
+
 	// remove all the current thinkers
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
+		// Precipitation is never archived, so purging it here means it can only
+		// come back by being respawned wholesale. A local restore keeps what it
+		// already has: rain that carries on falling across a rollback is both
+		// free and less noticeable than rain that restarts.
+		if (localrestore && i == THINK_PRECIP)
+			continue;
+
 		for (currentthinker = thlist[i].next; currentthinker != &thlist[i]; currentthinker = next)
 		{
 			next = currentthinker->next;
@@ -5807,8 +6686,21 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 		}
 	}
 
+	// Split out because the purge is a suspect in its own right: every mobj it
+	// removes costs a linear scan of the renderer's interpolator list, which
+	// is quadratic in the number of objects on the map.
+	P_ProfileStep("thinkers purge");
+
 	// we don't want the removed mobjs to come back
 	P_InitThinkers();
+
+	// Every object is gone, and every body with them. A player whose body the
+	// save does not hold -- one who entered the game after a snapshot -- kept
+	// pointing at the purged one, whose memory the next objects reuse; at a
+	// level's restart G_DoReborn then removed whatever object lived there
+	// (WORLDWIDE.md 8.96). The load claims the bodies it brings back.
+	for (i = 0; i < MAXPLAYERS; i++)
+		players[i].mo = NULL;
 
 	P_LoadMobjPointers(ReadMobjPointer);
 
@@ -6000,7 +6892,19 @@ static void P_NetUnArchiveThinkers(savebuffer_t *save)
 					I_Error("P_UnarchiveSpecials: Unknown tclass %d in savegame", tclass);
 			}
 			if (th)
+			{
+				// P_AddThinker starts the count at 0, and a loaded object already
+				// holds what its loader claimed for it: players[].mo (8.93), the
+				// waypoint and tracker caps. Starting it over lost those claims:
+				// every body a load brought back was one reference short, and let
+				// go of at a join or a bot's removal it went to -1 (WORLDWIDE.md
+				// 8.112). An object's memory starts zeroed (P_AllocateMobj);
+				// the other thinkers' loaders promise nothing, and keep a 0.
+				const int32_t references = (tclass == tc_mobj) ? th->references : 0;
+
 				P_AddThinker((thinklistnum_t)i, th);
+				th->references = references;
+			}
 		}
 
 		CONS_Debug(DBG_NETPLAY, "%u thinkers loaded in list %d\n", numloaded, i);
@@ -6069,7 +6973,10 @@ static inline void P_UnArchivePolyObj(savebuffer_t *save, polyobj_t *po)
 	// nullify all polyobject thinker pointers;
 	// the thinkers themselves will fight over who gets the field
 	// when they first start to run.
-	po->thinker = NULL;
+	// Not in a raw restore: the thinkers were never taken away, and the owner
+	// came back with the raw heads (P_RestoreRawHeads).
+	if (rawsnapshot == false)
+		po->thinker = NULL;
 
 	id = READINT32(save->p);
 
@@ -6080,10 +6987,17 @@ static inline void P_UnArchivePolyObj(savebuffer_t *save, polyobj_t *po)
 
 	diff = READUINT8(save->p);
 
-	if (diff & PD_FLAGS)
-		po->flags = READINT32(save->p);
-	if (diff & PD_TRANS)
-		po->translucency = READINT32(save->p);
+	// The archive carries only what differs from the spawn values, which is
+	// right for a load into a freshly loaded level. A reload does not reload
+	// the level: P_NetUnArchiveMisc puts the sectors, lines and sides back to
+	// their spawn values, but not the polyobjects. So a value that was back at
+	// its spawn value when the save was made kept whatever the tics run since
+	// had made of it. On Coastal Temple a fade run after the save left the
+	// translucency changed across a restore, and the next fade trigger -- which
+	// does nothing when the translucency already is its destination -- started
+	// a fade the unbroken run never had (WORLDWIDE.md 8.59).
+	po->flags = (diff & PD_FLAGS) ? READINT32(save->p) : po->spawnflags;
+	po->translucency = (diff & PD_TRANS) ? READINT32(save->p) : po->spawntrans;
 
 	// if the object is bad or isn't in the id hash, we can do nothing more
 	// with it, so return now
@@ -6151,6 +7065,8 @@ static void P_RelinkPointers(void)
 	mobj_t *mobj;
 	UINT32 temp, i;
 
+	P_BuildRelinkIndex();
+
 	P_LoadMobjPointers(RelinkMobjVoid);
 
 	if (g_endcam.panMobj)
@@ -6160,7 +7076,10 @@ static void P_RelinkPointers(void)
 	}
 
 	// use info field (value = oldposition) to relink mobjs
-	for (currentthinker = thlist[THINK_MOBJ].next; currentthinker != &thlist[THINK_MOBJ];
+	// -- not in a raw restore, where the objects came back with real pointers,
+	// which P_LoadNetGameRaw counts instead of relinking.
+	for (currentthinker = (rawsnapshot ? &thlist[THINK_MOBJ] : thlist[THINK_MOBJ].next);
+		currentthinker != &thlist[THINK_MOBJ];
 		currentthinker = currentthinker->next)
 	{
 		if (currentthinker->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
@@ -6341,6 +7260,8 @@ static void P_RelinkPointers(void)
 				CONS_Debug(DBG_GAMELOGIC, "flybot not found on player %d\n", i);
 		}
 	}
+
+	relinkindexlen = 0;
 }
 
 static inline void P_NetArchiveSpecials(savebuffer_t *save)
@@ -6405,10 +7326,21 @@ static void P_NetUnArchiveSpecials(savebuffer_t *save)
 
 	if (globalweather)
 	{
-		if (curWeather == globalweather)
-			curWeather = PRECIP_NONE;
+		// Rebuilding the weather means spawning every raindrop on the map again,
+		// which measures at 4.3 ms of an 12 ms restore on Northern District --
+		// a third of the whole cost. It is done unconditionally because a
+		// gamestate arriving from the network has just had its precipitation
+		// purged with the rest of the thinkers, and precipitation is never
+		// archived, so it has to be recreated from nothing. A local restore
+		// keeps its own precipitation instead, so when the weather has not
+		// changed there is nothing to do at all.
+		if (localrestore == false || curWeather != globalweather)
+		{
+			if (curWeather == globalweather)
+				curWeather = PRECIP_NONE;
 
-		P_SwitchWeather(globalweather);
+			P_SwitchWeather(globalweather);
+		}
 	}
 	else // PRECIP_NONE
 	{
@@ -7010,7 +7942,16 @@ static void P_NetArchiveMisc(savebuffer_t *save, boolean resending)
 	else
 		WRITEUINT8(save->p, 0x2e);
 
-	WRITEUINT32(save->p, livestudioaudience_timer);
+	// Advanced by the tic loop, not by the simulation: TryRunTics decrements it
+	// every TICRATE tics, in the same block as Schedule_Run. A replay drives
+	// P_Ticker by hand and never reaches that block, so it comes back one short
+	// whenever the tics it repeats cross a multiple of thirty-five -- which is at
+	// most once in sixteen, so the miss is always exactly one and only sometimes.
+	// It is a laugh track. Reproducing it in the replay would mean calling a
+	// netcode block that also runs scheduled commands, so a local snapshot leaves
+	// it out instead, the way it leaves out tilt and a debris roll.
+	if (localsnapshot == false)
+		WRITEUINT32(save->p, livestudioaudience_timer);
 
 	// Only the server uses this, but it
 	// needs synched for remote admins anyway.
@@ -7392,7 +8333,11 @@ static boolean P_NetUnArchiveMisc(savebuffer_t *save, boolean reloading)
 	if (READUINT8(save->p) == 0x2f)
 		paused = true;
 
-	livestudioaudience_timer = READUINT32(save->p);
+	// localrestore, not localsnapshot: the two flags are a pair, one per
+	// direction, and reading the writer's would give the right answer only for as
+	// long as a local save is always followed by a local load.
+	if (localrestore == false)
+		livestudioaudience_timer = READUINT32(save->p);
 
 	// Only the server uses this, but it
 	// needs synched for remote admins anyway.
@@ -7521,18 +8466,175 @@ void P_SaveGame(savebuffer_t *save)
 	P_ArchiveLuabanksAndConsistency(save);
 }
 
-void P_SaveNetGame(savebuffer_t *save, boolean resending)
+// ----------------------------------------------------------------------------
+// Raw local snapshots (rollback_rawsnap, WORLDWIDE.md 8.82, 8.83, 8.88)
+//
+// The thinkers live in the level pools, which the caller copies raw beside
+// this archive (Z_LevelPoolSnapshot), with the heads outside the pools that
+// point into them (P_SaveRawHeads). The archive keeps everything else --
+// players, world, polyobjects, specials, waypoints, ACS, Lua, RNG -- in the
+// network format, and of the thinker section only the global object links,
+// which are not pooled.
+//
+// The reference counts (8.83, choice E2, Gibax): a raw copy brings every count
+// back as the snapshot had it, references from outside the pools included,
+// and the network loaders that follow count theirs again. So the load sets
+// every count to zero first, lets the loaders count, then counts what the
+// pooled things and the raw heads hold (P_CountRawReferences) -- the same
+// rebuild from zero as a network load does, with the objects left where they
+// are.
+// ----------------------------------------------------------------------------
+
+// Named as P_NetArchiveThinkers names its steps, so a profile that mixes raw
+// and network saves keeps each step under its own name.
+static const char *const rawlistname[NUM_THINKERLISTS] = {
+	"thinkers: slopes", "thinkers: polyobjects", "thinkers: main",
+	"thinkers: objects", "thinkers: slopes (demo)", "thinkers: precipitation"
+};
+
+// The dynamic slopes' planes are not in the pools -- P_MakeSlope allocates them
+// with Z_Calloc -- while their thinkers are. So the raw copy brought the
+// thinkers back and left each plane as the tics after the snapshot had made
+// it: 8.58's leak, back through the raw path, on every restore on Opulence
+// (WORLDWIDE.md 8.90, 8.91). The raw archive keeps them as the network one
+// does (SaveSlopePlane), in thinker list order, which the raw copy of the
+// lists keeps for the reading.
+static const int32_t rawslopelists[2] = { THINK_DYNSLOPE, THINK_DYNSLOPEDEMO };
+
+static dboolean P_RawSlopeThinker(thinker_t *th, pslope_t **slope)
+{
+	if (th->function.acp1 == (actionf_p1)T_DynamicSlopeLine)
+		*slope = ((dynlineplanethink_t *)th)->slope;
+	else if (th->function.acp1 == (actionf_p1)T_DynamicSlopeVert)
+		*slope = ((dynvertexplanethink_t *)th)->slope;
+	else
+		return false;
+
+	return true;
+}
+
+static void P_ArchiveRawSlopePlanes(savebuffer_t *save)
+{
+	uint8_t *countat = save->p;
+	uint32_t count = 0;
+	thinker_t *th;
+	pslope_t *slope;
+	size_t l;
+
+	WRITEUINT32(save->p, 0); // the count, written below
+
+	for (l = 0; l < sizeof rawslopelists / sizeof rawslopelists[0]; l++)
+	{
+		for (th = thlist[rawslopelists[l]].next; th != &thlist[rawslopelists[l]]; th = th->next)
+		{
+			if (P_RawSlopeThinker(th, &slope))
+			{
+				SaveSlopePlane(save, slope);
+				count++;
+			}
+		}
+	}
+
+	WRITEUINT32(countat, count);
+}
+
+static void P_UnArchiveRawSlopePlanes(savebuffer_t *save)
+{
+	uint32_t count = READUINT32(save->p);
+	thinker_t *th;
+	pslope_t *slope;
+	size_t l;
+
+	for (l = 0; l < sizeof rawslopelists / sizeof rawslopelists[0]; l++)
+	{
+		for (th = thlist[rawslopelists[l]].next; th != &thlist[rawslopelists[l]] && count > 0; th = th->next)
+		{
+			if (P_RawSlopeThinker(th, &slope))
+			{
+				LoadSlopePlane(save, slope);
+				count--;
+			}
+		}
+	}
+
+	// None left when the lists came back as they were saved; read past any.
+	while (count > 0)
+	{
+		LoadSlopePlane(save, NULL);
+		count--;
+	}
+}
+
+static void P_NetArchiveThinkersRaw(savebuffer_t *save)
+{
+	uint32_t i;
+
+	WRITEUINT32(save->p, ARCHIVEBLOCK_THINKERS);
+	P_SaveMobjPointers(WriteMobjPointer);
+	P_SaveProfileStep(save, "thinkers: object pointers");
+	P_ArchiveRawSlopePlanes(save);
+	P_SaveProfileStep(save, "thinkers: slope planes");
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		P_SaveProfileStep(save, rawlistname[i]); // in the pools
+}
+
+static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
+{
+	thinker_t *th;
+	int32_t i;
+
+	if (READUINT32(save->p) != ARCHIVEBLOCK_THINKERS)
+		I_Error("Bad $$$.sav at archive block Thinkers");
+
+	P_LoadMobjPointers(ReadMobjPointer);
+	P_UnArchiveRawSlopePlanes(save);
+
+	// players[].mo: LoadMobjThinker gives each loaded object's player back its
+	// body. The raw copy put the objects back instead; each synced one that
+	// carries a player claims it again, in list order, as the load would. A
+	// player with no body in the snapshot gets none, not the one the pools no
+	// longer hold (WORLDWIDE.md 8.96).
+	for (i = 0; i < MAXPLAYERS; i++)
+		players[i].mo = NULL;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mo = (mobj_t *)th;
+
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		// Counted, as the network load now counts it (LoadMobjThinker).
+		if (mo->player != NULL && TypeIsNetSynced(mo->type))
+		{
+			mo->player->mo = mo;
+			mo->thinker.references++;
+#ifdef PARANOIA
+			if (mo->type == MT_PLAYER)
+				K_RollbackRefTrace(mo, 1, __FILE__, __LINE__); // the claim, not a P_SetTarget
+#endif
+		}
+	}
+}
+
+void P_SaveNetGame(savebuffer_t *save, dboolean resending, dboolean local)
 {
 	TracyCZone(__zone, true);
 
 	current_savebuffer = save;
+	localsnapshot = local;
 
 	thinker_t *th;
 	mobj_t *mobj;
 	UINT32 i = 1; // don't start from 0, it'd be confused with a blank pointer otherwise
 
+	if (local)
+		P_SaveProfileStart(save);
+
 	CV_SaveNetVars(&save->p);
 	P_NetArchiveMisc(save, resending);
+	P_SaveProfileStep(save, "netvars/misc");
 
 	// Assign the mobjnumber for pointer tracking
 	if (gamestate == GS_LEVEL)
@@ -7544,41 +8646,158 @@ void P_SaveNetGame(savebuffer_t *save, boolean resending)
 
 			mobj = (mobj_t *)th;
 			if (TypeIsNetSynced(mobj->type) == false)
+			{
+				// Never archived, so never looked up -- except that a raw
+				// restore brings them back, and a stale number would then
+				// answer for a synced object's in the relink index.
+				if (rawsnapshot)
+					mobj->mobjnum = 0;
 				continue;
+			}
 			mobj->mobjnum = i++;
 		}
 	}
+
+	// After the numbering above, which the stamp indexes by. Not in a raw
+	// snapshot: the chains come back raw, in their order.
+	if (local && rawsnapshot == false)
+		P_StampChainOrder();
+	P_SaveProfileStep(save, "numbering/chain stamp");
 
 	K_SaveEndCamera(save);
 	WriteMobjPointer(g_endcam.panMobj);
 
 	P_NetArchivePlayers(save);
+	P_SaveProfileStep(save, "players");
 	P_NetArchiveParties(save);
 	P_NetArchiveRoundQueue(save);
 	P_NetArchiveZVote(save);
+	P_SaveProfileStep(save, "parties/queue/vote");
 
 	if (gamestate == GS_LEVEL)
 	{
 		P_NetArchiveWorld(save);
+		P_SaveProfileStep(save, "world");
 		P_ArchivePolyObjects(save);
-		P_NetArchiveThinkers(save);
+		P_SaveProfileStep(save, "polyobjects");
+		if (rawsnapshot)
+			P_NetArchiveThinkersRaw(save);
+		else
+			P_NetArchiveThinkers(save);   // profiles each of its lists
 		P_NetArchiveSpecials(save);
 		P_NetArchiveColormaps(save);
+		P_SaveProfileStep(save, "specials/colormaps");
 		P_NetArchiveTubeWaypoints(save);
 		P_NetArchiveWaypoints(save);
+		P_SaveProfileStep(save, "waypoints");
 	}
 
 	ACS_Archive(save);
+	P_SaveProfileStep(save, "ACS");
 	LUA_Archive(save, true);
+	P_SaveProfileStep(save, "Lua");
 
 	P_NetArchiveRNG(save);
 
 	P_ArchiveLuabanksAndConsistency(save);
+	P_SaveProfileStep(save, "rng/luabanks");
+	P_SaveProfileEnd();
 
 	TracyCZoneEnd(__zone);
 }
 
-boolean P_LoadGame(savebuffer_t *save)
+// ----------------------------------------------------------------------------
+// Load profiling
+//
+// A restore costs about 11 ms on a client that is drawing the game and under
+// 3 ms on a dedicated server running the same map. Somewhere in here is work
+// that only a rendering build pays for, and the difference decides how many
+// tics of rollback fit in a frame -- so the steps time themselves.
+//
+// The cost of measuring is two clock reads per step on a path that already
+// takes milliseconds.
+// ----------------------------------------------------------------------------
+
+static loadstep_t g_loadprofile[P_LOADPROFILE_MAX];
+static size_t g_loadprofilecount;
+static precise_t g_loadprofilemark;
+
+static dboolean g_profilewatchplayers;
+static uint8_t *g_profileplayers;
+
+void P_ProfileWatchPlayers(dboolean on)
+{
+	if (on && g_profileplayers == NULL)
+	{
+		g_profileplayers = (uint8_t *)Z_Malloc(
+			sizeof (player_t) * MAXPLAYERS * P_LOADPROFILE_MAX, PU_STATIC, NULL);
+	}
+
+	g_profilewatchplayers = (on && g_profileplayers != NULL);
+}
+
+const uint8_t *P_GetProfilePlayers(size_t step)
+{
+	if (g_profileplayers == NULL || step >= P_LOADPROFILE_MAX)
+		return NULL;
+
+	return g_profileplayers + (sizeof (player_t) * MAXPLAYERS * step);
+}
+
+/** Hashes the player structures, for telling one step of a restore from another. */
+static uint32_t P_HashPlayers(void)
+{
+	const uint8_t *p = (const uint8_t *)players;
+	const size_t n = sizeof (player_t) * MAXPLAYERS;
+	uint32_t h = 2166136261u;
+	size_t i;
+
+	for (i = 0; i < n; i++)
+	{
+		h = (h ^ p[i]) * 16777619u;
+	}
+
+	return h;
+}
+
+static void P_ProfileReset(void)
+{
+	g_loadprofilecount = 0;
+	g_loadprofilemark = I_GetPreciseTime();
+}
+
+/** Records the time since the previous step under this name. */
+static void P_ProfileStep(const char *name)
+{
+	const precise_t now = I_GetPreciseTime();
+
+	if (g_loadprofilecount < P_LOADPROFILE_MAX)
+	{
+		g_loadprofile[g_loadprofilecount].name = name;
+		g_loadprofile[g_loadprofilecount].us =
+			(uint32_t)(((now - g_loadprofilemark) * (uint64_t)1000000) / I_GetPrecisePrecision());
+		g_loadprofile[g_loadprofilecount].playerhash =
+			g_profilewatchplayers ? P_HashPlayers() : 0;
+
+		if (g_profilewatchplayers)
+		{
+			memcpy(g_profileplayers + (sizeof (player_t) * MAXPLAYERS * g_loadprofilecount),
+				players, sizeof (player_t) * MAXPLAYERS);
+		}
+
+		g_loadprofilecount++;
+	}
+
+	g_loadprofilemark = now;
+}
+
+size_t P_GetLoadProfile(const loadstep_t **steps)
+{
+	*steps = g_loadprofile;
+	return g_loadprofilecount;
+}
+
+dboolean P_LoadGame(savebuffer_t *save)
 {
 	if (gamestate == GS_INTERMISSION)
 		Y_EndIntermission();
@@ -7606,39 +8825,121 @@ badloadgame:
 	return false;
 }
 
-boolean P_LoadNetGame(savebuffer_t *save, boolean reloading)
+static uint32_t netloadcount;
+
+uint32_t P_NetLoadCount(void)
+{
+	return netloadcount;
+}
+
+dboolean P_LocalRestoreInProgress(void)
+{
+	return localrestore;
+}
+
+dboolean P_LoadNetGame(savebuffer_t *save, dboolean reloading, dboolean local)
 {
 	TracyCZone(__zone, true);
 
 	current_savebuffer = save;
+	localrestore = local;
+
+	if (local == false)
+		netloadcount++;
+
+	if (local && rawsnapshot == false)
+	{
+		memset(chainorder_block, 0, sizeof (chainorder_block));
+		memset(chainorder_sector, 0, sizeof (chainorder_sector));
+		chainorder_ready = true;
+	}
+
+	P_ProfileReset();
 
 	save->p += CV_LoadNetVars(save->p);
+	P_ProfileStep("netvars");
+
+	// Every object is freed and brought back (WORLDWIDE.md 8.111).
+	K_RollbackRefLoadBegin();
 
 	if (!P_NetUnArchiveMisc(save, reloading))
+	{
+		K_RollbackRefLoadEnd(false);
 		return false;
+	}
+	P_ProfileStep("misc");
 
 	K_LoadEndCamera(save);
 	ReadMobjPointer(&g_endcam.panMobj);
 
 	P_NetUnArchivePlayers(save);
+	P_ProfileStep("players");
+
 	P_NetUnArchiveParties(save);
 	P_NetUnArchiveRoundQueue(save);
 	P_NetUnArchiveZVote(save);
+	P_ProfileStep("parties/queue/vote");
 
 	if (gamestate == GS_LEVEL)
 	{
 		P_NetUnArchiveWorld(save);
+		P_ProfileStep("world");
+
 		P_UnArchivePolyObjects(save);
-		P_NetUnArchiveThinkers(save);
+		P_ProfileStep("polyobjects");
+
+		// Which object each playing sound comes from, before the purge frees
+		// them all (S_NoteChannelOrigins, WORLDWIDE.md 8.73). A raw restore's
+		// caller notes them before the pools are put back.
+		if (local && rawsnapshot == false)
+			S_NoteChannelOrigins();
+
+		if (rawsnapshot)
+			P_NetUnArchiveThinkersRaw(save);
+		else
+			P_NetUnArchiveThinkers(save);
+		P_ProfileStep("thinkers");
+
 		P_NetUnArchiveSpecials(save);
+		P_ProfileStep("specials");
+
 		P_NetUnArchiveColormaps(save);
+		P_ProfileStep("colormaps");
+
+		// Both waypoint steps find their objects through P_FindNewPosition,
+		// which walks every mobj per lookup unless the relink index is built --
+		// and only P_RelinkPointers, the step after them, built it: about 150
+		// waypoints times 3700 objects on Opulence, a millisecond of every
+		// restore, and 1.5 on Death Egg (WORLDWIDE.md 8.60). Nothing between
+		// here and the relink adds or renumbers an object; P_RelinkPointers
+		// still builds its own.
+		P_BuildRelinkIndex();
 		P_NetUnArchiveTubeWaypoints(save);
 		P_NetUnArchiveWaypoints(save);
+
+		// And the sounds back onto the objects they came from, through the
+		// same index (S_RelinkChannelOrigins, WORLDWIDE.md 8.73).
+		if (local)
+			S_RelinkChannelOrigins(P_FindNewPosition);
+
+		relinkindexlen = 0;
+		P_ProfileStep("waypoints");
+
 		P_RelinkPointers();
+		P_ProfileStep("relink pointers");
+
+		if (local && rawsnapshot == false)
+		{
+			P_RestoreChainOrder();
+			P_ProfileStep("chain order");
+		}
 	}
 
 	ACS_UnArchive(save);
+	P_ProfileStep("ACS");
+
 	LUA_UnArchive(save, true);
+	P_ProfileStep("Lua");
 
 	P_NetUnArchiveRNG(save);
 
@@ -7647,9 +8948,494 @@ boolean P_LoadNetGame(savebuffer_t *save, boolean reloading)
 	// so the thinkers would be deleted later. Therefore, P_SetupLevel will *not* spawn
 	// precipitation when loading a netgame save. Instead, precip has to be spawned here.
 	// This is done in P_NetUnArchiveSpecials now.
-	boolean ret = P_UnArchiveLuabanksAndConsistency(save);
+	dboolean ret = P_UnArchiveLuabanksAndConsistency(save);
+	P_ProfileStep("rng/luabanks");
 
 	TracyCZoneEnd(__zone);
+	K_RollbackRefLoadEnd(ret);
+
+	return ret;
+}
+
+// ----------------------------------------------------------------------------
+// Raw snapshots: the heads outside the pools, the load, and the recount
+// (WORLDWIDE.md 8.83, 8.88)
+// ----------------------------------------------------------------------------
+
+// The pointers into the pools held outside them, in the order written:
+// thinker list heads; per sector, its object chain, its sector-node and
+// precipitation-node lists and its four thinker slots; each FOF's fade
+// thinker; the blockmap heads and the precipitation blockmap's; each
+// polyobject's owner; the TID chains; the three caps; the skybox points.
+#define RAWHEADS_MAGIC 0x48574152 // "RAWH"
+#define RAWHEADS_SECTORPTRS 7
+#define RAWHEADS_SKYBOXES 16
+
+struct rawheadsheader_t
+{
+	uint32_t magic;
+	uint32_t sectors;
+	uint32_t ffloors;
+	uint32_t blocks;
+	uint32_t precipblocks;
+	uint32_t polyobjects;
+	uint32_t tidchains;
+	uint32_t reserved;
+};
+
+static uint32_t P_CountFFloors(void)
+{
+	uint32_t n = 0;
+	size_t i;
+
+	for (i = 0; i < numsectors; i++)
+	{
+		for (const ffloor_t *rover = sectors[i].ffloors; rover != NULL; rover = rover->next)
+			n++;
+	}
+
+	return n;
+}
+
+static void P_RawHeadsDescribe(rawheadsheader_t *h)
+{
+	size_t tidchains;
+	const size_t blocks = (size_t)bmapwidth * (size_t)bmapheight;
+
+	P_TIDHashChains(&tidchains);
+
+	memset(h, 0, sizeof *h);
+	h->magic = RAWHEADS_MAGIC;
+	h->sectors = (uint32_t)numsectors;
+	h->ffloors = P_CountFFloors();
+	h->blocks = (blocklinks != NULL) ? (uint32_t)blocks : 0;
+	h->precipblocks = (precipblocklinks != NULL) ? (uint32_t)blocks : 0;
+	h->polyobjects = (uint32_t)numPolyObjects;
+	h->tidchains = (uint32_t)tidchains;
+}
+
+static size_t P_RawHeadsBytes(const rawheadsheader_t *h)
+{
+	return sizeof *h
+		+ sizeof (thinker_t) * NUM_THINKERLISTS
+		+ (size_t)h->sectors * RAWHEADS_SECTORPTRS * sizeof (void *)
+		+ (size_t)h->ffloors * sizeof (void *)
+		+ ((size_t)h->blocks + (size_t)h->precipblocks) * sizeof (void *)
+		+ (size_t)h->polyobjects * sizeof (void *)
+		+ (size_t)h->tidchains * sizeof (void *)
+		+ (3 + 2 * RAWHEADS_SKYBOXES) * sizeof (void *);
+}
+
+size_t P_RawHeadsSize(void)
+{
+	rawheadsheader_t h;
+	P_RawHeadsDescribe(&h);
+	return P_RawHeadsBytes(&h);
+}
+
+static uint8_t *RawPut(uint8_t *p, const void *src, size_t n)
+{
+	memcpy(p, src, n);
+	return p + n;
+}
+
+static const uint8_t *RawGet(const uint8_t *p, void *dst, size_t n)
+{
+	memcpy(dst, p, n);
+	return p + n;
+}
+
+size_t P_SaveRawHeads(uint8_t *dst, size_t capacity)
+{
+	rawheadsheader_t h;
+	uint8_t *p = dst;
+	size_t i, tidchains;
+	mobj_t **tid = P_TIDHashChains(&tidchains);
+
+	P_RawHeadsDescribe(&h);
+
+	if (P_RawHeadsBytes(&h) > capacity)
+		return 0;
+
+	p = RawPut(p, &h, sizeof h);
+	p = RawPut(p, thlist, sizeof (thinker_t) * NUM_THINKERLISTS);
+
+	for (i = 0; i < numsectors; i++)
+	{
+		const sector_t *sec = &sectors[i];
+		const void *ptrs[RAWHEADS_SECTORPTRS] = {
+			sec->thinglist, sec->touching_thinglist, sec->touching_preciplist,
+			sec->floordata, sec->ceilingdata, sec->lightingdata, sec->fadecolormapdata
+		};
+
+		p = RawPut(p, ptrs, sizeof ptrs);
+	}
+
+	for (i = 0; i < numsectors; i++)
+	{
+		for (const ffloor_t *rover = sectors[i].ffloors; rover != NULL; rover = rover->next)
+			p = RawPut(p, &rover->fadingdata, sizeof (void *));
+	}
+
+	if (h.blocks)
+		p = RawPut(p, blocklinks, (size_t)h.blocks * sizeof (mobj_t *));
+	if (h.precipblocks)
+		p = RawPut(p, precipblocklinks, (size_t)h.precipblocks * sizeof (precipmobj_t *));
+
+	for (i = 0; i < h.polyobjects; i++)
+		p = RawPut(p, &PolyObjects[i].thinker, sizeof (void *));
+
+	p = RawPut(p, tid, tidchains * sizeof (mobj_t *));
+
+	p = RawPut(p, &waypointcap, sizeof (mobj_t *));
+	p = RawPut(p, &trackercap, sizeof (mobj_t *));
+	p = RawPut(p, P_OverlayCapHead(), sizeof (mobj_t *));
+	p = RawPut(p, skyboxviewpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+	p = RawPut(p, skyboxcenterpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+
+	return (size_t)(p - dst);
+}
+
+dboolean P_RawHeadsFit(const uint8_t *src, size_t length)
+{
+	rawheadsheader_t now, then;
+
+	if (src == NULL || length < sizeof then)
+		return false;
+
+	memcpy(&then, src, sizeof then);
+	P_RawHeadsDescribe(&now);
+
+	// The same level, laid out the same way: same sectors, FOFs, blockmap,
+	// polyobjects and chains, or the pointers name other things.
+	return (memcmp(&now, &then, sizeof now) == 0 && P_RawHeadsBytes(&now) == length);
+}
+
+dboolean P_RestoreRawHeads(const uint8_t *src, size_t length)
+{
+	rawheadsheader_t h;
+	const uint8_t *p = src;
+	size_t i, tidchains;
+	mobj_t **tid = P_TIDHashChains(&tidchains);
+
+	if (P_RawHeadsFit(src, length) == false)
+		return false;
+
+	p = RawGet(p, &h, sizeof h);
+	p = RawGet(p, thlist, sizeof (thinker_t) * NUM_THINKERLISTS);
+
+	for (i = 0; i < numsectors; i++)
+	{
+		sector_t *sec = &sectors[i];
+		void *ptrs[RAWHEADS_SECTORPTRS];
+
+		p = RawGet(p, ptrs, sizeof ptrs);
+		sec->thinglist = (mobj_t *)ptrs[0];
+		sec->touching_thinglist = (msecnode_t *)ptrs[1];
+		sec->touching_preciplist = (mprecipsecnode_t *)ptrs[2];
+		sec->floordata = ptrs[3];
+		sec->ceilingdata = ptrs[4];
+		sec->lightingdata = ptrs[5];
+		sec->fadecolormapdata = ptrs[6];
+	}
+
+	for (i = 0; i < numsectors; i++)
+	{
+		for (ffloor_t *rover = sectors[i].ffloors; rover != NULL; rover = rover->next)
+			p = RawGet(p, &rover->fadingdata, sizeof (void *));
+	}
+
+	if (h.blocks)
+		p = RawGet(p, blocklinks, (size_t)h.blocks * sizeof (mobj_t *));
+	if (h.precipblocks)
+		p = RawGet(p, precipblocklinks, (size_t)h.precipblocks * sizeof (precipmobj_t *));
+
+	for (i = 0; i < h.polyobjects; i++)
+		p = RawGet(p, &PolyObjects[i].thinker, sizeof (void *));
+
+	p = RawGet(p, tid, tidchains * sizeof (mobj_t *));
+
+	p = RawGet(p, &waypointcap, sizeof (mobj_t *));
+	p = RawGet(p, &trackercap, sizeof (mobj_t *));
+	p = RawGet(p, P_OverlayCapHead(), sizeof (mobj_t *));
+	p = RawGet(p, skyboxviewpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+	p = RawGet(p, skyboxcenterpnts, RAWHEADS_SKYBOXES * sizeof (mobj_t *));
+
+	return true;
+}
+
+void P_SaveNetGameRaw(savebuffer_t *save)
+{
+	rawsnapshot = true;
+	P_SaveNetGame(save, true, true);
+	rawsnapshot = false;
+}
+
+static inline void P_CountReference(mobj_t *mo)
+{
+	if (mo != NULL)
+		mo->thinker.references++;
+}
+
+/** Counts every reference held by the pooled things and the raw heads: the
+  * ones no network loader counts during a raw restore. Every counted pointer
+  * an object holds (the eight P_RelinkPointers relinks), removed objects
+  * included -- P_RemoveMobj gives back all of them but terrainOverlay, which
+  * the live count therefore still holds; the caller of a delayed linedef
+  * executor, which p_spec.c counts (the network load does not, 8.88); the
+  * caps and the skybox points, which the object loader counts. */
+static void P_CountRawReferences(void)
+{
+	thinker_t *th;
+	int32_t i;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		mobj_t *mo = (mobj_t *)th;
+
+		P_CountReference(mo->target);
+		P_CountReference(mo->tracer);
+		P_CountReference(mo->hnext);
+		P_CountReference(mo->hprev);
+		P_CountReference(mo->itnext);
+		P_CountReference(mo->terrainOverlay);
+		P_CountReference(mo->punt_ref);
+		P_CountReference(mo->owner);
+	}
+
+	for (th = thlist[THINK_MAIN].next; th != &thlist[THINK_MAIN]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)T_ExecutorDelay)
+			P_CountReference(((executor_t *)th)->caller);
+	}
+
+	P_CountReference(waypointcap);
+	P_CountReference(trackercap);
+	P_CountReference(*P_OverlayCapHead());
+
+	for (i = 0; i < RAWHEADS_SKYBOXES; i++)
+	{
+		P_CountReference(skyboxviewpnts[i]);
+		P_CountReference(skyboxcenterpnts[i]);
+	}
+}
+
+// Verify mode: the counts a raw copy brought back are the live game's own,
+// kept up to date by P_SetTarget as it ran. The recount must land on exactly
+// those, or it misses a holder -- or counts one twice.
+static rawcountcheck_t g_rawcount;
+static dboolean g_rawcounton;
+static thinker_t **g_rawcountwho;
+static int32_t *g_rawcountwas;
+static size_t g_rawcountcap;
+
+void P_RawCountCheck(dboolean on)
+{
+	g_rawcounton = on;
+}
+
+const rawcountcheck_t *P_GetRawCountCheck(void)
+{
+	return &g_rawcount;
+}
+
+static size_t P_RecordRawCounts(void)
+{
+	thinker_t *th;
+	size_t n = 0;
+	uint32_t i;
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			n++;
+
+	if (n > g_rawcountcap)
+	{
+		g_rawcountcap = n + n / 4;
+		g_rawcountwho = (thinker_t **)Z_Realloc(g_rawcountwho, g_rawcountcap * sizeof (thinker_t *), PU_STATIC, NULL);
+		g_rawcountwas = (int32_t *)Z_Realloc(g_rawcountwas, g_rawcountcap * sizeof (int32_t), PU_STATIC, NULL);
+	}
+
+	n = 0;
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+	{
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+		{
+			g_rawcountwho[n] = th;
+			g_rawcountwas[n] = th->references;
+			n++;
+		}
+	}
+
+	return n;
+}
+
+static void P_CompareRawCounts(size_t recorded)
+{
+	thinker_t *th;
+	size_t n = 0;
+	uint32_t i;
+
+	memset(&g_rawcount, 0, sizeof g_rawcount);
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+	{
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next, n++)
+		{
+			if (n >= recorded || g_rawcountwho[n] != th)
+			{
+				g_rawcount.listschanged = true;
+				return;
+			}
+
+			g_rawcount.thinkers++;
+
+			if (th->references == g_rawcountwas[n])
+				continue;
+
+			g_rawcount.mismatched++;
+
+			if (g_rawcount.shown < RAWCOUNT_SHOWN)
+			{
+				rawcountmiss_t *m = &g_rawcount.miss[g_rawcount.shown++];
+
+				m->list = (int32_t)i;
+				m->mobjtype = (i == THINK_MOBJ) ? (int32_t)((mobj_t *)th)->type : -1;
+				m->mobjnum = (i == THINK_MOBJ) ? ((mobj_t *)th)->mobjnum : 0;
+				m->was = g_rawcountwas[n];
+				m->now = th->references;
+			}
+		}
+	}
+
+	if (n != recorded)
+		g_rawcount.listschanged = true;
+}
+
+// The thinkers alive before a raw restore, sorted, so the ones it took away
+// can be named afterwards. A network load deallocates every object, and each
+// deallocation makes Lua forget it (LUA_InvalidateUserdata); a raw copy frees
+// nothing one block at a time, so an object born after the snapshot would stay
+// valid to a script still holding it, on a block that is free again.
+static thinker_t **g_rawliving;
+static size_t g_rawlivingn, g_rawlivingcap;
+static thinker_t **g_rawnow;
+static size_t g_rawnowcap;
+
+static int P_ComparePointers(const void *a, const void *b)
+{
+	const uintptr_t x = (uintptr_t)*(thinker_t *const *)a;
+	const uintptr_t y = (uintptr_t)*(thinker_t *const *)b;
+	return (x > y) - (x < y);
+}
+
+static size_t P_ListLiving(thinker_t ***out, size_t *cap)
+{
+	thinker_t *th;
+	size_t n = 0;
+	uint32_t i;
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			n++;
+
+	if (n > *cap)
+	{
+		*cap = n + n / 4;
+		*out = (thinker_t **)Z_Realloc(*out, *cap * sizeof (thinker_t *), PU_STATIC, NULL);
+	}
+
+	n = 0;
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			(*out)[n++] = th;
+
+	qsort(*out, n, sizeof (thinker_t *), P_ComparePointers);
+	return n;
+}
+
+void P_NoteRawLiving(void)
+{
+	g_rawlivingn = P_ListLiving(&g_rawliving, &g_rawlivingcap);
+}
+
+/** After the pools are back: Lua forgets every thinker noted alive before the
+  * restore that no list holds now. */
+static void P_ForgetRawDead(void)
+{
+	const size_t now = P_ListLiving(&g_rawnow, &g_rawnowcap);
+	size_t a = 0, b = 0;
+
+	while (a < g_rawlivingn)
+	{
+		const uintptr_t was = (uintptr_t)g_rawliving[a];
+		const uintptr_t is = (b < now) ? (uintptr_t)g_rawnow[b] : 0;
+
+		if (b < now && is < was)
+		{
+			b++;
+		}
+		else if (b < now && is == was)
+		{
+			a++;
+			b++;
+		}
+		else
+		{
+			LUA_InvalidateUserdata(g_rawliving[a]);
+			a++;
+		}
+	}
+
+	g_rawlivingn = 0;
+}
+
+dboolean P_LoadNetGameRaw(savebuffer_t *save)
+{
+	thinker_t *th;
+	size_t recorded = 0;
+	uint32_t i;
+	dboolean ret;
+
+	// Lua forgets the objects this restore took away, as a network load's
+	// purge makes it forget every object (P_NoteRawLiving, called before the
+	// pools were put back).
+	P_ForgetRawDead();
+
+	// ACS threads and activators forget the objects they held before this
+	// restore without giving their references back -- the thinker_era guard
+	// (8.51, 8.52), which a network load trips through P_InitThinkers. Every
+	// count is rebuilt from zero here anyway.
+	P_InvalidateThinkersWithoutInit();
+
+	if (g_rawcounton)
+		recorded = P_RecordRawCounts();
+
+	for (i = 0; i < NUM_THINKERLISTS; i++)
+		for (th = thlist[i].next; th != &thlist[i]; th = th->next)
+			th->references = 0;
+
+	// The renderer's interpolation list held the objects there were before
+	// the restore; it gets the ones there are now, below.
+	R_InitMobjInterpolators();
+
+	rawsnapshot = true;
+	ret = P_LoadNetGame(save, true, true);
+	rawsnapshot = false;
+
+	// The loaders counted the players', waypoints', links' and ACS's
+	// references as they relinked them; the rest are held in the pools.
+	P_CountRawReferences();
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 != (actionf_p1)P_RemoveThinkerDelayed)
+			R_AddMobjInterpolator((mobj_t *)th);
+	}
+
+	if (g_rawcounton)
+		P_CompareRawCounts(recorded);
+
 	return ret;
 }
 
@@ -7752,4 +9538,326 @@ size_t P_SaveBufferRemaining(const savebuffer_t *save)
 	{
 		return 0;
 	}
+}
+
+/** Names the archive block that a byte offset of a P_SaveNetGame buffer falls in.
+  *
+  * Diagnostic aid for the rollback netcode. When two snapshots of what should
+  * be the same state disagree, the offset of the first differing byte says
+  * little on its own; the block it lands in says which archiver is at fault.
+  *
+  * The markers are searched for in the order P_SaveNetGame writes them, so a
+  * run of payload bytes that happens to match a marker cannot pull the scan
+  * out of sequence -- at worst it reports a block boundary slightly early.
+  *
+  * Not every archiver writes a marker. CV_SaveNetVars writes none, so anything
+  * ahead of the first marker is attributed to it. The colormaps and tube
+  * waypoints write none either and are reported as part of the specials block
+  * they follow; ACS and Lua likewise trail the waypoints block and are
+  * reported as waypoints.
+  *
+  * \return a static string naming the block. Never NULL.
+  */
+/** Reads an offset inside the players block as a player and a distance into
+  * that player's record.
+  *
+  * Only meaningful for the archive that was written last, since it is that
+  * one's layout being described.
+  *
+  * 
+eturn false if the offset is not inside any player's record.
+  */
+dboolean P_LocatePlayerField(size_t offset, uint8_t *player, size_t *into)
+{
+	int32_t i;
+	int32_t found = -1;
+
+	if (playersblockend != 0 && offset >= playersblockend)
+		return false;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (playerrecordoffset[i] == 0 || playerrecordoffset[i] > offset)
+			continue;
+
+		if (found < 0 || playerrecordoffset[i] > playerrecordoffset[found])
+			found = i;
+	}
+
+	if (found < 0)
+		return false;
+
+	*player = (uint8_t)found;
+	*into = offset - playerrecordoffset[found];
+	return true;
+}
+
+/** Names the field that a distance into a player's record lands in.
+  *
+  * "38 bytes into their record" says which player went somewhere else but not
+  * what about them did, and reading one of those costs a pass over the archiver
+  * by hand. This walks the fields P_NetArchivePlayers writes, in the order it
+  * writes them, and names the one the offset falls in.
+  *
+  * The list is a copy of that writer and goes stale if the writer changes,
+  * which is the price of not threading a name through every WRITE. It stops
+  * where the record turns conditional on what the player has attached to them;
+  * past that point this says nothing rather than something wrong.
+  *
+  * The name is written as a string and its terminator, so its length is read
+  * back out of the record rather than assumed -- Eggrobo takes eight bytes and
+  * Tails takes six, and every field after them moves with it.
+  *
+  * 
+eturn the field's name, or NULL if the offset is past the named part.
+  */
+const char *P_NamePlayerField(const uint8_t *buffer, size_t length, uint8_t player, size_t into)
+{
+	size_t at = 0;
+	size_t start;
+	size_t n;
+
+	if (buffer == NULL || player >= MAXPLAYERS)
+		return NULL;
+
+	start = playerrecordoffset[player];
+
+	if (start == 0 || start >= length)
+		return NULL;
+
+#define FIELD(size, label) \
+	do { \
+		if (into < at + (size_t)(size)) \
+			return label; \
+		at += (size_t)(size); \
+	} while (0)
+
+	FIELD(1, "adminplayers");
+	FIELD(2 * PWRLV_NUMTYPES, "clientpowerlevels");
+	FIELD(2, "clientPowerAdd");
+
+	// A player who is not in the game is three values and nothing else.
+	if (playeringame[player] == false)
+		return NULL;
+
+	for (n = 0; start + at + n < length && buffer[start + at + n] != '\0'; n++)
+		;
+
+	FIELD(n + 1, "player_names");
+	FIELD(1, "playerconsole");
+	FIELD(4, "splitscreen_invitations");
+
+	FIELD(2, "steering");
+	FIELD(4, "angleturn");
+	FIELD(4, "aiming");
+	FIELD(4, "drawangle");
+	FIELD(4, "viewrollangle");
+
+	if (localsnapshot == false)
+	{
+		FIELD(4, "tilt");
+	}
+	FIELD(4, "awayview.tics");
+
+	FIELD(1, "playerstate");
+	FIELD(4, "pflags");
+	FIELD(4, "pflags2");
+	FIELD(1, "panim");
+	FIELD(1, "spectator");
+	FIELD(4, "spectatewait");
+
+	FIELD(2, "flashpal");
+	FIELD(2, "flashcount");
+
+	FIELD(2, "skincolor");
+	FIELD(4, "skin");
+	FIELD(MAXAVAILABILITY, "availabilities");
+
+	FIELD(2, "fakeskin");
+	FIELD(2, "lastfakeskin");
+
+	FIELD(2, "prefcolor");
+	FIELD(4, "prefskin");
+	FIELD(2, "preffollowercolor");
+	FIELD(4, "preffollower");
+
+	FIELD(4, "score");
+	FIELD(1, "lives");
+	FIELD(1, "xtralife");
+	FIELD(4, "speed");
+	FIELD(4, "lastspeed");
+	FIELD(4, "deadtimer");
+	FIELD(4, "exiting");
+
+	FIELD(4, "cmomx");
+	FIELD(4, "cmomy");
+	FIELD(4, "rmomx");
+	FIELD(4, "rmomy");
+
+	FIELD(2, "totalring");
+	FIELD(4, "realtime");
+	FIELD(4 * LAP__MAX, "laptime");
+	FIELD(1, "laps");
+	FIELD(1, "latestlap");
+	FIELD(4, "exp");
+	FIELD(4, "gradingfactor");
+	FIELD(2, "gradingpointnum");
+	FIELD(2, "duelscore");
+	FIELD(4, "cheatchecknum");
+	FIELD(4, "checkpointId");
+
+	FIELD(1, "team");
+	FIELD(1, "checkskip");
+
+	FIELD(2, "lastsidehit");
+	FIELD(2, "lastlinehit");
+
+	FIELD(4, "onconveyor");
+
+	FIELD(1, "timeshit");
+	FIELD(1, "timeshitprev");
+
+	FIELD(4, "jointime");
+
+	FIELD(4, "spectatorReentry");
+	FIELD(4, "griefValue");
+	FIELD(1, "griefStrikes");
+	FIELD(1, "griefWarned");
+
+	FIELD(1, "splitscreenindex");
+
+	if (localsnapshot)
+	{
+		FIELD(sizeof (ticcmd_t), "cmd");
+		FIELD(sizeof (ticcmd_t), "oldcmd");
+		FIELD(4, "SPBdistance");
+		FIELD(4, "itemscale");
+		FIELD(1, "enteredGame");
+		FIELD(1, "faultflash");
+	}
+
+	// Which objects are attached to this player. The record's shape past here
+	// depends on this word -- so read it, and keep walking. Stopping here is what
+	// made a Skyscraper Leaps failure come back as "past the fields this can
+	// name", and the two survivors of a played race before it were a bit in this
+	// very word. Everything the walk gives up on is a field somebody has to
+	// decode from a hex window instead.
+	{
+		uint32_t attached = 0;
+
+		if (start + at + 4 <= length)
+			M_Memcpy(&attached, buffer + start + at, 4);
+
+		FIELD(4, "flags (which objects are attached)");
+
+		// In the order the archiver writes them, which is not the order the enum
+		// declares them in. Reading it off the writer is the only way to be sure,
+		// and a walker that guesses the order is worse than one that stops.
+#define ATTACHED(bit, label) \
+		do { \
+			if (attached & (bit)) \
+				FIELD(4, label); \
+		} while (0)
+
+		ATTACHED(SKYBOXVIEW, "skybox.viewpoint");
+		ATTACHED(SKYBOXCENTER, "skybox.centerpoint");
+		ATTACHED(AWAYVIEW, "awayview.mobj");
+		ATTACHED(FOLLOWITEM, "followmobj");
+		ATTACHED(HOVERHYUDORO, "hoverhyudoro");
+		ATTACHED(BALLHOGRETICULE, "ballhogreticule");
+		ATTACHED(STUMBLE, "stumbleIndicator");
+		ATTACHED(WAVEDASH, "wavedashIndicator");
+		ATTACHED(TRICKINDICATOR, "trickIndicator");
+		ATTACHED(WHIP, "whip");
+		ATTACHED(HAND, "hand");
+		ATTACHED(RINGSHOOTER, "ringShooter");
+		ATTACHED(FLICKYATTACKER, "flickyAttacker");
+		ATTACHED(FLICKYCONTROLLER, "powerup.flickyController");
+		ATTACHED(BARRIER, "powerup.barrier");
+		ATTACHED(STONESHOE, "stoneShoe");
+		ATTACHED(TOXOMISTERCLOUD, "toxomisterCloud");
+		ATTACHED(FLYBOT, "flybot");
+
+		FIELD(4, "followitem");
+		FIELD(4, "charflags");
+		FIELD(1, "kartspeed");
+		FIELD(1, "kartweight");
+		FIELD(1, "followerskin");
+		FIELD(1, "followerready");
+		FIELD(2, "followercolor");
+
+		ATTACHED(FOLLOWER, "follower");
+
+		FIELD(2, "nocontrol");
+		FIELD(1, "carry");
+		FIELD(2, "dye");
+
+#undef ATTACHED
+	}
+
+#undef FIELD
+
+	return NULL;
+}
+
+const char *P_LocateSnapshotBlock(const uint8_t *buffer, size_t length, size_t offset)
+{
+	static const uint32_t markers[] = {
+		ARCHIVEBLOCK_MISC,
+		ARCHIVEBLOCK_PLAYERS,
+		ARCHIVEBLOCK_PARTIES,
+		ARCHIVEBLOCK_ROUNDQUEUE,
+		ARCHIVEBLOCK_ZVOTE,
+		ARCHIVEBLOCK_WORLD,
+		ARCHIVEBLOCK_POBJS,
+		ARCHIVEBLOCK_THINKERS,
+		ARCHIVEBLOCK_SPECIALS,
+		ARCHIVEBLOCK_WAYPOINTS,
+		ARCHIVEBLOCK_RNG
+	};
+	static const char *const names[] = {
+		"misc",
+		"players",
+		"parties",
+		"roundqueue",
+		"zvote",
+		"world",
+		"polyobjects",
+		"thinkers",
+		"specials",
+		"waypoints",
+		"rng"
+	};
+
+	const char *found = "netvars";
+	size_t at = 0;
+	size_t i;
+
+	for (i = 0; i < sizeof (markers) / sizeof (markers[0]); i++)
+	{
+		uint32_t here;
+
+		while (at + sizeof (uint32_t) <= length)
+		{
+			M_Memcpy(&here, buffer + at, sizeof (uint32_t));
+			if (here == markers[i])
+				break;
+			at++;
+		}
+
+		// Marker not present: the buffer is shorter than a full snapshot, or
+		// truncated. Nothing past this point can be located.
+		if (at + sizeof (uint32_t) > length)
+			break;
+
+		// This block starts after the offset we are asking about, so the
+		// offset belongs to the previous one.
+		if (at > offset)
+			break;
+
+		found = names[i];
+		at += sizeof (uint32_t);
+	}
+
+	return found;
 }

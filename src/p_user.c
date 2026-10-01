@@ -51,6 +51,7 @@
 // SRB2kart
 #include "m_cond.h" // M_UpdateUnlockablesAndExtraEmblems
 #include "k_kart.h"
+#include "k_rollback.h" // K_RollbackTraceSkip
 #include "console.h" // CON_LogMessage
 #include "k_respawn.h"
 #include "k_bot.h"
@@ -4179,8 +4180,39 @@ DoABarrelRoll (player_t *player)
 
 	angle_t slope;
 	angle_t delta;
+	angle_t raw;
 
 	fixed_t smoothing;
+
+	// Only for a player somebody is looking at.
+	//
+	// tilt is read in exactly one place -- R_ViewRollAngle, for the view player
+	// -- so computing it for the other fifteen karts is wasted work. Worse, it
+	// is not deterministic: R_PointToAnglePlayer answers from the local camera
+	// for a display player and from viewx/viewy for everybody else, and those
+	// two are the renderer's interpolated view, rewritten once per drawn frame.
+	// The simulation runs at 35 tics a second; interpolation exists only to draw
+	// above that rate, and a tic reading it makes the world depend on when a
+	// frame happened to land. Measured: a replayed tic reads the value the pass
+	// before it left behind, and tilt is archived, so the check fails.
+	{
+		uint8_t view;
+		dboolean drawn = false;
+
+		for (view = 0; view <= r_splitscreen; view++)
+		{
+			if (player == &players[displayplayers[view]])
+			{
+				drawn = true;
+				break;
+			}
+		}
+
+		if (drawn == false)
+		{
+			return;
+		}
+	}
 
 	if (player->exiting || F_CreditsDemoExitFade() >= 0)
 	{
@@ -4198,7 +4230,8 @@ DoABarrelRoll (player_t *player)
 		return;
 	}
 
-	slope = InvAngle(R_GetPitchRollAngle(player->mo, player));
+	raw = R_GetPitchRollAngle(player->mo, player);
+	slope = InvAngle(raw);
 
 	if (AbsAngle(slope) < ANGLE_11hh)
 	{
@@ -4230,6 +4263,14 @@ DoABarrelRoll (player_t *player)
 		player->tilt += delta;
 	else
 		player->tilt  = slope;
+
+	// What this read, and what it produced. tilt is archived, so when two
+	// passes disagree about it the question is which of its inputs moved --
+	// and every candidate has been argued to be impossible, which means one
+	// of the arguments is wrong.
+	K_RollbackTraceTilt((int32_t)(player - players), (uint32_t)viewx, (uint32_t)viewy,
+		(uint32_t)player->mo->pitch, (uint32_t)player->mo->roll,
+		(uint32_t)raw, (uint32_t)player->tilt);
 }
 
 void P_TickAltView(altview_t *view)
@@ -4875,10 +4916,24 @@ void P_PlayerAfterThink(player_t *player)
 	// so a lag value of 1 is exactly attached to the player.
 	K_HandleFollower(player);
 
-	if (P_MobjWasRemoved(player->mo) || (player->mo->eflags & MFE_PAUSED) == 0)
 	{
-		player->timeshitprev = player->timeshit;
-		player->timeshit = 0;
+		// Skipping this leaves timeshitprev holding whatever it held, so two
+		// passes that disagree about being in hitlag end the tic with different
+		// values and nothing else to show for it -- which is what every failing
+		// check of a soak reports. Recorded either way, with the two numbers the
+		// decision is made from.
+		const dboolean copied = (P_MobjWasRemoved(player->mo)
+			|| (player->mo->eflags & MFE_PAUSED) == 0);
+
+		K_RollbackTraceHitCopy((int32_t)(player - players), copied,
+			P_MobjWasRemoved(player->mo) ? 0 : player->mo->hitlag,
+			player->nullHitlag, player->timeshit, player->timeshitprev);
+
+		if (copied)
+		{
+			player->timeshitprev = player->timeshit;
+			player->timeshit = 0;
+		}
 	}
 
 	if (K_PlayerUsesBotMovement(player))

@@ -139,6 +139,17 @@ typedef enum
 
 	PT_VOICE,           // Voice packet for either side
 
+	PT_STATECORRECTION, // Server, to a client: where the karts actually are.
+	                    // Breaks compatibility with stock servers by existing,
+	                    // which is deliberate -- see statecorrection_pak.
+	                    //
+	                    // Deliberately at the end, and so above PT_CANFAIL:
+	                    // droppable, and unable to occupy every send slot. A
+	                    // correction that crowds out the file fragments of a
+	                    // joining client is worse than a correction that is
+	                    // missed, because the next one is four tics behind it
+	                    // and says something more recent.
+
 	NUMPACKETTYPE
 } packettype_t;
 
@@ -303,9 +314,28 @@ struct clientconfig_pak
 } ATTRPACK;
 
 #define SV_SPEEDMASK 0x03		// used to send kartspeed
+#define SV_WORLDWIDE 0x04		// the server runs WORLDWIDE mode (cv_worldwide). A stock client
+								// reads kartvars through SV_SPEEDMASK and the flags above only,
+								// so it never sees this bit.
 #define SV_DEDICATED 0x40		// server is dedicated
 #define SV_VOICEENABLED 0x80    // voice_mute is off/voice chat is enabled
 #define SV_LOTSOFADDONS 0x20	// flag used to ask for full file list in d_netfil
+
+// A WORLDWIDE client's PT_CLIENTJOIN is clientconfig_pak with these bytes after
+// it. A stock server reads the packet as a clientconfig_pak and never checks
+// its length (HandleConnect), so the extra bytes cost it nothing; a WORLDWIDE
+// server reads them to tell a WORLDWIDE client from a stock one, and refuses
+// the stock one while it runs WORLDWIDE mode. WORLDWIDE_PROTOCOL goes up when
+// two WORLDWIDE builds can no longer play together.
+#define WORLDWIDE_MAGIC "RRWW"
+#define WORLDWIDE_PROTOCOL 1
+
+struct clientworldwide_pak
+{
+	clientconfig_pak cfg;
+	uint8_t magic[4];	// WORLDWIDE_MAGIC, without its terminator
+	uint8_t protocol;	// WORLDWIDE_PROTOCOL
+} ATTRPACK;
 
 #define MAXFILENEEDED 915
 #define MAX_MIRROR_LENGTH 256
@@ -445,6 +475,111 @@ struct voice_pak
 #define VOICE_PAK_FLAGS_RESERVED1_BIT 0x80
 #define VOICE_PAK_FLAGS_RESERVED_BITS (VOICE_PAK_FLAGS_RESERVED0_BIT | VOICE_PAK_FLAGS_RESERVED1_BIT)
 
+// One kart's kinematics, as the authoritative server had them on a tic it has
+// confirmed. Thirty-eight bytes.
+struct statekart_pak
+{
+	uint8_t slot;      // player number, so a partial list is still readable
+	uint8_t flags;     // reserved; zero for now
+	int32_t x, y, z;   // fixed_t
+	int32_t momx, momy, momz;
+	uint32_t angle;    // angle_t
+	int32_t hitlag;
+	int16_t rings;
+	int8_t itemtype;
+	uint8_t itemamount;
+
+	// The state, not the kinematics.
+	//
+	// A spike line showed a kart's momentum being re-derived wrong within four
+	// tics of being handed the server's value, twenty tics running -- so the
+	// divergence is a *state* this machine holds and the server does not, and
+	// correcting the momentum eight times a second only treats the symptom.
+	// These say which state. They are measured and printed, and deliberately not
+	// applied: which field to carry is the question, and guessing at it is how
+	// every reverted fix on this branch started.
+	uint16_t spinouttimer;
+	uint16_t nocontrol;
+	uint16_t flashing;
+	uint8_t spinouttype;
+	uint8_t tumbleBounces;
+	uint8_t wipeoutslow;
+	uint8_t justbumped;
+	int32_t offroad;
+	int32_t speed;
+} ATTRPACK;
+
+// The light correction channel.
+//
+// Stock Ring Racers has exactly one way to correct a client: send it the whole
+// savegame as a file transfer -- 120 KiB at the start of a race and 318 KiB
+// three minutes in -- one client at a time, with a five second cooldown, and a
+// load that costs about 11 ms on a machine that is drawing. That is a repair,
+// not a correction, and a predicting client needs the opposite: something small
+// enough to send constantly.
+//
+// Sixteen karts of statekart_pak is 608 bytes against 318 KiB. A factor of five
+// hundred is what makes a correction every few tics affordable at all: at one
+// every four tics that is under 6 KB/s a client, where the same cadence with
+// whole snapshots would be 2.8 MB/s. The arithmetic is why this packet carries
+// kinematics and not a state dump.
+//
+// It is also the best instrument this branch has had for the drift it is
+// chasing. Every correction is a measurement of the gap between one client and
+// the server, on a named tic, for every kart -- continuously, instead of only
+// when the consistency checksum trips and the resend cooldown allows it. So the
+// receiving side measures whether or not it applies anything.
+struct statecorrection_pak
+{
+	uint32_t tic;       // the confirmed tic these describe
+
+	// Damage outcomes this machine has resolved since the map started, and a
+	// hash of which ones. Keyed by player slot and mobj type, never by mobjnum:
+	// that is handed out afresh at every save, and a client taking a snapshot
+	// every tic renumbers constantly, so a hash over mobjnums would differ
+	// between two machines that agreed about everything.
+	//
+	// This field held a collision tally first, and that tally was wrong: it sat
+	// in PIT_CheckThing, which tests every pair of objects that come *near* each
+	// other, so it read twenty-seven million per race and its value depended on
+	// who was near whom -- that is, on the divergence it was meant to date.
+	// Circular, and therefore mute.
+	//
+	// Damage is the opposite kind of event: a few dozen per race, each one a
+	// decision both machines must reach identically. The race that retired the
+	// collision tally said as much -- of forty spikes, twenty-nine differed in
+	// flashing, tumbleBounces or hitlag, and all three are written by the damage
+	// path; one kart counted down a sixty-four tic flash on the server that the
+	// client never started.
+	//
+	// Both sides sample at the same point: the server stamps the tic it is about
+	// to run, and the receiver holds the packet until its own clock reaches that
+	// tic. The client missed the events from before it joined, so it adopts
+	// these two values once, on the first correction that lands on its own tic;
+	// after that the two machines fold the same events in the same order, and
+	// the pair is an equality test. rollback_damagelog on both machines dates
+	// any parting to a tic and an object.
+	uint32_t damages;
+	uint32_t damagehash;
+
+	// Every instrument on this branch has ruled out one cause after another --
+	// the archive, the restore, tic determinism, the confirmed clock running
+	// on a guess -- while positions still measurably drift and the game's own
+	// Consistancy() agrees. What none of them checked: whether every machine
+	// actually ran the SAME ticcmd for the SAME player on the SAME confirmed
+	// tic on the FIRST delivery. K_RollbackNoteArrival already answers a
+	// narrower question -- does a late RESEND of an already-run tic disagree --
+	// and it has read zero every race, because a resend of an already-consumed
+	// tic is rare on a clean local link. This is the general case: folded once
+	// per player, every confirmed tic, from the exact ticcmd about to be run.
+	uint32_t inputs;
+	uint32_t inputhash;
+
+	uint8_t numkarts;
+	uint8_t reserved;
+	statekart_pak kart[MAXPLAYERS];
+} ATTRPACK;
+
 //
 // Network packet data
 //
@@ -472,7 +607,8 @@ struct doomdata_t
 		char fileack[sizeof (fileack_pak)];
 		UINT8 filereceived;
 		clientconfig_pak clientcfg;         //         650 bytes
-		UINT8 md5sum[16];
+		clientworldwide_pak clientww;       // clientcfg, and what a WORLDWIDE client adds
+		uint8_t md5sum[16];
 		serverinfo_pak serverinfo;          //        1024 bytes
 		serverrefuse_pak serverrefuse;      //       65025 bytes (somehow I feel like those values are garbage...)
 		askinfo_pak askinfo;                //          61 bytes
@@ -489,6 +625,7 @@ struct doomdata_t
 		say_pak say;							// I don't care anymore.
 		reqmapqueue_pak reqmapqueue;			// Formerly XD_REQMAPQUEUE
 		voice_pak voice;                        // Unreliable voice data, variable length
+		statecorrection_pak statecorrection;    //         910 bytes
 	} u; // This is needed to pack diff packet types data together
 } ATTRPACK;
 
@@ -594,6 +731,7 @@ extern boolean server_lagless;
 extern consvar_t cv_mindelay;
 
 extern consvar_t cv_netticbuffer, cv_allownewplayer, cv_maxconnections, cv_joindelay;
+extern consvar_t cv_worldwide;
 extern consvar_t cv_pingtimeout, cv_blamecfail;
 extern consvar_t cv_maxsend, cv_noticedownload, cv_downloadspeed;
 
@@ -706,8 +844,31 @@ void D_ResetTiccmds(void);
 void D_ResetTiccmdAngle(UINT8 ss, angle_t angle);
 ticcmd_t *D_LocalTiccmd(UINT8 ss);
 
-tic_t GetLag(INT32 node);
-UINT8 GetFreeXCmdSize(UINT8 playerid);
+/** The local input built `age` samples ago (0 is the newest, the one
+  * D_LocalTiccmd returns), or NULL past the MAXGENTLEMENDELAY kept. One sample
+  * is built and sent per pass, so this is also the send order. */
+ticcmd_t *D_LocalTiccmdAge(uint8_t ss, int32_t age);
+
+/* Hash of the parts of the game state the netcode compares between
+   machines. Exposed for the rollback netcode, which uses it to check a
+   restored state against the one it was taken from. */
+int16_t Consistancy(void);
+
+/** Stores the current world's checksum as the given tic's. Used by the rollback
+  * replay, which advances tics without going through the tic loop that does it. */
+void D_RecordConsistancy(tic_t tic);
+
+/** The first tic the server has not sent yet: every tic below it holds the
+  * server's inputs for every player. */
+tic_t D_NeededTic(void);
+
+/** Console command: records what the consistency checksum was looking at, tic by
+  * tic, so a synch failure can name a position, an item or an RNG seed instead of
+  * being guessed at. */
+void Command_RollbackBlame_f(void);
+
+tic_t GetLag(int32_t node);
+uint8_t GetFreeXCmdSize(uint8_t playerid);
 
 void D_MD5PasswordPass(const UINT8 *buffer, size_t len, const char *salt, void *dest);
 

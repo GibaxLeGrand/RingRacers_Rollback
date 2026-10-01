@@ -28,6 +28,7 @@
 #include "w_wad.h"
 
 #include "k_kart.h" // SRB2kart 011617
+#include "k_rollback.h"
 #include "k_collide.h"
 #include "k_respawn.h"
 #include "hu_stuff.h" // SRB2kart
@@ -533,6 +534,16 @@ static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
 	// Ignore... things.
 	if (thing == NULL || P_MobjWasRemoved(thing) == true)
 		return BMIT_CONTINUE;
+
+	// Counted for a resimulation check: two passes that examine different pairs
+	// are not simulating the same world, whatever their state says they hold.
+	K_RollbackTraceCollide(g_tm.thing->mobjnum, thing->mobjnum);
+
+	// A cross-machine tally used to sit here, and it was retired: this function
+	// runs on every pair of objects that come near each other, so it counted
+	// twenty-seven million proximity tests per race, its value depended on the
+	// positions it was meant to audit, and it cost a call per pair. The events
+	// worth comparing between two machines are in P_DamageMobj.
 
 	// don't clip against self
 	if (thing == g_tm.thing)

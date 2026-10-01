@@ -69,10 +69,13 @@ TYPEDEF (fileacksegment_t);
 TYPEDEF (fileack_pak);
 TYPEDEF (player_config_t);
 TYPEDEF (clientconfig_pak);
+TYPEDEF (clientworldwide_pak);
 TYPEDEF (serverinfo_pak);
 TYPEDEF (serverrefuse_pak);
 TYPEDEF (askinfo_pak);
 TYPEDEF (msaskinfo_pak);
+TYPEDEF (statekart_pak);
+TYPEDEF (statecorrection_pak);
 TYPEDEF (plrinfo);
 TYPEDEF (filesneededconfig_pak);
 TYPEDEF (doomdata_t);
@@ -335,6 +338,8 @@ TYPEDEF (polyfadedata_t);
 TYPEDEF (savedata_t);
 TYPEDEF (savedata_cup_t);
 TYPEDEF (savebuffer_t);
+TYPEDEF (loadstep_t);
+TYPEDEF (savestep_t);
 
 // p_setup.h
 TYPEDEF (levelflat_t);

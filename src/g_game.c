@@ -61,6 +61,7 @@
 #include "k_boss.h"
 #include "k_specialstage.h"
 #include "k_bot.h"
+#include "k_rollback.h"
 #include "doomstat.h"
 #include "k_director.h"
 #include "k_podium.h"
@@ -1876,15 +1877,55 @@ void G_UpdateAllPlayerPreferences(void)
 
 extern boolean demosynced;
 
+/** Moves the tic's inputs out of netcmds and into the players.
+  *
+  * Pulled out of G_Ticker unchanged so that a replayed tic can take the same
+  * step. It is not a plain copy: a ticcmd arrives carrying the leveltime it was
+  * built at, and this is where that stamp becomes the control lag the
+  * simulation reads -- the drift leniency in p_user caps it at six, the item
+  * roulette uses it as a fudge. A rollback replay that wrote netcmds straight
+  * into players[].cmd handed the raw stamp to the simulation instead: 130 where
+  * the live tic had 2, and zero is what a bot is supposed to get.
+  */
+void G_MoveTiccmdsIntoPlayers(void)
+{
+	int32_t buf = gametic % BACKUPTICS;
+	ticcmd_t *cmd;
+	uint32_t i;
+
+	if (demo.playback)
+		return;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		cmd = &players[i].cmd;
+
+		if (playeringame[i])
+		{
+			G_CopyTiccmd(cmd, &netcmds[buf][i], 1);
+
+			// Use the leveltime sent in the player's ticcmd to determine control lag
+			if (K_PlayerUsesBotMovement(&players[i]))
+			{
+				// Never has lag
+				cmd->latency = 0;
+			}
+			else
+			{
+				//@TODO add a cvar to allow setting this max
+				cmd->latency = min(((leveltime & TICCMD_LATENCYMASK) - cmd->latency) & TICCMD_LATENCYMASK, MAXPREDICTTICS-1);
+			}
+		}
+	}
+}
+
 //
 // G_Ticker
 // Make ticcmd_ts for the players.
 //
 void G_Ticker(boolean run)
 {
-	UINT32 i;
-	INT32 buf;
-	ticcmd_t *cmd;
+	uint32_t i;
 
 	// see also SCR_DisplayMarathonInfo
 	if ((marathonmode & (MA_INIT|MA_INGAME)) == MA_INGAME && gamestate == GS_LEVEL)
@@ -2006,32 +2047,7 @@ void G_Ticker(boolean run)
 			default: I_Error("gameaction = %d\n", gameaction);
 		}
 
-	buf = gametic % BACKUPTICS;
-
-	if (!demo.playback)
-	{
-		for (i = 0; i < MAXPLAYERS; i++)
-		{
-			cmd = &players[i].cmd;
-
-			if (playeringame[i])
-			{
-				G_CopyTiccmd(cmd, &netcmds[buf][i], 1);
-
-				// Use the leveltime sent in the player's ticcmd to determine control lag
-				if (K_PlayerUsesBotMovement(&players[i]))
-				{
-					// Never has lag
-					cmd->latency = 0;
-				}
-				else
-				{
-					//@TODO add a cvar to allow setting this max
-					cmd->latency = min(((leveltime & TICCMD_LATENCYMASK) - cmd->latency) & TICCMD_LATENCYMASK, MAXPREDICTTICS-1);
-				}
-			}
-		}
-	}
+	G_MoveTiccmdsIntoPlayers();
 
 	// do main actions
 	switch (gamestate)
@@ -2200,6 +2216,14 @@ void G_Ticker(boolean run)
 			}
 		}
 	}
+
+	// Last, because a snapshot of tic N is supposed to be the world as N left
+	// it. This used to sit directly under P_Ticker, which is barely half way
+	// through a tic: K_CheckSpectateStatus, further down, still had a
+	// spectatorReentry to decrement. A replay then came back one short of the
+	// present no matter how many tics it repeated, because the tic it started
+	// from had been photographed mid-stride.
+	K_RollbackTicker(); // does nothing unless rollback_keep or _soak is on
 }
 
 //

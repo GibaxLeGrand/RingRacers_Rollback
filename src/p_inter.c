@@ -32,6 +32,7 @@
 
 // SRB2kart
 #include "k_kart.h"
+#include "k_rollback.h"
 #include "k_battle.h"
 #include "k_specialstage.h"
 #include "k_pwrlv.h"
@@ -788,7 +789,10 @@ void P_TouchSpecialThing(mobj_t *special, mobj_t *toucher, boolean heightcheck)
 					return;
 				}
 
-				if (!gamedata->collected[special->health-1])
+				// An emblem collected on a speculated or re-run tic is not
+				// collected: that tic may never happen, and gamedata is saved
+				// to disk and never restored (WORLDWIDE.md 8.54).
+				if (!K_RollbackOffTimeline() && !gamedata->collected[special->health-1])
 				{
 					gamedata->collected[special->health-1] = true;
 					if (!M_UpdateUnlockablesAndExtraEmblems(true, true))
@@ -823,6 +827,15 @@ void P_TouchSpecialThing(mobj_t *special, mobj_t *toucher, boolean heightcheck)
 				if (!P_IsPartyPlayer(player))
 				{
 					// Must be party.
+					return;
+				}
+
+				// Everything below writes gamedata -- this install's unlocks,
+				// saved to disk and never restored -- or redraws the cans from
+				// it. On a speculated or re-run tic the grab may never happen:
+				// it waits for the tic that does (WORLDWIDE.md 8.54).
+				if (K_RollbackOffTimeline())
+				{
 					return;
 				}
 
@@ -963,6 +976,7 @@ void P_TouchSpecialThing(mobj_t *special, mobj_t *toucher, boolean heightcheck)
 					grandprixinfo.gp == true // Bonus Round
 					&& netgame == false // game design + makes it easier to implement
 					&& gamedata->thisprisoneggpickup_cached != NULL
+					&& K_RollbackOffTimeline() == false // gamedata: real tics only (WORLDWIDE.md 8.54)
 				)
 				{
 					gamedata->thisprisoneggpickupgrabbed = true;
@@ -2789,6 +2803,9 @@ static void AddTimesHit(player_t *player)
 
 	player->timeshit++;
 
+	// So a resimulation check can say which hit two passes disagree about.
+	K_RollbackTraceHit(player - players, 0, 0);
+
 	// overflow prevention
 	if (player->timeshit < oldtimeshit)
 	{
@@ -3140,6 +3157,13 @@ static boolean P_DamageMobjCompat(mobj_t *target, mobj_t *inflictor, mobj_t *sou
 					invincible = false;
 				}
 
+				// Which way this damage went, for a resimulation check to compare.
+				// Two passes landing the same hits but judging invincibility
+				// differently is the whole question.
+				K_RollbackTraceHit(player - players, 2,
+					(uint16_t)((invincible ? 1 : 0)
+						| ((target->eflags & MFE_PAUSED) ? 4 : 0)));
+
 				if (player->pflags2 & PF2_ALWAYSDAMAGED)
 				{
 					invincible = false;
@@ -3168,10 +3192,12 @@ static boolean P_DamageMobjCompat(mobj_t *target, mobj_t *inflictor, mobj_t *sou
 					if (target->eflags & MFE_PAUSED)
 					{
 						player->timeshit--; // doesn't count
+						K_RollbackTraceHit(player - players, 1, 0); // undo
 
 						if (playerInflictor)
 						{
 							playerInflictor->timeshit--;
+							K_RollbackTraceHit(playerInflictor - players, 1, 0); // undo
 						}
 
 						return false;
@@ -3683,7 +3709,7 @@ static boolean P_DamageMobjCompat(mobj_t *target, mobj_t *inflictor, mobj_t *sou
   * \todo Clean up this mess, split into multiple functions.
   * \sa P_KillMobj
   */
-boolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, INT32 damage, UINT8 damagetype)
+static dboolean P_DamageMobjInner(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t damage, uint8_t damagetype)
 {
 	if (G_CompatLevel(0x0010))
 		return P_DamageMobjCompat(target, inflictor, source, damage, damagetype);
@@ -3970,6 +3996,13 @@ boolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, INT32 da
 					invincible = false;
 				}
 
+				// Which way this damage went, for a resimulation check to compare.
+				// Two passes landing the same hits but judging invincibility
+				// differently is the whole question.
+				K_RollbackTraceHit(player - players, 2,
+					(uint16_t)((invincible ? 1 : 0)
+						| ((target->eflags & MFE_PAUSED) ? 4 : 0)));
+
 				if (player->pflags2 & PF2_ALWAYSDAMAGED)
 				{
 					invincible = false;
@@ -3998,10 +4031,12 @@ boolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, INT32 da
 					if (target->eflags & MFE_PAUSED)
 					{
 						player->timeshit--; // doesn't count
+						K_RollbackTraceHit(player - players, 1, 0); // undo
 
 						if (playerInflictor)
 						{
 							playerInflictor->timeshit--;
+							K_RollbackTraceHit(playerInflictor - players, 1, 0); // undo
 						}
 
 						return false;
@@ -4517,6 +4552,25 @@ boolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, INT32 da
 	}
 
 	return true;
+}
+
+/** P_DamageMobj proper: the work above, plus a note for the netcode.
+  *
+  * A wrapper rather than a call at each of the twenty-three return sites, and
+  * deliberately outside the function: what the two machines have to agree on is
+  * the OUTCOME. They refuse different attempts all day long -- an invincible
+  * kart here, a punt there -- without disagreeing about the world, so counting
+  * attempts would read non-zero for an innocent reason, which is how the
+  * collision tally that preceded this one wasted a race.
+  */
+dboolean P_DamageMobj(mobj_t *target, mobj_t *inflictor, mobj_t *source, int32_t damage, uint8_t damagetype)
+{
+	const dboolean took = P_DamageMobjInner(target, inflictor, source, damage, damagetype);
+
+	if (took == true)
+		K_RollbackNoteDamage(target, inflictor, damagetype);
+
+	return took;
 }
 
 #define RING_LAYER_SIDE_SIZE (3)

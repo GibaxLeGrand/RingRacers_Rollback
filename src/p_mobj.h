@@ -543,6 +543,11 @@ extern actioncache_t actioncachehead;
 extern mobj_t *trackercap;
 extern mobj_t *waypointcap;
 
+// The heads of two lists p_mobj.c keeps to itself, for the raw snapshots of
+// rollback_rawsnap (WORLDWIDE.md 8.88).
+mobj_t **P_TIDHashChains(size_t *count);
+mobj_t **P_OverlayCapHead(void);
+
 void P_InitCachedActions(void);
 void P_RunCachedActions(void);
 void P_AddCachedAction(mobj_t *mobj, INT32 statenum);

@@ -4653,9 +4653,12 @@ static void P_SetupSignObject(mobj_t *sign, mobj_t *pmo, boolean error)
 	sign->movecount = 1;
 	sign->extravalue1 = AngleFixed(sign->angle) >> FRACBITS;
 
-	// Setup the overlay pieces
+	// Setup the overlay pieces. Chained with P_SetTarget, as every load counts
+	// hnext and hprev when it relinks them: with plain assignments the live
+	// game held no reference for them, and a load held one or two per piece
+	// (WORLDWIDE.md 8.90, 8.91).
 	// Front
-	cur->hnext = P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE);
+	P_SetTarget(&cur->hnext, P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE));
 	P_SetTarget(&cur->hnext->target, sign);
 	P_SetMobjState(cur->hnext, S_SIGN_FACE);
 	cur->hnext->extravalue1 = 6;
@@ -4663,10 +4666,10 @@ static void P_SetupSignObject(mobj_t *sign, mobj_t *pmo, boolean error)
 
 	prev = cur;
 	cur = cur->hnext;
-	cur->hprev = prev;
+	P_SetTarget(&cur->hprev, prev);
 
 	// Player icon
-	cur->hnext = P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE);
+	P_SetTarget(&cur->hnext, P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE));
 	P_SetTarget(&cur->hnext->target, sign);
 	cur->hnext->skin = pmo->skin;
 	P_SetMobjState(cur->hnext, (error == true) ? S_SIGN_ERROR : S_KART_SIGN);
@@ -4675,10 +4678,10 @@ static void P_SetupSignObject(mobj_t *sign, mobj_t *pmo, boolean error)
 
 	prev = cur;
 	cur = cur->hnext;
-	cur->hprev = prev;
+	P_SetTarget(&cur->hprev, prev);
 
 	// Back
-	cur->hnext = P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE);
+	P_SetTarget(&cur->hnext, P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE));
 	P_SetTarget(&cur->hnext->target, sign);
 	P_SetMobjState(cur->hnext, S_SIGN_BACK);
 	cur->hnext->extravalue1 = 6;
@@ -4686,10 +4689,10 @@ static void P_SetupSignObject(mobj_t *sign, mobj_t *pmo, boolean error)
 
 	prev = cur;
 	cur = cur->hnext;
-	cur->hprev = prev;
+	P_SetTarget(&cur->hprev, prev);
 
 	// Sides
-	cur->hnext = P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE);
+	P_SetTarget(&cur->hnext, P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE));
 	P_SetTarget(&cur->hnext->target, sign);
 	P_SetMobjState(cur->hnext, S_SIGN_SIDE);
 	cur->hnext->extravalue1 = 30;
@@ -4697,9 +4700,9 @@ static void P_SetupSignObject(mobj_t *sign, mobj_t *pmo, boolean error)
 
 	prev = cur;
 	cur = cur->hnext;
-	cur->hprev = prev;
+	P_SetTarget(&cur->hprev, prev);
 
-	cur->hnext = P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE);
+	P_SetTarget(&cur->hnext, P_SpawnMobjFromMobj(sign, 0, 0, 0, MT_SIGN_PIECE));
 	P_SetTarget(&cur->hnext->target, sign);
 	P_SetMobjState(cur->hnext, S_SIGN_SIDE);
 	cur->hnext->extravalue1 = 30;
@@ -4707,7 +4710,7 @@ static void P_SetupSignObject(mobj_t *sign, mobj_t *pmo, boolean error)
 
 	prev = cur;
 	cur = cur->hnext;
-	cur->hprev = prev;
+	P_SetTarget(&cur->hprev, prev);
 }
 
 //

@@ -92,6 +92,7 @@
 #include "k_credits.h"
 #include "r_debug.hpp"
 #include "k_director.h"
+#include "k_rollback.h" // K_RollbackNoteFrame
 #include "m_pw.h"
 
 #ifdef HWRENDER
@@ -950,6 +951,7 @@ void D_SRB2Loop(void)
 
 		interp = R_UsingFrameInterpolation() && !dedicated;
 		doDisplay = false;
+		dboolean drewframe = false;
 
 		renderisnewtic = (realtics > 0 || singletics);
 
@@ -1019,6 +1021,8 @@ void D_SRB2Loop(void)
 
 		if ((interp || doDisplay) && !frameskip && g_fast_forward == 0)
 		{
+			drewframe = true;
+
 			if (!renderisnewtic)
 				P_ResetInterpHudRandSeed(false);
 
@@ -1145,6 +1149,10 @@ void D_SRB2Loop(void)
 			}
 		}
 
+		// For rollback_twoclock's report (WORLDWIDE.md 8.60): what this iteration
+		// cost before any sleep, whether a pass of the tic loop was in it, and
+		// whether it ran long enough that the next frame is skipped.
+		K_RollbackNoteFrame(finishprecise - enterprecise, renderisnewtic, drewframe, frameskip > 0);
 
 		if (world)
 		{
@@ -1448,6 +1456,15 @@ static void IdentifyVersion(void)
 #ifdef USE_PATCH_FILE
 	D_AddFile(startupiwads, num_startupiwads++, va(pandf,srb2waddir,"patch.pk3"), ASSET_HASH_PATCH_PK3);
 #endif
+
+	// WORLDWIDE's own graphics -- the title's globe and ring -- if the file is
+	// there. A main file like the ones above, before the music: never sent,
+	// never checked against a server's list, and the game runs without it.
+	{
+		const char *worldwidepath = va(spandf,srb2waddir,"data","worldwide.pk3");
+		if (FIL_ReadFileOK(worldwidepath))
+			D_AddFile(startupiwads, num_startupiwads++, worldwidepath, NULL);
+	}
 
 #define MUSICTEST(str) \
 		musicpath = va(spandf,srb2waddir,"data",str);\

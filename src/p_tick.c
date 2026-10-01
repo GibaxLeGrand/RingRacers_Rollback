@@ -54,6 +54,7 @@
 #include "k_endcam.h"
 #include "lua_profile.h"
 #include "deh_tables.h" // MOBJTYPE_LIST
+#include "k_rollback.h" // rollback_objprofile
 
 tic_t leveltime;
 boolean thinkersCompleted;
@@ -433,6 +434,10 @@ void P_RemoveThinkerDelayed(thinker_t *thinker)
 		return;
 	}
 
+#ifdef PARANOIA
+	K_RollbackRefFreed(thinker); // a kart's body stops being followed
+#endif
+
 	R_DestroyLevelInterpolators(thinker);
 
 	/* Note that currentthinker is guaranteed to point to us,
@@ -508,6 +513,10 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 		(*mop)->thinker.references--;
 
 #ifdef PARANOIA
+		// A kart's body, followed site by site (WORLDWIDE.md 8.111).
+		if ((*mop)->type == MT_PLAYER)
+			K_RollbackRefTrace(*mop, -1, source_file, source_line);
+
 		if ((*mop)->thinker.references < 0)
 		{
 			CONS_Printf(
@@ -519,6 +528,9 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 					source_file,
 					source_line
 			);
+
+			if ((*mop)->type == MT_PLAYER)
+				K_RollbackRefNegative(*mop, source_file, source_line);
 		}
 
 		(*mop)->thinker.debug_time = leveltime;
@@ -530,6 +542,9 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 		targ->thinker.references++;
 
 #ifdef PARANOIA
+		if (targ->type == MT_PLAYER)
+			K_RollbackRefTrace(targ, 1, source_file, source_line);
+
 		targ->thinker.debug_time = leveltime;
 #endif
 	}
@@ -573,10 +588,28 @@ static void P_RunThinkers(void)
 #ifdef PARANOIA
 			I_Assert(currentthinker->function.acp1 != NULL);
 #endif
-			currentthinker->function.acp1(currentthinker);
+			// rollback_objprofile times each object's think by type
+			// (WORLDWIDE.md 8.66): a clock read either side of every object
+			// is not free, so only while it is on.
+			if (g_rollbackobjprofile && i == THINK_MOBJ
+				&& currentthinker->function.acp1 == (actionf_p1)P_MobjThinker)
+			{
+				const int32_t type = (int32_t)((mobj_t *)currentthinker)->type;
+				const precise_t at = I_GetPreciseTime();
+
+				currentthinker->function.acp1(currentthinker);
+				K_RollbackNoteObjectThink(type, I_GetPreciseTime() - at);
+			}
+			else
+			{
+				currentthinker->function.acp1(currentthinker);
+			}
 		}
 		ps_thlist_times[i] = I_GetPreciseTime() - ps_thlist_times[i];
 	}
+
+	if (g_rollbackobjprofile)
+		K_RollbackNoteObjectTic();
 
 	if (gametyperules & GTR_CIRCUIT)
 		K_RunFinishLineBeam();
@@ -761,7 +794,11 @@ void P_Ticker(boolean run)
 	{
 		R_UpdateMobjInterpolators();
 
-		if (demo.recording)
+		// A client that predicts writes no replay: every speculated tic was
+		// written too, the restores never rewinding it, and one wrote across a
+		// level's restart (WORLDWIDE.md 8.96). A replay being recorded stops
+		// where the prediction starts; P_SetupLevel begins none while it runs.
+		if (demo.recording && K_RollbackPredicting() == false)
 		{
 			if (!G_ConsiderEndingDemoWrite())
 			{

@@ -171,6 +171,7 @@ add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32
 	k_tally.cpp
 	k_bans.cpp
 	k_endcam.cpp
+	k_rollback.c
 	k_credits.cpp
 	k_modinfo.cpp
 	music.cpp

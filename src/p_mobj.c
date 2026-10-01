@@ -54,6 +54,7 @@
 #include "m_easing.h"
 #include "k_podium.h"
 #include "g_party.h"
+#include "k_rollback.h" // K_RollbackOffTimeline
 
 actioncache_t actioncachehead;
 
@@ -7295,7 +7296,10 @@ static boolean P_MobjRegularThink(mobj_t *mobj)
 		{
 			if (mobj->tracer->fuse == 1)
 			{
-				if (!(mapheaderinfo[gamemap-1]->records.mapvisited & MV_MYSTICMELODY))
+				// Map records are this install's, saved and never restored:
+				// real tics only (WORLDWIDE.md 8.54).
+				if (!(mapheaderinfo[gamemap-1]->records.mapvisited & MV_MYSTICMELODY)
+					&& K_RollbackOffTimeline() == false)
 				{
 					mapheaderinfo[gamemap-1]->records.mapvisited |= MV_MYSTICMELODY;
 
@@ -12102,6 +12106,11 @@ void P_RemoveMobj(mobj_t *mobj)
 	if (P_MobjWasRemoved(mobj))
 		return; // something already removing this mobj.
 
+#ifdef PARANOIA
+	if (mobj->type == MT_PLAYER)
+		K_RollbackRefRemoved(mobj); // WORLDWIDE.md 8.111
+#endif
+
 	mobj->thinker.function.acp1 = (actionf_p1)P_RemoveThinkerDelayed; // shh. no recursing.
 	LUA_HookMobj(mobj, MOBJ_HOOK(MobjRemoved));
 	mobj->thinker.function.acp1 = (actionf_p1)P_MobjThinker; // needed for P_UnsetThingPosition, etc. to work.
@@ -12135,7 +12144,12 @@ void P_RemoveMobj(mobj_t *mobj)
 				if ((--numchallengedestructibles) == 0)
 				{
 					numchallengedestructibles = UINT16_MAX;
-					gamedata->deferredconditioncheck = true;
+
+					// The count is archived and comes back with a restore;
+					// the condition check it asks for runs against gamedata,
+					// which does not. Real tics only (WORLDWIDE.md 8.54).
+					if (K_RollbackOffTimeline() == false)
+						gamedata->deferredconditioncheck = true;
 				}
 
 				break;
@@ -12375,8 +12389,21 @@ void P_RemoveSavegameMobj(mobj_t *mobj)
 		P_DeleteMobjStringArgs(mobj);
 	}
 
-	// stop any playing sound
-	S_StopSound(mobj);
+	// stop any playing sound -- unless this is a rollback putting back a world
+	// this machine already had.
+	//
+	// Gibax reported the sound cutting out constantly, and the mechanism is
+	// arithmetic rather than subtle: the two-clock loop restores the confirmed
+	// world once per pass of TryRunTics, the restore purges every mobj through
+	// this function, and this line then stops every sound attached to every
+	// object -- about thirty-five times a second. Engine notes, item loops,
+	// everything. The object is recreated identically two hundred lines below,
+	// so the sound should simply carry on.
+	//
+	// A restore from the server is different and keeps the old behaviour: there
+	// the world really did change underneath the sound.
+	if (P_LocalRestoreInProgress() == false)
+		S_StopSound(mobj);
 
 	R_RemoveMobjInterpolator(mobj);
 
@@ -15866,6 +15893,20 @@ boolean P_MobjCanChangeFlip(mobj_t *mobj)
 #define TID_HASH_CHAINS (131)
 static mobj_t *TID_Hash[TID_HASH_CHAINS];
 
+// The heads of two lists this file keeps to itself, for the raw snapshots of
+// rollback_rawsnap: the objects are put back at their own addresses, and
+// these heads point into them (WORLDWIDE.md 8.83, 8.88).
+mobj_t **P_TIDHashChains(size_t *count)
+{
+	*count = TID_HASH_CHAINS;
+	return TID_Hash;
+}
+
+mobj_t **P_OverlayCapHead(void)
+{
+	return &overlaycap;
+}
+
 //
 // P_InitTIDHash
 // Initializes mobj tag hash array
@@ -16004,15 +16045,23 @@ void P_DeleteMobjStringArgs(mobj_t *mobj)
 {
 	size_t i = SIZE_MAX;
 
+	// Under rollback_rawsnap a restore can bring a removed object back at its
+	// own address, string pointers and all (WORLDWIDE.md 8.83, 8.88): the
+	// strings have to still be there. Kept, then -- a few bytes for each
+	// map-placed object removed during a level, freed with the level.
+	const dboolean keep = K_RollbackRawSnapshots();
+
 	for (i = 0; i < NUM_MAPTHING_STRINGARGS; i++)
 	{
-		Z_Free(mobj->thing_stringargs[i]);
+		if (keep == false)
+			Z_Free(mobj->thing_stringargs[i]);
 		mobj->thing_stringargs[i] = NULL;
 	}
 
 	for (i = 0; i < NUM_SCRIPT_STRINGARGS; i++)
 	{
-		Z_Free(mobj->script_stringargs[i]);
+		if (keep == false)
+			Z_Free(mobj->script_stringargs[i]);
 		mobj->script_stringargs[i] = NULL;
 	}
 }
