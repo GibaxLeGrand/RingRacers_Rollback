@@ -110,7 +110,8 @@ scope.
    is the remedy for a real one, and the harness needs jitter first.
 4. **Vanilla compatibility**, against the policy below: a release base -- CI
    builds a release-config exe, but the branch still sits on upstream's
-   development line (8.30); a WORLDWIDE client on a real vanilla server,
+   development line (8.30). **Ported onto v2.4, local and not built (8.114):
+   the local branch `worldwide-2.4`;** a WORLDWIDE client on a real vanilla server,
    which needs that base; a stock client refused by a WORLDWIDE server (so
    far `rollback_vanillajoin` stands in for one); the leave. The savegame
    misread of 8.28 is fixed in code (8.29), never checked against a stock
@@ -6789,3 +6790,55 @@ so **nothing was driven**. He approved each launch.
     the same session;
   - a console command that sends the pause menu's *Enter Game*, called by
     the client scenarios, so that a race nobody drives joins too.
+
+### 8.114 The branch ported onto the 2.4 release: read, not built
+
+Gibax's ask: rebase the whole work onto the 2.4 release, on another branch,
+to see how it goes, so that at worst this exe can be offered with the 2.4
+game. Nothing was launched.
+
+- **What the branch sits on.** Not `05cca02c9` as 8.30 read it: the August
+  merges in its history are Kart Krew's. Its upstream base is `4bad15a40`,
+  upstream master on 2026-08-31 and still its head. That is **137 commits
+  past `v2.4`** (`7f895c9a7`, the last release; no tag after it). Ours on
+  top: 364 commits, 39 files outside `docs/`, +14369/-271 lines, most of it
+  `k_rollback.c` (9077) and `p_saveg.cpp` (+2217). Since 2.4, upstream
+  touched 32 of those 39 files -- often only for type names.
+- **The port.** A local branch `worldwide-2.4` from `v2.4`, in a separate
+  worktree. The whole branch was squashed and applied by a three-way merge
+  (`36a986f6f`). 15 files conflicted, in 37 regions:
+  - 30 differed only by the type names upstream changed after 2.4
+    (`INT32`/`UINT8`/`boolean` to `int32_t`/`uint8_t`/`dboolean`): our side
+    taken.
+  - 2 in `d_clisrv.c` differed by `SHORT`, renamed `LSBF_SHORT` after 2.4:
+    our side, with `SHORT`.
+  - 5 in `core/memory` and `z_zone` are the raw snapshots' (B2). They rely
+    on the pool allocator's count of blocks in use, which came upstream
+    after 2.4 (`d8b4e8a39`, memory statistics). Our side taken, with that
+    counter's member and its initialisation.
+  - `doomtype.h`: `dboolean` defined as `boolean`. Windows' `boolean` there
+    is `BOOL`, so a macro, not a typedef.
+- **Checked.** Every touched file, with and without PARANOIA: no error
+  except upstream's own, in lines the port does not touch, under a check
+  configuration without CURL, OpenGL or the ACSVM path. Not built: the CI's
+  prebuilt SDK and toolchain are the development line's, and 2.4's CMake
+  differs.
+- **The wire, read against stock.** Since 8.28 the network savegame must
+  keep the stock grammar. Of the 88 archive reads and writes the branch adds
+  to `p_saveg.cpp`, each is one of three kinds:
+  - gated to local snapshots (`localsnapshot`/`localrestore`, in the code
+    or at the top of a helper);
+  - in the raw snapshot path, local by nature;
+  - the same bytes on the wire. `followerskin` is signed now; a polyobject's
+    flags fall back to their spawn values; `onconveyor` is now read where
+    every writer puts it, 2.4's included, which upstream's reader did not.
+
+  So a WORLDWIDE client should read a stock 2.4 server's join savegame. Not
+  run.
+- **A stock 2.4 server is at hand.** The game folder's `ringracers.exe` is
+  exactly `v2.4` (it carries the tag's commit).
+- **Next.** Push `worldwide-2.4` (it touches `src/`: asked first) and make
+  CI build it. Then run the bench on it as on the development line. Then
+  run the compatibility cases against that stock exe: a WORLDWIDE client on
+  a stock server, a stock client refused, a WORLDWIDE build hosting in
+  vanilla mode, the leave.

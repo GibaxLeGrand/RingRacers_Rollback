@@ -91,17 +91,22 @@ asked for first.**
 3. **A real network in the harness**: jitter and loss -- `rollback_lag` only
    delays. Then R2, the samples filed by sequence number, if R1 slips when
    the server's filing is not steady.
-4. **The release base** (*Compatibility*, below): the branch rebased on the
-   release the public servers run, and its release-config build; then a
-   stock client refused with a readable message, a WORLDWIDE client playing
-   delay-based on a vanilla server, a WORLDWIDE build hosting in vanilla
-   mode for stock clients, and the leave putting the settings back -- none
-   checked yet.
-5. **The alpha kit** (Phase F): a zip of the exe, `worldwide.pk3` and a
-   notice, and none of Kart Krew's files; how to host (`worldwide On` is a
-   console variable: written steps at least); how to join; what to report
-   and how to send `latest-log.txt`; the list of what is known broken; a
-   version label on the title in place of the development revision.
+4. **The release base** (*Compatibility*, below): ported onto `v2.4`,
+   locally, on 2026-10-01 (`worldwide-2.4`, WORLDWIDE.md 8.114): 15
+   conflicts, all resolved, the wire read as stock. Left: push it and make
+   CI build it, the bench on it, then against the stock 2.4 exe in the game
+   folder -- a stock client refused with a readable message, a WORLDWIDE
+   client playing delay-based on a vanilla server, a WORLDWIDE build hosting
+   in vanilla mode for stock clients, and the leave putting the settings
+   back. None checked yet.
+5. **The alpha kit** (Phase F): a zip of the release-config exe on 2.4,
+   `worldwide.pk3` and a notice, the GPL and a link to the source, and none
+   of Kart Krew's files; how to host (the menu entry exists since
+   `89aba69fb`); how to join; what to report and how to send
+   `latest-log.txt`; the list of what is known broken; a version label on
+   the title in place of the development revision. Before a WORLDWIDE
+   server advertises on the public list, read Kart Krew's server-list rules
+   for modified builds (the game shows them before hosting publicly).
 
 **Strongly advised before announcing:**
 
