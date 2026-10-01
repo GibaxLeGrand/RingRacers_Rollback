@@ -7384,7 +7384,40 @@ on 2026-10-02, nothing launched for it:
   Drawing only, as 8.88 said, and the same with or without raw snapshots.
 - Checked before pushing: the syntax, `k_rollback.c` with the local gcc and
   `p_saveg.cpp` as C++20 with `PARANOIA`, each catching an error put in on
-  purpose. Not built, not run.
+  purpose.
+- **Soaked** (Gibax: "oui pousse et lance le soak"): CI run 36933711043
+  green, `94c7bd4f9` installed (sha256 `56812887…`, `1b808d1` kept as
+  `.bak_1b808d1`), `soak.sh wwraw map=RR_Opulence` unattended, 00:22
+  (`soaklog_wwraw_RR_Opulence_20261002-002213_94c7bd4.txt`). Prediction in
+  the notes before it.
+  - **395 checks, 0 failures.** 1580 raw saves at 867 us, 1185 raw
+    restores at 1829 us with their check.
+  - **0 reference counts rebuilt differently**, as predicted. 0 snapshots
+    went the network way, none expected without Lua. 0 PARANOIA.
+  - **The players-block difference, named**: 9 of 1185 restores, as in
+    8.94 (9 of 1137). Two places: player 5, a bot, 1005 bytes into the
+    record (three restores at tic 2041), and player 6, a bot, 1012 bytes in
+    (two at tic 2311) -- past the fields `P_NamePlayerField` names, but
+    both times **0x00 became 0x20**, Carnival Night's pattern of 8.94.
+  - **It is `itemRoulette.itemList.cap`**, read in the code. The archive
+    writes 0 and 0 for a player whose item list was never allocated, else
+    its capacity and length (`p_saveg.cpp:990-999`). A restore never frees
+    or shrinks the list (the read code, "Growing only": both passes of a
+    check share the block). So a bot that had its first roulette after the
+    snapshot comes back with a length of 0 but a block of 32
+    (`K_InitRoulette`'s first size), and the check's archive writes 32
+    where the snapshot's wrote 0. Allocation bookkeeping, and **no gameplay
+    reads it**: a roulette always starts in `K_FillItemRoulette`, which
+    calls `K_InitRoulette` whatever the block, and `K_FillItemRouletteData`'s
+    own `items == NULL` test only repeats that. The network restore keeps
+    the block the same way: not B2's.
+  - Predicted "a field of an object or of the roulette, not a position":
+    held.
+- **So B2's open points are closed or not B2's**: the players-block
+  difference is the item list's capacity, harmless and shared with the
+  network restore; the double claim counted once (0 counts off here; the
+  leak soak, where 8.94 saw it, not run again yet); the Lua slope goes the
+  network way; the level interpolators are the network load's too.
 - **Next**: `soak.sh wwraw map=RR_Opulence` (verified raw snapshots,
   unattended) to name the players-block field and check the counts; then,
   if both are clean or understood, `rollback_rawsnap 1` by default, and the
