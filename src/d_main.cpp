@@ -346,6 +346,11 @@ void D_ProcessEvents(boolean callresponders)
 	{
 		M_UpdateMenuCMD(i, false, chat_keydown);
 	}
+
+	// The system's text input, on only while something takes typed text: the
+	// console, the chat, a menu's text box (cv_textinput).
+	I_SetTextInputMode(cv_textinput.value
+		&& (CON_Ready() || chat_on || menutyping.active));
 }
 
 //

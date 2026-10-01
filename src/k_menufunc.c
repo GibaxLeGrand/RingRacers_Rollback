@@ -327,6 +327,15 @@ static boolean M_GamestateCanOpenMenu(void)
 //
 boolean M_Responder(event_t *ev)
 {
+	// A character typed with the system's keyboard layout, for an open text box.
+	if (ev->type == ev_text)
+	{
+		if (!menutyping.active)
+			return false;
+		M_MenuTypingText(ev->data1);
+		return true;
+	}
+
 	if (ev->type == ev_keydown && !ev->data2)
 	{
 		extern consvar_t cv_showhud;

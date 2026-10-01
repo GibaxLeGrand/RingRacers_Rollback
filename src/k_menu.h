@@ -783,6 +783,7 @@ boolean M_ConsiderSealedSwapAlert(void);
 void M_OpenVirtualKeyboard(size_t cachelen, vkb_query_fn_t queryfn, menu_t *dummymenu);
 void M_AbortVirtualKeyboard(void);
 void M_MenuTypingInput(INT32 key);
+void M_MenuTypingText(int32_t c); // a character typed with the system's layout
 void M_SwitchVirtualKeyboard(boolean gamepad);
 
 void M_QuitResponse(INT32 ch);

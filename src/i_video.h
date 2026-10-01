@@ -63,6 +63,15 @@ void I_StartupGraphics(void);
 */
 void I_ShutdownGraphics(void);
 
+/**	\brief	Turn the system's text input on or off: while it is on, typed
+	characters arrive as ev_text, in the system's keyboard layout.
+*/
+void I_SetTextInputMode(dboolean active);
+
+/**	\brief	Whether the system's text input is on.
+*/
+dboolean I_TextInputActive(void);
+
 /**	\brief	The I_SetPalette function
 
 	\param	palette	Takes full 8 bit values
