@@ -6905,6 +6905,18 @@ repo's ignored `etc/`) and asked for it on the title and in
   over rows 0 to 63, and different only within that ring (rows 64 to 114),
   the layer replaced. The new ring is centred where the first was, on 119,
   and ends on the same row, 114.
+- **Then, the same evening, Gibax asked for everything a few pixels lower
+  and space a little faster.** Neither needs a new exe: `KTSWWSET`
+  carries the lifts and the speeds. `build_pk3.py --drop 4`, the new
+  default, lowers everything 4 px from the flash on. The logo and the
+  characters (Tails, his tails, Eggman, the lightning) rise 20 and 8
+  instead of 24 and 12. The globe and the ring go 4 px down in the pk3,
+  with the ring's bottom on row 194. f_finale.c clamps the lifts at 0, so
+  the game cannot draw them below their stock place: the script refuses a
+  larger drop. Space scrolls at -2 instead of -1, twice as fast. Witnesses:
+  `--drop 0 --sky-x -1` rebuilds the installed pk3, and `--ring-method logo`
+  with those rebuilds the first ring's, both with identical contents. Built
+  (sha256 `171b240b…`), and installed once the game was closed.
 
 ### 8.117 The system's keyboard layout, tested; the 2.4 install is 32-bit
 
