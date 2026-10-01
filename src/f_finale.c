@@ -1975,22 +1975,20 @@ void F_TitleScreenDrawer(void)
 	{
 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 31);
 	}
+	else if (gamestate == GS_TITLESCREEN && curttmode == TTMODE_RINGRACERS
+		&& ww_sky && F_WorldwideTitleShown())
+	{
+		// WORLDWIDE: space from the flash on, over the title map as well --
+		// the stock title runs a level behind its art, and space replaces it.
+		F_SkyScroll(ww_skyxspeed, ww_skyyspeed, "KTSWWSKY");
+	}
 	else if (curbgcolor >= 0)
 	{
 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, curbgcolor);
 	}
 	else if (!curbghide || !titlemapinaction || gamestate == GS_WAITINGPLAYERS)
 	{
-		// WORLDWIDE: space, only where the stock sky would be drawn.
-		if (gamestate == GS_TITLESCREEN && curttmode == TTMODE_RINGRACERS
-			&& ww_sky && F_WorldwideTitleShown())
-		{
-			F_SkyScroll(ww_skyxspeed, ww_skyyspeed, "KTSWWSKY");
-		}
-		else
-		{
-			F_SkyScroll(curbgxspeed, curbgyspeed, curbgname);
-		}
+		F_SkyScroll(curbgxspeed, curbgyspeed, curbgname);
 	}
 
 	// Don't draw outside of the title screen, or if the patch isn't there.
