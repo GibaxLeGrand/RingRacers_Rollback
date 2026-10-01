@@ -7244,7 +7244,9 @@ and his icon (`etc/RRW_icon.png`, 40x34) in place of the game's. Pushed on
 his go-ahead (`20cb1f21f`). CI run 36929724979 green; the dev exe (sha256
 `4f6cfeea…`) holds the new title and every size of the .ico byte for byte.
 Installed in both folders on Gibax's go-ahead, `d56763c` kept as
-`.bak_d56763c`. Not launched yet.
+`.bak_d56763c`. Launched on his go-ahead: the window reads "Dr. Robotnik's
+Ring Racers Worldwide Development EXE", and Gibax confirms the icon and
+the name ("ça marche, l'icône s'affiche bien et bon nom").
 
 - **The title** comes from `SDL_CreateWindow` (`sdl/i_video.cpp`): "Dr.
   Robotnik's Ring Racers Worldwide" before `VERSIONSTRING`, which is
