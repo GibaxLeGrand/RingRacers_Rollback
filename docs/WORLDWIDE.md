@@ -49,25 +49,29 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 `rollback_rawsnap` (open item 7), `rollback_keepearly` (8.99, 8.100),
 `rollback_smooth` (never measured).
 
-**Builds.** Installed on the measuring machine: `093a79aeb` (sha256
-`ce744500…`, CI run 36833865387), with the private notes' `titre/worldwide.pk3`. It
-carries:
+**Builds.** Installed on the measuring machine since the night of 2026-10-01
+to 02: `c24d8d205` (sha256 `a360e3f4…`, CI run 36935126003), the code
+repository's HEAD for the code, with the private notes' `titre/worldwide.pk3`
+(sha256 `171b240b…`, 8.116). It carries, on top of `093a79aeb`:
 - the fix for the join's `MT_PLAYER` alerts (`0412e7760`, 8.112),
-  **measured at the join** (8.118): 0 bodies below zero against 2 for
-  `04db0cf` in the same session; the case in the middle of a race not
+  **measured at the join** (8.118, 8.119): 0 bodies below zero in every
+  join since, against 2 for `04db0cf`; the case in the middle of a race not
   reached;
-- the `WORLDWIDE Mode` menu entry, saved, and its state on the host screen
-  (`89aba69fb`, seen in the game in 8.113);
-- the title's second pass: flash at 0.6 s, and space behind the globe,
-  over the level the stock title runs behind its art (8.113).
+- `azerty` (8.117), `rollback_join` (8.119), `rollback_botsashuman` (8.120),
+  the other karts as drawn in `rollback_frames` (8.121), the window's title
+  and icon (8.122), a guessed person's latency stamp moved on a tic a tic
+  (8.123), B2's open points (8.124), and **B2 on by default** (8.125).
 
-The previous measuring build is kept as `.bak_04db0cf`, and `89aba69fb` and
-`2209b7130` as `.bak_89aba69` and `.bak_2209b71`. Gibax's own release-config build of `04db0cf` sits beside
-them as `ringracers_release_rollback_netcode.exe`. Beside them too, the 2.4
-branch's builds: `ringracers_azerty-2.4.exe` (`0a9877dd1`) and
+Kept beside it, newest first: `.bak_94c7bd4`, `.bak_1b808d1`, `.bak_20cb1f2`,
+`.bak_d56763c`, `.bak_2c48c81`, `.bak_656ab3c`, `.bak_093a79a`, and the
+older `.bak_04db0cf`, `.bak_89aba69`, `.bak_2209b71`; and
+`ringracers_rollback-netcode.exe.dmp`, the dump of the dedicated server's
+stop at sixteen karts (23:26, 8.121), not read. Gibax's own
+release-config build of `04db0cf` is `ringracers_release_rollback_netcode.exe`.
+The 2.4 branch's builds: `ringracers_azerty-2.4.exe` (`0a9877dd1`) and
 `ringracers_worldwide-2.4.exe` (`68f5eb582`, sha256 `2c53237e…`, the one
-that starts in a stock 2.4 folder, 8.117). `rollback-netcode` itself is at
-`1fcef131b` (`azerty` merged, CI run 36901738576 green), not installed.
+that starts in a stock 2.4 folder, 8.117); `worldwide-2.4` has none of the
+night's work since `68f5eb582`, as the branch policy says (ROADMAP).
 
 **Measured and holding.**
 
