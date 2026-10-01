@@ -1504,7 +1504,9 @@ static bool Impl_CreateWindow(bool fullscreen)
 	flags |= SDL_WINDOW_OPENGL;
 
 	// Create a window
-	window = SDL_CreateWindow("Dr. Robotnik's Ring Racers " VERSIONSTRING,
+	// WORLDWIDE: the fork's name in the title bar, in development and release
+	// builds alike ("Development EXE" or the version follows it).
+	window = SDL_CreateWindow("Dr. Robotnik's Ring Racers Worldwide " VERSIONSTRING,
 			realwidth, realheight, flags);
 
 	if (window == NULL)
