@@ -7261,3 +7261,47 @@ the name ("ça marche, l'icône s'affiche bien et bon nom").
   pixel for pixel, whole multiples where they fit (128, 256), brought down
   smoothly below; the .ico laid out as the original (BMP to 128, PNG at
   256), each size read back as written; the XPM at 64x64, 243 colours.
+
+### 8.123 The sixteen-kart rebuilds are the host's: a guessed person's latency stamp
+
+Gibax asked for the 331 rebuilds of 8.121's sixteen-kart race (B') to be
+explained ("fait les 331 rebuild à 16 karts"). Read in the logs, nothing
+launched for it.
+
+- **Not the bots.** B': "wrong inputs on it -- this machine 18, bots 2,
+  people 753"; on Opulence (16 karts, 23:56): bots 0, people 621. The person
+  is the host, p0, who is only there in the races with a host; the eight-kart
+  races ran dedicated, with no person but this machine, hence 0. So not the
+  grid's size but who is on it.
+- **Only at the start.** Every one of them falls on the waiting map and in the
+  race map's first 800 tics or so; the counts then do not move for 3000 tics.
+  The host never spectated (nothing in the server's log), and its real inputs
+  in the race are all zero.
+- **Two kinds**: latency 753, angle 468, received 285, and 753 = 468 + 285.
+  468 differ in the angle -- the host's camera through the intro and the
+  countdown -- and 285 in **the latency stamp alone** (the received flag is
+  left out of the decision to rebuild).
+- **The stamp.** `G_BuildTiccmd` writes the sender's leveltime into
+  `latency` (`g_build_ticcmd.cpp:171`), `G_Ticker` turns it into a lag
+  (`g_game.c:1911`), and the game reads that lag: drift and angle leniency
+  (`p_user.c:2394`, `2416`) and the roulette's fudge (`k_roulette.c:2041`).
+  A person is guessed by repeating the last input, stamp included, so the
+  lag simulated was a tic off on every guessed tic, and `K_SameInput`, a
+  memcmp, rebuilt for it. A bot's stamp stays 0 (`K_BuildBotTiccmd` clears
+  the command and never sets it).
+- **The fix** (`K_RollbackPredictInputs`): a person guessed by repetition has
+  the stamp moved on by one per guessed tic, as their machine stamps each
+  tic. Not for bots, so `rollback_botsashuman` keeps its meaning. Wrong
+  only where the server itself repeats a person's sample (R1, 8.92), which
+  keeps the stamp.
+- **Still open**: why nothing is guessed wrong after the start. Unchecked
+  hypothesis: later, the client has already received the inputs for every
+  tic it speculates (below `neededtic`), and guesses nothing, for anybody.
+- **Prediction for the measurement** (B''s setup, the fix against
+  `20cb1f2` in the same session): the 285 rebuilds for the stamp alone gone,
+  so about 200 rebuilds for another's input instead of 331, and the
+  latency field near 0 among people's wrong inputs; the angle's 468 stay.
+  For a real second human, every guessed tic had the wrong stamp: this
+  matters more there than with an idle host.
+- Checked before pushing: the syntax, with the local gcc, which caught an
+  error put in on purpose. Not built, not run.

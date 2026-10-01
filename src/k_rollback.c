@@ -8522,6 +8522,18 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 
 		*to = netcmds[(tic - 1) % BACKUPTICS][i];
 		to->flags &= ~TICCMD_RECEIVED;
+
+		// The latency field is not pressed: it is the sender's leveltime when it
+		// built the input (G_BuildTiccmd), which G_Ticker turns into a lag, and
+		// the game reads that lag (drift and angle leniency in p_user.c, the
+		// roulette's fudge). A person's machine stamps every tic's input with
+		// that tic, so the stamp moves on by one a tic. Repeated as it was, a
+		// guessed tic was wrong in it every time, and the speculation rebuilt
+		// for a stamp nobody pressed (WORLDWIDE.md 8.123). A bot's stamp does
+		// not move, so a bot guessed as a person (rollback_botsashuman) keeps
+		// its own.
+		if (players[i].bot == false)
+			to->latency = (uint8_t)((to->latency + 1) & TICCMD_LATENCYMASK);
 	}
 }
 
