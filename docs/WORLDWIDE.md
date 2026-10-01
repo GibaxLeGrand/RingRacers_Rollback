@@ -7241,7 +7241,10 @@ wrong guess is drawn. Gibax also asked whether sixteen karts could be run.
 
 Gibax's asks: the window's title, in development and release builds alike,
 and his icon (`etc/RRW_icon.png`, 40x34) in place of the game's. Pushed on
-his go-ahead (`20cb1f21f`); its build not yet checked, nor installed.
+his go-ahead (`20cb1f21f`). CI run 36929724979 green; the dev exe (sha256
+`4f6cfeea…`) holds the new title and every size of the .ico byte for byte.
+Installed in both folders on Gibax's go-ahead, `d56763c` kept as
+`.bak_d56763c`. Not launched yet.
 
 - **The title** comes from `SDL_CreateWindow` (`sdl/i_video.cpp`): "Dr.
   Robotnik's Ring Racers Worldwide" before `VERSIONSTRING`, which is
