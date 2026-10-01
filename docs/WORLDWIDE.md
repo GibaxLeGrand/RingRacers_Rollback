@@ -7395,7 +7395,8 @@ on 2026-10-02, nothing launched for it:
   - **0 reference counts rebuilt differently**, as predicted. 0 snapshots
     went the network way, none expected without Lua. 0 PARANOIA.
   - **The players-block difference, named**: 9 of 1185 restores, as in
-    8.94 (9 of 1137). Two places: player 5, a bot, 1005 bytes into the
+    8.94 (9 of 1137). The first five, all the check prints, in two places:
+    player 5, a bot, 1005 bytes into the
     record (three restores at tic 2041), and player 6, a bot, 1012 bytes in
     (two at tic 2311) -- past the fields `P_NamePlayerField` names, but
     both times **0x00 became 0x20**, Carnival Night's pattern of 8.94.
