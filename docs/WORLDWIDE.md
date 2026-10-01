@@ -49,12 +49,20 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 `rollback_rawsnap` (open item 7), `rollback_keepearly` (8.99, 8.100),
 `rollback_smooth` (never measured).
 
-**Builds.** Installed on the measuring machine: `04db0cf71` (8.111's
-`rollback_refs`), with `data/worldwide.pk3` -- the title screen's Earth and
-ring (not netcode; the private notes' `titre/`). Written, not pushed:
-`7c3e996ca`, the fix for the join's `MT_PLAYER` alerts (8.112), and
-`cbd6d35a4`, the `WORLDWIDE Mode` menu entry, saved, and its state on the
-host screen.
+**Builds.** Installed on the measuring machine: `2209b7130` (sha256
+`37c60f41…`, CI run 36831987777), with the private notes' `titre/worldwide.pk3`. It
+carries:
+- the fix for the join's `MT_PLAYER` alerts (`0412e7760`, 8.112), **not yet
+  measured** (8.113);
+- the `WORLDWIDE Mode` menu entry, saved, and its state on the host screen
+  (`89aba69fb`, seen in the game in 8.113);
+- the title's second pass: flash at 0.6 s, and space behind the globe --
+  which never shows, the stock title running a level behind its art;
+  `8977b9a2a`, written, not pushed, draws it over that level (8.113).
+
+The previous measuring build is kept as `.bak_04db0cf`, and `89aba69fb` as
+`.bak_89aba69`. Gibax's own release-config build of `04db0cf` sits beside
+them as `ringracers_release_rollback_netcode.exe`.
 
 **Measured and holding.**
 
@@ -89,7 +97,10 @@ scope.
      then its caller's `P_AddThinker` sets the count back to 0.
    - Every body a rebuild or the join's load brings back is one reference
      short, which can end in a use after free.
-   - Fix `7c3e996ca` written; to push and measure (prediction in 8.112).
+   - Fix pushed as `0412e7760`, installed, **not yet measured**: a client
+     nobody drives never joins the race, so the bench cannot reach the path
+     (8.113). It needs a driven pair with a control in the same session, or
+     a console command that joins (8.113).
 2. **A second human on two machines**: never run, the largest unknown. A
    remote human is guessed by repeating their last input, which may multiply
    rebuilds and make their kart shake. A cheap stand-in, not written: a
@@ -6697,3 +6708,80 @@ lag, dedicated (no host player), no crash:
 
   A body still going below zero would carry its ledger, with a different
   site.
+
+### 8.113 The fix of 8.112 not measured: a client nobody drives never joins
+
+`89aba69fb` (`0412e7760`, 8.112's fix, and the menu entry), pushed on
+Gibax's go-ahead, CI run 36778958363 green. Gibax was at work all session,
+so **nothing was driven**. He approved each launch.
+
+- **The exe on the bench was not the measuring one.** The sha check caught
+  it before the first race. On the evening of 2026-09-30, at 21:48, after
+  8.112's races, Gibax had put `04db0cf`'s **release-config** build in place
+  to try it (artefact `ringracers-win64-release-…`, without the PARANOIA
+  message). The measuring build sat beside it, renamed.
+  - `playtest.sh` copies the main exe into `clienthome` when they differ,
+    so the controls would have run on a build that cannot raise the alert.
+  - On his word, his build is now `ringracers_release_rollback_netcode.exe`.
+- **A client nobody drives stays a spectator, so the join's path never
+  runs.** `wwwindows` and `frames_off`, dedicated, 6 tics of lag, on the
+  measuring `04db0cf` (sha256 `65be9958…`):
+  - "never entered the game" in both;
+  - 0 PARANOIA lines and 0 bodies below zero, over 140 to 505 loads of the
+    archive.
+
+  A spectator enters the race only two ways:
+  - its item button (`BT_ATTACK`, `p_user.c:4623`, which toggles
+    `PF_WANTSTOJOIN` and is ignored while the player flashes);
+  - the pause menu's *Enter Game* (`menus/transient/pause-game.c:518`).
+
+  In 8.112 it was Gibax's press. Without a join, no bot is removed to make
+  room and the joiner's spectator body is never let go: those are the two
+  paths of 8.112's alerts. The prediction written before the races (at
+  least one body below zero in each control) is wrong on that count, and
+  nothing was measured about the fix.
+- **A simulated press did not reach the race.** On Gibax's go-ahead, the
+  harness pressed Space in the client's window, which was in front:
+  - once, 2 s after its join line;
+  - in a second race, up to 8 times, 3 s apart, until "entered the game".
+
+  The client stayed a spectator both times. The waiting map counts 1
+  rebuild for this machine's input, as the race with no press does, so the
+  presses never reached the client's commands -- although the same injected
+  keys drive the menus. Not explained. First lead: the TESTER profile's item
+  button is not Space (not checked).
+- **Harness.** Stopping a chain's top script left its children running, and
+  the orphans started the next race. A chain is stopped as a whole tree.
+- **The menu in the game** (`89aba69fb`; one instance, no server, keys on
+  Gibax's go-ahead, captures sent to him):
+  - Server Options > Advanced > Network Connection: `WORLDWIDE Mode` first,
+    with its description, moving from Off to On;
+  - on the host screen, `(WORLDWIDE: On)` in the warning colour, `Off` in
+    the highlight colour.
+
+  Measured on the 1080p capture, the line's glyphs filled rows 110 to 116,
+  and the box's frame starts at 117. Moved to `98 + 9`, two rows clear on
+  each side (`2209b7130`). The value was put back to Off.
+- **The title's second pass** (not netcode), Gibax's asks:
+  - the menu description in his words (`07cf52229`);
+  - the flash at 0.6 s instead of 1.5 s (`8fa6263be`);
+  - space behind the globe from the flash on (`c7a52b61e`): an optional
+    `KTSWWSKY`, tiled and scrolled in place of the stock sky, with
+    `KTSWWSET` taking its two speeds.
+
+  In the notes' `titre/`, the ring is sharp, and centred on the stock logo,
+  which sits at 155.5, not 160.
+
+  Installed as `2209b7130` (CI run 36831987777, sha256 `37c60f41…`) with
+  that pk3, and the title captured in a burst, without keys:
+  - the flash, the ring and the globe come in as designed;
+  - **space never shows**: the stock title runs a level behind its art (the
+    title map), and `c7a52b61e` only replaced the sky where no title map
+    runs. Then the attract demos cycle, and the title comes back;
+  - `8977b9a2a` (written, not pushed) draws space first from the flash on,
+    over the title map too.
+- **Next**, for the fix, one of two:
+  - the same pair driven by Gibax, with `.bak_04db0cf` as the control in
+    the same session;
+  - a console command that sends the pause menu's *Enter Game*, called by
+    the client scenarios, so that a race nobody drives joins too.

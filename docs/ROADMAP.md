@@ -76,8 +76,11 @@ asked for first.**
      `players[].mo`, then `P_AddThinker` sets the count back to 0.
    - Every body a rebuild or a join brings back is one reference short,
      which can end in a use after free.
-   - Fix `7c3e996ca`, written: push it, then the same two runs
-     (`wwwindows dedicated` and `frames_off dedicated`, driven); no body
+   - Fix pushed (`0412e7760`), installed, not yet measured: a client
+     nobody drives never joins the race, so the bench cannot reach the
+     path (8.113). Either the same two runs driven by Gibax, with the
+     control in the same session, or first a console command that joins
+     (the pause menu's *Enter Game*) for the client scenarios. No body
      below zero predicted.
 2. **A second human.** (a) A switch that guesses the bots as a remote human
    is guessed -- their last input repeated -- to see unattended the rebuilds

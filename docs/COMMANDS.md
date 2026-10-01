@@ -256,12 +256,18 @@ the line shows up in the `latest-log.txt` of the machine in question.
 ### `worldwide [On|Off]` — server variable
 **Server side. The one switch of WORLDWIDE mode** (`WORLDWIDE.md` 8.80): the
 compatibility policy says the server decides. A console variable, not a
-debug command; `Off` by default, and **not saved** in the config -- set once,
-it would put every later test server in the mode, and a control scenario
-would then predict without anyone having asked for it. Set it before
-hosting, in a dedicated server's startup script, or on the command line
-(`+worldwide On`). With anybody else connected, a change is refused and the
-value put back: the clients learned the mode when they joined.
+debug command, `Off` by default. **In the menus** since `89aba69fb`:
+*Options > Server Options > Advanced... > Network Connection > WORLDWIDE
+Mode*, and the host screen shows `(WORLDWIDE: On/Off)` under
+`(Public: ...)` (`WORLDWIDE.md` 8.113). **Saved** in the config since then;
+it is a server variable, not a netvar, so a client saves only what it set
+itself. Set it before hosting, in the menu, in a dedicated server's startup
+script, or on the command line (`+worldwide On` -- a `+` command, there is
+no `-worldwide`); the command line runs after the saved config and wins.
+With anybody else connected, a change is refused and the value put back:
+the clients learned the mode when they joined. The test harness starts
+every server with `+worldwide off` and lets the WORLDWIDE scenarios turn it
+on, or a saved value would put a control scenario in the mode.
 
 A server hosting in WORLDWIDE mode:
 - sends a light correction every 4 tics **in place of** the full-state
