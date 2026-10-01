@@ -139,6 +139,7 @@ static rollbackslot_t *rollbackring = NULL;
 static int32_t g_rawsnap;
 static int16_t g_rawmap = -1;       // the level raw snapshots were last taken in
 static uint32_t g_rawsaves, g_rawrestores, g_rawrefused;
+static uint32_t g_rawfallbacks;   // snapshots that went the network way (K_RawUnsafe)
 static uint64_t g_rawsaveus, g_rawrestoreus;
 static uint64_t g_rawnetbytes, g_rawpoolbytes, g_rawheadbytes;
 static uint32_t g_rawverified, g_rawbytesoff, g_rawcountchecks, g_rawcountbad;
@@ -215,6 +216,27 @@ void K_ClearRollback(void)
 	rollbackring = NULL;
 }
 
+/** Whether the world holds something a raw snapshot does not carry, so that
+  * this one must go the network way: an object with a floorspriteslope. Only
+  * Lua makes one (P_CreateFloorSpriteSlope); the network archive saves and
+  * rebuilds it, and the raw copy would bring back a pointer to a plane that
+  * may have been freed (WORLDWIDE.md 8.93, 8.124). */
+static dboolean K_RawUnsafe(void)
+{
+	thinker_t *th;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (((mobj_t *)th)->floorspriteslope != NULL)
+			return true;
+	}
+
+	return false;
+}
+
 /** Writes a snapshot of the current state into a caller-supplied slot.
   *
   * Split out of K_SaveGameState so that rollback_test can take a second
@@ -235,13 +257,20 @@ static dboolean K_WriteSnapshot(rollbackslot_t *slot, tic_t tic)
 	// the full archive beside it.
 	if (g_rawsnap > 0)
 	{
-		if (K_WriteRawSnapshot(slot) == false)
-			return false;
+		if (K_RawUnsafe())
+		{
+			g_rawfallbacks++;   // the network snapshot below, restored the network way
+		}
+		else
+		{
+			if (K_WriteRawSnapshot(slot) == false)
+				return false;
 
-		slot->israw = true;
+			slot->israw = true;
+		}
 	}
 
-	if (g_rawsnap == 1)
+	if (g_rawsnap == 1 && slot->israw)
 	{
 		slot->used = 0;
 	}
@@ -468,6 +497,28 @@ static void K_VerifyRawRestore(const rollbackslot_t *slot)
 				"differs from the snapshot's at byte %s (%s against %s bytes), in the %s block\n",
 				(uint32_t)slot->tic, sizeu1(at), sizeu2(used), sizeu3(slot->used),
 				P_LocateSnapshotBlock(slot->buffer, slot->used, at));
+
+			// The players block has no markers inside it: read the offset as a
+			// player and a field, as rollback_test does (WORLDWIDE.md 8.124).
+			// The record offsets are the archive written last's, which is the
+			// check's own, laid out as the snapshot's up to the difference.
+			if (at < used && at < slot->used)
+			{
+				uint8_t who;
+				size_t into;
+
+				CONS_Printf("rollback_rawsnap: VERIFY   the byte was 0x%02x, after the restore 0x%02x\n",
+					slot->buffer[at], g_rawverifybuf[at]);
+
+				if (P_LocatePlayerField(at, &who, &into))
+				{
+					const char *field = P_NamePlayerField(g_rawverifybuf, used, who, into);
+
+					CONS_Printf("rollback_rawsnap: VERIFY   player %u (%s), %s bytes into the record -- %s\n",
+						who, (playeringame[who] ? (players[who].bot ? "a bot" : "a person") : "not in game"),
+						sizeu1(into), (field != NULL) ? field : "past the fields that can be named");
+				}
+			}
 		}
 	}
 
@@ -570,6 +621,13 @@ static void K_ReportRawSnap(void)
 			sizeu3((size_t)(g_rawheadbytes / g_rawsaves / 1024)));
 	}
 
+	if (g_rawfallbacks > 0)
+	{
+		CONS_Printf("rollback_rawsnap: %u snapshots went the network way -- an object had "
+			"a floorspriteslope, which only Lua makes and the raw copy does not carry\n",
+			g_rawfallbacks);
+	}
+
 	if (g_rawrestores > 0 || g_rawrefused > 0)
 	{
 		CONS_Printf("rollback_rawsnap: %u raw restores, %u us each (a verified one includes "
@@ -602,7 +660,7 @@ static void Command_RollbackRawSnap_f(void)
 		const int32_t want = atoi(COM_Argv(1));
 
 		g_rawsnap = (want <= 0) ? 0 : ((want >= 2) ? 2 : 1);
-		g_rawsaves = g_rawrestores = g_rawrefused = 0;
+		g_rawsaves = g_rawrestores = g_rawrefused = g_rawfallbacks = 0;
 		g_rawsaveus = g_rawrestoreus = 0;
 		g_rawnetbytes = g_rawpoolbytes = g_rawheadbytes = 0;
 		g_rawverified = g_rawbytesoff = g_rawcountchecks = g_rawcountbad = 0;

@@ -7348,3 +7348,44 @@ launched for it.
     remaining wrong guesses -- 448 of the 450 differ in it too, all of them
     the angle's. Those tics' stamps are not the previous one plus one; not
     read yet (the server repeating a sample, R1, would do it).
+
+### 8.124 B2 toward on by default: the field named, the claim that stays, the Lua slope
+
+Gibax: "Fait B2" -- raw snapshots on by default, which 8.95 left off until
+its open points were understood (current state, open item 7). The save is
+the pass's largest part at sixteen karts on Opulence (about 4.6 of 10.3 ms,
+8.121), and B2 took it from 2.9 to 1.1 ms at nine (8.95). Step 1, written
+on 2026-10-02, nothing launched for it:
+
+- **The players-block difference (9 of 1137 restores, 8.94) gets named.**
+  The verify mode said only "byte 2832, in the players block". The players
+  block has no markers, but `rollback_test` already reads such an offset as
+  a player and a field (`P_LocatePlayerField`, `P_NamePlayerField`). The
+  raw restore's check now does the same, with the two byte values, so the
+  next `wwraw` soak names the field instead of a byte.
+- **The double claim: counted once, for the body that stays.** After a raw
+  restore, every synced object carrying a player claimed its body, and
+  counted a reference for it. Two objects can carry the same player; the
+  later one becomes `players[].mo`, as in the network load, but the earlier
+  one kept a reference the live game does not hold: 8.94's one kart at 67
+  against 66. The raw load now points each player at its body first, then
+  counts one reference per player, for the body that stays. If the live
+  game held the earlier one instead, the verify will say so, with two
+  counts off rather than one.
+- **`floorspriteslope`: that snapshot goes the network way.** Only Lua makes
+  one (`P_CreateFloorSpriteSlope`); the network archive saves and rebuilds
+  it, and the raw copy would bring back a pointer to a plane that may be
+  freed. A snapshot taken while any object has one is now a network one,
+  restored the network way (each slot says which it is), and the report
+  counts them. A race with no Lua never takes that path.
+- **The level interpolators are not B2's gap.** The network load does not
+  rebuild them either: they are made only when an effect starts
+  (`p_floor.c`, `p_ceilng.c`, `p_polyobj.c`), and `p_saveg.cpp` makes none.
+  Drawing only, as 8.88 said, and the same with or without raw snapshots.
+- Checked before pushing: the syntax, `k_rollback.c` with the local gcc and
+  `p_saveg.cpp` as C++20 with `PARANOIA`, each catching an error put in on
+  purpose. Not built, not run.
+- **Next**: `soak.sh wwraw map=RR_Opulence` (verified raw snapshots,
+  unattended) to name the players-block field and check the counts; then,
+  if both are clean or understood, `rollback_rawsnap 1` by default, and the
+  sixteen-kart race on Opulence again against 8.121's.
