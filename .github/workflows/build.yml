@@ -6,6 +6,10 @@ name: Build
 # actually works for this project. Simplifications versus upstream: no ccache, no
 # GitLab code-quality report, no release/tag handling. The question being asked
 # here is only "does it build, and can I play it".
+#
+# On worldwide-2.4 (the work ported onto the 2.4 release, WORLDWIDE.md 8.114)
+# the dependencies are 2.4's: SDL2, not the SDL3 upstream moved to after 2.4,
+# and WebM recording off, as 2.4's own CI built it.
 
 on:
   # A push or pull request that touches only docs and Markdown files builds
@@ -32,20 +36,18 @@ jobs:
     name: Linux (Alpine, GCC)
     runs-on: ubuntu-latest
 
-    # Alpine rather than the bare runner image: Ring Racers needs SDL3, which is
-    # absent from Ubuntu 24.04 LTS. Alpine 3.24 packages every dependency, and it
-    # is what upstream builds against, so warnings behave the same.
-    container: alpine:3.24
+    # 2.4 needs SDL2. Alpine 3.20 still ships the real one; later releases
+    # replace it with sdl2-compat, SDL2's API over SDL3.
+    container: alpine:3.20
 
     steps:
       # git must exist before actions/checkout can run; the image does not ship it.
       - name: Install prerequisites
         run: |
           apk add --update-cache \
-            build-base cmake ninja-build ninja-is-really-ninja \
+            build-base cmake samurai \
             zlib zlib-dev libpng libpng-dev curl curl-dev \
-            libvpx libvpx-dev libogg libogg-dev libvorbis libvorbis-dev \
-            libyuv libyuv-dev opus opus-dev sdl3 sdl3-dev \
+            opus opus-dev sdl2 sdl2-dev \
             git
 
       - uses: actions/checkout@v4
@@ -61,7 +63,9 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_COLOR_DIAGNOSTICS=ON \
-            -DSRB2_CONFIG_DEV_BUILD=ON
+            -DSRB2_CONFIG_DEV_BUILD=ON \
+            -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF \
+            -DSRB2_CONFIG_EXECINFO=NO
 
       - name: Build
         run: cmake --build build/
@@ -145,12 +149,26 @@ jobs:
           set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
           EOF
 
+      # The SDK carries SDL3, and 2.4 needs SDL2: built from its own repository
+      # with the same toolchain, static, so the exe stays a single file.
+      - name: Build SDL2
+        run: |
+          git clone --depth 1 --branch release-2.30.9 https://github.com/libsdl-org/SDL.git sdl2-src
+          cmake -S sdl2-src -B sdl2-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/toolchain.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/sdl2" \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF
+          cmake --build sdl2-build
+          cmake --install sdl2-build
+
       - name: Configure
         run: |
           cmake -B build -S . \
             -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
-            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/rrsdk" \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/rrsdk;$GITHUB_WORKSPACE/sdl2" \
+            -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF \
             -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_FLAGS_RELWITHDEBINFO="-g -gcodeview -O3 -DNDEBUG" \
@@ -171,4 +189,6 @@ jobs:
           path: |
             build/ringracers*.exe
             build/ringracers*.pdb
+            build/bin/ringracers*.exe
+            build/bin/ringracers*.pdb
           if-no-files-found: warn
