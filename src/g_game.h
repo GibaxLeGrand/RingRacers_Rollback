@@ -103,6 +103,7 @@ extern dboolean promptactive;
 extern consvar_t cv_tutorialprompt;
 
 extern consvar_t cv_chatwidth, cv_chatnotifications, cv_chatheight, cv_chattime, cv_consolechat, cv_chatbacktint, cv_chatspamprotection;
+extern consvar_t cv_textinput; // typing with the system's keyboard layout
 extern consvar_t cv_shoutname, cv_shoutcolor, cv_autoshout;
 extern consvar_t cv_songcredits;
 

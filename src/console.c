@@ -942,6 +942,17 @@ dboolean CON_Responder(event_t *ev)
 	if (chat_on)
 		return false;
 
+	// A character typed with the system's keyboard layout (I_SetTextInputMode).
+	if (ev->type == ev_text)
+	{
+		if (!consoleready)
+			return false;
+		if (input_sel != input_cur)
+			CON_InputDelSelection();
+		CON_InputAddChar(ev->data1);
+		return true;
+	}
+
 	// let go keyup events, don't eat them
 	if (ev->type != ev_keydown && ev->type != ev_console)
 	{
@@ -1344,6 +1355,10 @@ dboolean CON_Responder(event_t *ev)
 
 	// enter a char into the command prompt
 	if (key < 32 || key > 127)
+		return true;
+
+	// With the system's text input on, the character comes as an ev_text.
+	if (I_TextInputActive())
 		return true;
 
 	if (input_sel != input_cur)

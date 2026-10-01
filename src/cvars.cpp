@@ -1390,6 +1390,12 @@ consvar_t cv_chattime = Player("chattime", "8").min_max(5, 999);
 // chatwidth
 consvar_t cv_chatwidth = Player("chatwidth", "150").min_max(64, 150);
 
+// Typing with the system's keyboard layout (AZERTY, QWERTZ...) in the chat, the
+// console and the menus' text boxes: the characters come from the system's
+// text input, as SRB2 2.2.15 does (I_SetTextInputMode). Off, the old QWERTY
+// tables translate key presses.
+consvar_t cv_textinput = Player("textinput", "On").on_off();
+
 // old shit console chat. (mostly exists for stuff like terminal, not because I cared if anyone liked the old chat.)
 consvar_t cv_consolechat = Player("chatmode", "Yes").values({{0, "Yes"}, {2, "No"}});
 

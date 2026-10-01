@@ -550,6 +550,51 @@ static void Impl_HandleKeyboardEvent(SDL_KeyboardEvent evt, Uint32 type)
 	if (event.data1) D_PostEvent(&event);
 }
 
+// A character typed with the system's keyboard layout, for the console, the
+// chat and the menus' text boxes. ASCII only, as SRB2 2.2.15 does: the game's
+// fonts stop at '~', so a longer UTF-8 sequence (an accented letter) is dropped.
+static void Impl_HandleTextEvent(const char *text)
+{
+	event_t event;
+
+	if (text == NULL || text[0] == '\0' || text[1] != '\0')
+		return;
+	if ((unsigned char)text[0] < 32 || (unsigned char)text[0] > 126)
+		return;
+
+	event.device = 0;
+	event.type = ev_text;
+	event.data1 = (unsigned char)text[0];
+	event.data2 = 0;
+	event.data3 = 0;
+	D_PostEvent(&event);
+}
+
+// -1 until first set: SDL2 starts with text input on, SDL3 with it off.
+static int textinput_state = -1;
+
+// On only while something takes typed text (D_ProcessEvents): off, a key is
+// just a key, and no input method window opens in a race.
+void I_SetTextInputMode(dboolean active)
+{
+	const int want = active ? 1 : 0;
+
+	if (window == NULL || want == textinput_state)
+		return;
+
+	if (want)
+		SDL_StartTextInput(window);
+	else
+		SDL_StopTextInput(window);
+
+	textinput_state = want;
+}
+
+dboolean I_TextInputActive(void)
+{
+	return (textinput_state == 1);
+}
+
 static void Impl_HandleMouseMotionEvent(SDL_MouseMotionEvent evt)
 {
 }
@@ -979,6 +1024,9 @@ void I_GetEvent(void)
 			case SDL_EVENT_KEY_UP:
 			case SDL_EVENT_KEY_DOWN:
 				Impl_HandleKeyboardEvent(evt.key, evt.type);
+				break;
+			case SDL_EVENT_TEXT_INPUT:
+				Impl_HandleTextEvent(evt.text.text);
 				break;
 			case SDL_EVENT_MOUSE_MOTION:
 				//if (!mouseMotionOnce)
