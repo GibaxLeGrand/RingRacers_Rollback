@@ -124,7 +124,15 @@ asked for first.**
    the alpha unless they are run.
 
 **Order of work:** 1 and 2(a), which need nobody; 3; 4; 2(b) to 2(d) with a
-second person; 6 and 7; 5; then the announcement. **Proposed scope** (the
+second person; 6 and 7; 5; then the announcement.
+
+**Branches** (Gibax, 2026-10-01). Work goes on `rollback-netcode`.
+`worldwide-2.4` is the public alpha's branch, on the 2.4 release. It is
+**not** kept up to date as work goes on: once the phases before the alpha
+are done, it is brought up to date from `rollback-netcode` for the alpha.
+The same goes for side work: `azerty`, once Gibax has tested it, merges into
+`rollback-netcode`, and reaches the alpha with that update; `azerty-2.4`
+only serves the test. **Proposed scope** (the
 audit's, not decided): Race only, Windows, eight players at most unless 6
 says sixteen, and the known-broken list stated up front.
 
