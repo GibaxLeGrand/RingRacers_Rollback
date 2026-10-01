@@ -49,20 +49,18 @@ Outside that mode every piece is off by default except `rollback_cleancmds`
 `rollback_rawsnap` (open item 7), `rollback_keepearly` (8.99, 8.100),
 `rollback_smooth` (never measured).
 
-**Builds.** Installed on the measuring machine: `2209b7130` (sha256
-`37c60f41…`, CI run 36831987777), with the private notes' `titre/worldwide.pk3`. It
+**Builds.** Installed on the measuring machine: `093a79aeb` (sha256
+`ce744500…`, CI run 36833865387), with the private notes' `titre/worldwide.pk3`. It
 carries:
 - the fix for the join's `MT_PLAYER` alerts (`0412e7760`, 8.112), **not yet
   measured** (8.113);
 - the `WORLDWIDE Mode` menu entry, saved, and its state on the host screen
   (`89aba69fb`, seen in the game in 8.113);
-- the title's second pass: flash at 0.6 s, and space behind the globe --
-  which never shows, the stock title running a level behind its art;
-  a commit on the local `wip/titre3`, not pushed, draws it over that level
-  (8.113).
+- the title's second pass: flash at 0.6 s, and space behind the globe,
+  over the level the stock title runs behind its art (8.113).
 
-The previous measuring build is kept as `.bak_04db0cf`, and `89aba69fb` as
-`.bak_89aba69`. Gibax's own release-config build of `04db0cf` sits beside
+The previous measuring build is kept as `.bak_04db0cf`, and `89aba69fb` and
+`2209b7130` as `.bak_89aba69` and `.bak_2209b71`. Gibax's own release-config build of `04db0cf` sits beside
 them as `ringracers_release_rollback_netcode.exe`.
 
 **Measured and holding.**
@@ -6779,8 +6777,13 @@ so **nothing was driven**. He approved each launch.
   - **space never shows**: the stock title runs a level behind its art (the
     title map), and `c7a52b61e` only replaced the sky where no title map
     runs. Then the attract demos cycle, and the title comes back;
-  - a commit on the local `wip/titre3`, not pushed, draws space first from
-    the flash on, over the title map too.
+  - `093a79aeb` draws space first from the flash on, over the title map
+    too. Pushed on Gibax's go-ahead, CI run 36833865387, installed (sha256
+    `ce744500…`) with the ring 2 px further left. Captured the same way:
+    from the flash on, space in place of the level, until the attract
+    demos. It scrolls left by 20 screen pixels in 1.8 s, 58 in 5.3 s (the
+    left margin, matched exactly): about 11 a second at 1080p, as -1 in
+    `F_SkyScroll`'s units gives (35/16 pixels a second, scaled by 5).
 - **Next**, for the fix, one of two:
   - the same pair driven by Gibax, with `.bak_04db0cf` as the control in
     the same session;
