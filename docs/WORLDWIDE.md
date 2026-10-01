@@ -6905,3 +6905,34 @@ repo's ignored `etc/`) and asked for it on the title and in
   over rows 0 to 63, and different only within that ring (rows 64 to 114),
   the layer replaced. The new ring is centred where the first was, on 119,
   and ends on the same row, 114.
+
+### 8.117 The system's keyboard layout, tested; the 2.4 install is 32-bit
+
+Not netcode. The branches `azerty` (on `rollback-netcode`, SDL3) and
+`azerty-2.4` (on `worldwide-2.4`, SDL2) type with the system's keyboard
+layout, as SRB2 2.2.15 does: SDL's text input, on only while the console,
+the chat or a menu text box is open, so the game's controls do not change.
+Only ASCII is kept, since the game's fonts stop at `~`. The cvar
+`textinput` turns it off ("Use System Keyboard Layout", in the HUD's online
+options). Both built green on all three jobs (runs 36841739858 and
+36841743401). `worldwide-2.4` was fast-forwarded to `azerty-2.4`
+(`0a9877dd1`, run 36861427929 green).
+
+- **The first launch stopped at start-up**, before any window.
+  `ringracers_azerty-2.4.exe` (`b53ffebb…`) is 64-bit. The game folder's
+  stock 2.4 is 32-bit (x86): its `ringracers.exe`, `exchndl.dll` and
+  `mgwhelp.dll`. A 64-bit process cannot load them: `LoadLibraryA` fails
+  with error 193, measured by loading them from that folder. 2.4 makes that
+  fatal (`I_Error` in `init_exchndl`, then a SIGSEGV on the way out). After
+  2.4, upstream only loads them in 32-bit MinGW builds
+  (`__MINGW32__ && !__MINGW64__`, `src/sdl/i_main.cpp`), which is why the
+  `rollback-netcode` builds never hit it. A second, clean copy of 2.4 had
+  the same 32-bit files.
+- **Relaunched with `-noexchndl`**, which skips that load and costs only the
+  `.rpt` crash reports: it runs. **Gibax: AZERTY works in the console.**
+  The menu text boxes, the chat and the cvar turned off are not tried yet.
+- **Next**, both touching `src/`, so both on Gibax's go-ahead:
+  - merge `azerty` into `rollback-netcode`: it touches 12 files of `src/`,
+    and `rollback-netcode` has only moved in `docs/` since they split;
+  - the upstream guard on `worldwide-2.4`, without which every 2.4 install
+    stops the alpha at start-up.
