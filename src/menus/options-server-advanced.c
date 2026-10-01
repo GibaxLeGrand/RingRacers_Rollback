@@ -30,7 +30,7 @@ menuitem_t OPTIONS_ServerAdvanced[] =
 
 	// The server's one switch (WORLDWIDE.md 8.80). It only takes with nobody
 	// else connected: Worldwide_OnChange puts it back otherwise.
-	{IT_STRING | IT_CVAR, "WORLDWIDE Mode", "No input delay for anyone; only WORLDWIDE players can join.",
+	{IT_STRING | IT_CVAR, "WORLDWIDE Mode", "Enable client-side prediction on this server; only WORLDWIDE players can join.",
 		NULL, {.cvar = &cv_worldwide}, 0, 0},
 
 	{IT_STRING | IT_CVAR, "Delay Limit (tics)", "Players above the delay limit will get kicked from the server.",
