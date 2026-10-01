@@ -7167,4 +7167,92 @@ wrong guess is drawn. Gibax also asked whether sixteen karts could be run.
   logs carry `_k<n>`. No race measured before had more than nine.
 - Checked before pushing: the syntax, with the local gcc and `-Wall -Wextra`,
   which caught an error put in on purpose; the substitution of `maxplayers`
-  on `wwbots`'s server scenario. Not built, not run.
+  on `wwbots`'s server scenario.
+- **Sixteen on a dedicated server stopped it.** CI run 36927812194 green
+  (`d56763ca0`, dev sha256 `3cb778b6…`), installed on Gibax's go-ahead
+  ("lance les trois, installe quand c'est vert"). With `maxplayers 16` the
+  dedicated server stopped when the client connected: "assert failed:
+  newplayernum < MAXPLAYERS" (`d_clisrv.c:4163`, upstream's code), then a
+  segmentation fault, in both 16-kart races.
+  - The bots take every slot they can. A dedicated server keeps slot 0 for
+    itself (`SV_AddWaitingPlayers` searches from 1), so 15 slots, and
+    sixteen bots' worth of room leaves none for a connecting player.
+  - The function's fallback, "overwrite bots if there are NO other slots
+    available", starts its search where the first one ended, past the last
+    slot, so it never overwrites anything.
+  - Upstream's behaviour, not this branch's, and worth knowing for any
+    server that fills with bots. The third race was stopped by hand.
+  - `playtest.sh karts=<n>` now runs `maxplayers n-1` until the race map,
+    then n, so the client takes the slot left free and the race map's bots
+    fill the grid around it. It refuses more than 15 on a dedicated server;
+    sixteen needs a host.
+- **Run, nobody driving, the client joined by `rollback_join` in each**, all
+  on `d56763ca0` so they compare (HEAD had moved on by the title and icon
+  only, 8.122). Prediction pushed before (notes `97a784b`, `4986331`).
+  Skyscraper Leaps; passes and rebuilds are the race phase, the rest count
+  from the join; "a pass" is `rollback_cost`'s whole pass, Phase B's
+  measure:
+
+  | | A: `wwbots`, 8 | T: `wwwindows`, 8 | B': `wwwindows`, 16 | C': `wwbots`, 16 |
+  |---|---|---|---|---|
+  | when | 23:25 | 23:38 | 23:41 | 23:44 |
+  | server | dedicated | dedicated | with a host | with a host |
+  | grid | 7 bots, local | 7 bots, local | host, 14 bots, local | host, 14 bots, local |
+  | passes kept | 774 of 3774 (21%) | 3785 of 3791 (99.8%) | 3458 of 3796 (91%) | 1530 of 3794 (40%) |
+  | rebuilt for another's input | 2994 | 0 | 331 | 2249 |
+  | loads of the archive | 3023 | 32 | 762 | 2680 |
+  | a pass | 12.7 ms (45%) | 2.6 ms (9%) | **6.2 ms (22%)** | 16.6 ms (58%) |
+  | frames drawn | 13945 | 18859 | 17403 | 10755 |
+  | iterations past a tic, a frame skipped | 22 | 0 | 21 | 866 |
+  | bots drawn, frames with a pass: short | 55.6% | 1.2% | 3.8% | 51.3% |
+  | ... long | 2.6% | 0.2% | 0.6% | 11.2% |
+  | ... backwards | 1.2% | 0.08% | 0.16% | 1.8% |
+  | bots drawn, frames without one: long | 51.7% | 18.8% | 31.3% | 45.8% |
+  | bodies below zero, PARANOIA | 0, 0 | 0, 0 | 0, 0 | 0, 0 |
+
+- **How a wrong guess is drawn: it shakes.** A against T, the same eight
+  karts, the bots guessed or computed. In the frames that carry a pass the
+  bots step short more than half the time (55.6% against 1.2%) and
+  backwards fifteen times as often (1.2% against 0.08%). In the frames
+  between, they make up the ground with long steps (51.7% against 18.8%):
+  a short step, then a long one, the judder of a kart put back and run
+  forward again. Some long steps without a pass are ordinary frame pacing,
+  18.8% in the control.
+- **Sixteen karts fit, with the bots computed.** B': 6.2 ms a pass, 22% of a
+  tic, under the 30% gate. 91% of passes kept, against 99.8% at eight: the
+  bots' computed inputs are wrong more often on a fuller grid (331
+  rebuilds against 0). The bots drawn stay close to the control (3.8%
+  short, 0.16% backwards with a pass). Not yet the gate's whole condition:
+  the first 1:48 of the race, not late in it; Skyscraper Leaps, not a heavy
+  map like Opulence (8.62); the host drawing its own window on the same
+  machine.
+- **Sixteen karts with every guess wrong do not.** C': 16.6 ms, 58% of a
+  tic, and 866 frames skipped. That is the upper bound of 8.120 at sixteen.
+- **Against the prediction.** Held: T (99.8% kept, 1.07 ms of restore and
+  speculation, the bots far steadier than A's); the 16-kart grid; B' under
+  the gate; C' over it, with fewer frames and more skipped than B', and
+  the bots' uneven steps over twice B''s; 0 below zero and 0 PARANOIA
+  everywhere. Wrong: B' kept 91%, not over 95%, and its restore and
+  speculation took 3.5 ms, not 2 to 3. C' kept 40%, not under 15%, and its
+  restore and speculation took 10.5 ms, not about 15. A's backwards steps
+  reached 1% only in the frames with a pass (0.44% in all).
+
+### 8.122 The window's title and the icon
+
+Gibax's asks: the window's title, in development and release builds alike,
+and his icon (`etc/RRW_icon.png`, 40x34) in place of the game's. Pushed on
+his go-ahead (`20cb1f21f`); its build not yet checked, nor installed.
+
+- **The title** comes from `SDL_CreateWindow` (`sdl/i_video.cpp`): "Dr.
+  Robotnik's Ring Racers Worldwide" before `VERSIONSTRING`, which is
+  "Development EXE" or the version. The exe's `FileDescription` and
+  `ProductName` (`win32/Srb2win.rc`, what the task manager and the file's
+  properties show) say the same; Kart Krew's company name and copyright
+  stay.
+- **The icon.** On Windows the window and the taskbar take the exe's icon,
+  `win32/Srb2win.ico`, built into it by `Srb2win.rc`; `sdl/SDL_icon.xpm` is
+  compiled only on Unix (`USE_XPM_ICON`). Both are remade from Gibax's
+  picture by the notes' `logo/make_icons.py`: the art enlarged six times
+  pixel for pixel, whole multiples where they fit (128, 256), brought down
+  smoothly below; the .ico laid out as the original (BMP to 128, PNG at
+  256), each size read back as written; the XPM at 64x64, 243 colours.

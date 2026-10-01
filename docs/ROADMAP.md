@@ -86,9 +86,10 @@ asked for first.**
 2. **A second human.** (a) A switch that guesses the bots as a remote human
    is guessed -- their last input repeated -- to see unattended the rebuilds
    and the shaking a remote human would cause: `rollback_botsashuman` and
-   the `wwbots` scenario (8.120), run. As an upper bound, 89% of passes
-   rebuild and a pass costs 28% of a tic at eight karts. The shaking of
-   remote karts has no instrument yet. (b) Two people on two
+   the `wwbots` scenario (8.120), run. As an upper bound, 79 to 89% of
+   passes rebuild at eight karts, and the bots drawn shake: short steps in
+   more than half the frames with a pass, backwards 15 times as often as
+   when computed (8.121). (b) Two people on two
    machines, on a LAN. (c) The same over the Internet. (d) One of them
    driving on the host (Phase D). How remote karts are drawn is decided
    after that (Phase D).
@@ -118,8 +119,12 @@ asked for first.**
 
 6. **Sixteen karts late in a race** (Phase B's gate), measured up to nine
    only. If it does not fit, the alpha's lobby is capped -- eight -- and
-   says so. The harness can run it unattended since 8.121
-   (`playtest.sh <scenario> dedicated join karts=16`).
+   says so. **Measured on 2026-10-01** (8.121), sixteen karts with a host,
+   nobody driving, Skyscraper Leaps, the race's first 1:48: 6.2 ms a pass,
+   22% of a tic, with the bots computed; 16.6 ms (58%) with every bot
+   guessed. Left for the gate: late in a race, and a heavy map. Sixteen
+   needs a host (a dedicated server has 15 slots, and upstream's code stops
+   if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
    `rollback_history 12` leaves the drawn world behind the newest input
    (about 5 tics at 428 ms). Raise it (up to 34) or set it from the round
