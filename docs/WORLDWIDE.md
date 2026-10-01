@@ -7467,8 +7467,10 @@ not B2's. Written on 2026-10-02, not built, not run.
   - **Window 3 is not a measurement.** Gibax, after the race: he clicked
     into the game by mistake near the end and pressed the ring button ("j'ai
     fait un missclick, vers la fin j'ai rejoint et appuyé sur le ring
-    button, pas bcp"); this machine's wrong inputs show it (one each in
-    turning, throwdir and buttons). In that window the client fell behind
+    button, pas bcp"), one button and nothing else ("j'ai appuyé que sur
+    un bouton"). This machine's wrong inputs have one each in buttons,
+    turning and throwdir: the button is his; the other two are not read.
+    In that window the client fell behind
     (1314 tics of leveltime in 1000 passes), 152 of the race's 168 rebuilds
     for this machine's input fall there, mostly in the latency stamp (176:
     samples filed late), the speculation went as deep as 8 tics, and 412
