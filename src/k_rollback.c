@@ -136,7 +136,14 @@ static rollbackslot_t *rollbackring = NULL;
 // rollback_rawsnap (WORLDWIDE.md 8.82, 8.83, 8.88): 0 network snapshots, as
 // ever; 1 raw ones; 2 raw ones checked after every restore against the full
 // archive of the same tic, byte for byte and reference count by count.
-static int32_t g_rawsnap;
+//
+// 1 by default since WORLDWIDE.md 8.125: on Opulence a save went from 2.9 to
+// 1.1 ms and a restore from 6.5 to 1.9 (8.95), and the open points were closed
+// or found not to be B2's (8.124): the players-block difference is the item
+// list's capacity, the double claim is counted once, Lua's floorspriteslope
+// goes the network way. The tests compare archives and need 0 or 2; the
+// harness's scenarios that run them set 0.
+static int32_t g_rawsnap = 1;
 static int16_t g_rawmap = -1;       // the level raw snapshots were last taken in
 static uint32_t g_rawsaves, g_rawrestores, g_rawrefused;
 static uint32_t g_rawfallbacks;   // snapshots that went the network way (K_RawUnsafe)
@@ -645,7 +652,8 @@ static void K_ReportRawSnap(void)
 
 /** Console command: rollback_rawsnap [0|1|2]
   *
-  * Client side, and the tests. 0: network snapshots, as before. 1: raw
+  * Client side, and the tests. 0: network snapshots, as before. 1, the
+  * default since WORLDWIDE.md 8.125: raw
   * snapshots -- the level pools copied whole, with the heads pointing into
   * them, beside an archive of the rest -- restored at their own addresses,
   * every reference count rebuilt (WORLDWIDE.md 8.88). 2: the same, plus the

@@ -128,12 +128,12 @@ scope.
    (8.95).
 6. **The history's cap** past about 340 ms of round trip (8.107): raise it
    (up to 34) or set it from the round trip; a rebuild then goes deeper.
-7. **B2, before `rollback_rawsnap` goes on by default**: the players-block
-   difference after 9 of 1137 raw restores on Opulence (8.90, 8.94), not
-   explained; the double claim, one kart rebuilt at 67 references against 66
-   live (8.94); `floorspriteslope`, which after a raw restore may point at a
-   freed plane (only Lua creates one, 8.93); the level interpolators, which a
-   raw restore does not rebuild (8.88, drawing only).
+7. **B2 on by default** (8.125, written, not yet built): the players-block
+   difference is the item list's capacity, harmless (8.124); the double
+   claim counted once; Lua's `floorspriteslope` goes the network way; the
+   level interpolators are the network load's gap too. Left: the leak soak
+   again (where 8.94 saw the double claim), and the sixteen-kart race on
+   Opulence again, against 8.121's.
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -7423,3 +7423,26 @@ on 2026-10-02, nothing launched for it:
   unattended) to name the players-block field and check the counts; then,
   if both are clean or understood, `rollback_rawsnap 1` by default, and the
   sixteen-kart race on Opulence again against 8.121's.
+
+### 8.125 B2 on by default
+
+On Gibax's "Fait B2", once 8.124 had closed its open points or found them
+not B2's. Written on 2026-10-02, not built, not run.
+
+- **`rollback_rawsnap` is 1 by default**: raw snapshots, not verified. A
+  snapshot taken while an object has a Lua `floorspriteslope` still goes
+  the network way (8.124).
+- **The tests**: `rollback_test`, `rollback_resim`, `rollback_leak`,
+  `rollback_replay` and the soaks compare archives, which mode 1 does not
+  write, and refuse it (a running soak waits). The 22 harness scenarios
+  that run them and set no mode now start with `rollback_rawsnap 0`, so each
+  measures what it always measured; `soak_leakraw` and `soak_wwraw` keep 2.
+- **Every WORLDWIDE race from this build on runs on raw snapshots**,
+  `wwwindows` and the other client scenarios included, and its rebuilds
+  restore the raw way. Their figures are not comparable with earlier ones
+  on that count.
+- **Prediction for the first measurement**, sixteen karts on Opulence with
+  a host, nobody driving, against 8.121's 10.2 to 10.7 ms a pass: the save,
+  about 4.6 ms there, down to about 1.5 (Opulence's 1.1 at nine karts, 8.95,
+  plus the extra karts), so **a pass of about 7 to 8 ms, under the gate's
+  8.6**; a rebuild's restore under 2.5 ms. 0 bodies below zero, 0 PARANOIA.

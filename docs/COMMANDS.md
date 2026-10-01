@@ -199,8 +199,9 @@ coins, mace chains, braziers), not the karts.
 ### `rollback_rawsnap [0|1|2]`
 **Client side, and the tests** (`WORLDWIDE.md` 8.88; merged as
 `49daf1196`). How snapshots are taken:
-- `0` (default): network snapshots, as before.
-- `1`: **raw snapshots** -- the level pools copied whole, the heads pointing
+- `0`: network snapshots, as before.
+- `1` (**default since `WORLDWIDE.md` 8.125**): **raw snapshots** -- the
+  level pools copied whole, the heads pointing
   into them, and an archive of the rest (players, world, ACS, Lua...).
   Restored at their own addresses; every reference count is rebuilt. The
   tests and soaks refuse to start in this mode, and a running soak waits:
@@ -222,9 +223,13 @@ leakraw`, `soak.sh wwraw` (mode 2), `playtest.sh keepraw` (mode 1).
 Measured on Opulence (`WORLDWIDE.md` 8.94, 8.95): a save 1.1 ms against 2.5
 to 2.9, a restore 1.9 ms against about 6.5, a kept pass 5.6 to 6.4 ms
 driven; soaks 0 failures, the archive identical after all but 9 of 2805
-verified restores. **Stays off by default** until the players-block
-difference and the double claim of 8.94 are understood; `floorspriteslope`
-and the level interpolators are not put back (8.88, 8.93).
+verified restores. **On by default since 8.125**: the players-block
+difference is the item list's capacity, harmless (8.124); the double claim
+is counted once; a snapshot taken while an object has a Lua
+`floorspriteslope` goes the network way, and the report counts them; the
+level interpolators are not rebuilt by either restore. The harness's
+scenarios that run the tests set `rollback_rawsnap 0`, so they measure what
+they always measured.
 
 ### `rollback_poolcopy [times]`
 **Diagnostic, in a level** (`WORLDWIDE.md` 8.82). Times a raw copy of the four

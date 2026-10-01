@@ -153,10 +153,9 @@ says sixteen, and the known-broken list stated up front.
 
 **Then, not blocking:**
 
-9. **B2 on by default and R1's gaps.** B2: the double claim (count only the
-   claim that stays), the players-block difference (9 of 1137 restores),
-   `floorspriteslope`, the level interpolators (8.88, 8.93, 8.94); then
-   `soak.sh leakraw` and `wwraw` again, and `keepraw` in WORLDWIDE mode. R1:
+9. **B2 on by default and R1's gaps.** B2: on by default (8.125), its open
+   points closed or not B2's (8.124); left, `soak.sh leakraw` again and the
+   sixteen-kart race on Opulence against 8.121's. R1:
    the depth from the tics R1 gives, and the instrument counting the same way
    (⚠ under 8.89; the measuring machine's `wip/histgaps` as a reference).
 10. **Small, seen**: "`*Guest entered the game.`" printed more than once a
