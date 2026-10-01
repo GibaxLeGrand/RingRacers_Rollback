@@ -130,10 +130,12 @@ second person; 6 and 7; 5; then the announcement.
 `worldwide-2.4` is the public alpha's branch, on the 2.4 release. It is
 **not** kept up to date as work goes on: once the phases before the alpha
 are done, it is brought up to date from `rollback-netcode` for the alpha.
-The same goes for side work: `azerty`, once Gibax has tested it, merges into
-`rollback-netcode`, and reaches the alpha with that update. `azerty-2.4`,
-its 2.4 build, is already merged into `worldwide-2.4` on Gibax's word
-(fast-forward to `0a9877dd1`). **Proposed scope** (the
+The same goes for side work: `azerty`, tested by Gibax (AZERTY in the
+console), is merged into `rollback-netcode` (`1fcef131b`), and reaches the
+alpha with that update. `azerty-2.4`, its 2.4 build, was already merged into
+`worldwide-2.4` on Gibax's word (fast-forward to `0a9877dd1`). Since
+`68f5eb582`, `worldwide-2.4` also starts in a stock 2.4 folder, which is
+32-bit, without `-noexchndl` (WORLDWIDE.md 8.117). **Proposed scope** (the
 audit's, not decided): Race only, Windows, eight players at most unless 6
 says sixteen, and the known-broken list stated up front.
 

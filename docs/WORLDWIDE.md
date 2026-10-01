@@ -61,7 +61,11 @@ carries:
 
 The previous measuring build is kept as `.bak_04db0cf`, and `89aba69fb` and
 `2209b7130` as `.bak_89aba69` and `.bak_2209b71`. Gibax's own release-config build of `04db0cf` sits beside
-them as `ringracers_release_rollback_netcode.exe`.
+them as `ringracers_release_rollback_netcode.exe`. Beside them too, the 2.4
+branch's builds: `ringracers_azerty-2.4.exe` (`0a9877dd1`) and
+`ringracers_worldwide-2.4.exe` (`68f5eb582`, sha256 `2c53237e…`, the one
+that starts in a stock 2.4 folder, 8.117). `rollback-netcode` itself is at
+`1fcef131b` (`azerty` merged, CI run 36901738576 green), not installed.
 
 **Measured and holding.**
 
@@ -6943,8 +6947,17 @@ options). Both built green on all three jobs (runs 36841739858 and
 - **Relaunched with `-noexchndl`**, which skips that load and costs only the
   `.rpt` crash reports: it runs. **Gibax: AZERTY works in the console.**
   The menu text boxes, the chat and the cvar turned off are not tried yet.
-- **Next**, both touching `src/`, so both on Gibax's go-ahead:
-  - merge `azerty` into `rollback-netcode`: it touches 12 files of `src/`,
-    and `rollback-netcode` has only moved in `docs/` since they split;
-  - the upstream guard on `worldwide-2.4`, without which every 2.4 install
-    stops the alpha at start-up.
+- **Then, on Gibax's go-ahead** (both touch `src/`):
+  - `azerty` merged into `rollback-netcode` (`1fcef131b`). It touches 12
+    files of `src/`, and `rollback-netcode` had only moved in `docs/` since
+    they split. CI run 36901738576: green, all three jobs. Not installed.
+  - `worldwide-2.4` takes upstream's guard (`68f5eb582`). Only 32-bit MinGW
+    loads the crash handler, and only there does the crash box ask for its
+    `.rpt`. Upstream's commit (`c85a7e83b`) also turns on a DbgHelp
+    handler for 64-bit through cpptrace, which 2.4's CI does not have: not
+    taken. CI run 36901699571: green. The dev exe no longer holds the
+    "exchndl.dll or mgwhelp.dll is missing" message, which `0a9877dd1`'s
+    did. It holds its revision (`68f5eb5`) and the keyboard option.
+    Installed as `ringracers_worldwide-2.4.exe` (`2c53237e…`) and launched
+    in the same stock 2.4 folder, **without `-noexchndl`: it starts**, its
+    window open and responding, and Gibax confirms.
