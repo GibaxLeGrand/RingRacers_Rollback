@@ -80,9 +80,9 @@ asked for first.**
      by Gibax, it gave 0 bodies below zero, against 2 for the build before
      it in the same session.
    - Left: the case in the middle of a race (8.112's tic 1337), which
-     neither race reached. A console command that joins (the pause menu's
-     *Enter Game*) would let the client scenarios run it unattended, and
-     longer.
+     neither race reached. Since `rollback_join` (8.119), the client
+     scenarios join unattended (`playtest.sh <scenario> join`), so it can be
+     looked for over longer and more races.
 2. **A second human.** (a) A switch that guesses the bots as a remote human
    is guessed -- their last input repeated -- to see unattended the rebuilds
    and the shaking a remote human would cause. (b) Two people on two
@@ -155,7 +155,10 @@ says sixteen, and the known-broken list stated up front.
     the join later (8.109, 8.112); the drawn kart's long steps, 430 to 760 a
     window against about 263 without prediction (8.103, 8.107);
     `rollback_keepearly`, off, to remove or keep; a predicting client
-    records no replay (8.96). (The title's banner, pixelated, is gone with
+    records no replay (8.96); joined through `rollback_join`, the client
+    prints no "entered the game" line at all (8.119); a kart that joined but
+    is not driven rebuilds far more than a driven one (8.119, not read).
+    (The title's banner, pixelated, is gone with
     Gibax's second ring, drawn at the game's size, 8.116.)
 11. **Left open**: the Garden Top rider (8.56); Coastal Temple's resim
     failures (8.57); `chainorder_block` (8.58); a sound cut when a

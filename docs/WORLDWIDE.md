@@ -7028,4 +7028,37 @@ can be run with nobody driving.
   no call.
 - Checked before pushing: the syntax, with the local gcc (`-fsyntax-only`,
   which caught an error put in on purpose); the generated
-  copy of `wwwindows`, whose waits still add up to 1600. Not built, not run.
+  copy of `wwwindows`, whose waits still add up to 1600.
+- **Built and run.** CI run 36904726784 green (`656ab3c73`, dev sha256
+  `b87157f5…`, which also carries the fix and `azerty`), installed on
+  Gibax's go-ahead with `093a79aeb` kept as `.bak_093a79a`.
+  `playtest.sh wwwindows dedicated join`, prediction pushed before (notes
+  `143b95d`):
+  - **21:15, not a test of the command.** Gibax joined by hand with his
+    controller ("j'ai juste rejoins", "pas joué"). The client entered at tic
+    60, before the first call. Both calls answered "player 9 is already in
+    the game -- nothing sent", so the guard held, but nothing was sent.
+  - **21:21, hands off** ("je touche à rien"). The first call sent
+    ("player 9 asked to join the game"), and the second found the player
+    already in. The server printed "*Guest entered the game.". On the race
+    map the grid had 7 bots and the local kart, where the morning's
+    spectating runs had 8: the bot removed to make room for a joiner
+    (`d_clisrv.c:2683`), as in the evening's three runs joined by hand.
+    **So `rollback_join` makes an unattended client race.** 0 bodies below
+    zero over 93 loads of the archive, 0 PARANOIA lines, client and server:
+    a third join with the fix, and a third 0.
+- **The client printed no "entered the game" line**, so the harness took it
+  for a spectator. Joined by hand, the line comes 2 or 3 times, each from a
+  speculated tic (item 10 of the ROADMAP). Joined through the server
+  command, it never comes, presumably because the join then happens in a
+  confirmed tic, whose chat lines are not printed: not read yet. Since
+  then, `playtest.sh` takes the server's log as the proof when the client's
+  is silent: the client log gives the joiner's name, and the server's log
+  must say that name entered the game. Checked on three past logs: this
+  run, a run joined by hand, and a morning run that spectated, which it
+  still flags.
+- **Noted, not read.** A kart that has joined but is not driven made far
+  more rebuilds than Gibax's two driven races of the evening. On Skyscraper
+  Leaps, for its own input: 125 when joined by hand (21:15), 31 when joined
+  by the command (21:21), against 4 to 5 driven. For the bots' inputs: 54
+  and 24, against 0. Loads of the archive: 214 and 93, against 33.
