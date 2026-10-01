@@ -7095,4 +7095,45 @@ the speculation never guesses a bot.
   The prediction proper is written before the first run.
 - Checked before pushing: the syntax, with the local gcc, which caught an
   error put in on purpose; the scenario differs from `wwwindows` by the
-  one line. Not built, not run.
+  one line.
+- **Built and run.** CI run 36924532419 green (`2c48c8105`, dev sha256
+  `51f4deb7…`), installed on Gibax's go-ahead ("oui installe et lance les
+  deux"), `656ab3c` kept as `.bak_656ab3c`. Nobody drove; the client joined
+  through `rollback_join` in both (the server's log says so). Prediction
+  pushed before (notes `942322c`). On Skyscraper Leaps, at 22:59 and
+  23:01; the first four rows are the race phase, the rest count from the
+  join:
+
+  | | `wwbots join` | `wwwindows join`, the control |
+  |---|---|---|
+  | passes | 3787 | 3792 |
+  | kept | 430 (11%) | 3786 (99.8%) |
+  | rebuilt for a bot's input | 3351 | 0 |
+  | rebuilt for this machine's input | 4 | 4 |
+  | loads of the archive | 3384 | 30 |
+  | bots' wrong inputs on the first wrong tic | 22056 | 0 |
+  | the first wrong tic is the frontier's | 3377 of 3378 | 24 of 24 |
+  | a pass | 7999 us, 28% of a tic | 1120 us, 4% |
+  | frames drawn | 13083 | 18856 |
+  | frames 16.7 to 28.6 ms apart | 3215 | 25 |
+  | loop iterations past a tic, the next frame skipped | 16 | 0 |
+  | bodies below zero, PARANOIA lines | 0, 0 | 0, 0 |
+
+  The grid line said "the bots guessed as people" in `wwbots` only.
+- **The prediction held**: over a thousand rebuilds for the bots (3351),
+  under half the passes kept (11%), over a thousand loads (3384), passes
+  dearer. The switch acts, and only on the bots: this machine's own input
+  rebuilt 4 times in both.
+- **What it says, as an upper bound.** With seven bots guessed by
+  repetition, almost every pass rebuilds, always from the frontier. A pass
+  then costs 8 ms at eight karts, seven times the control's. About 30%
+  fewer frames are drawn, many of them over 16.7 ms apart, and 16 times the
+  loop ran past a tic. A person holds a button for several tics where a bot
+  changes its angle every tic, so a real second human should sit far below
+  this. The cost of always rebuilding is still worth knowing for Phase B:
+  28% of a tic at eight karts, against the 30% the gate allows at sixteen.
+- **What it does not say.** The shaking: `rollback_frames` measures the
+  local kart and the view, and the local kart never moved (0 counted in
+  both races). How the remote karts are drawn, the part a second human
+  would see, has no instrument yet. Next: such an instrument, or
+  `wwbots` driven by Gibax, looking at the bots.
