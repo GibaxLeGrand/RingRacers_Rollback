@@ -3902,6 +3902,54 @@ static void K_NoteDrawnKart(dboolean ranloop, uint32_t gapus)
 	g_drawlastok = true;
 }
 
+// The other karts as drawn, frame to frame (WORLDWIDE.md 8.121): what a
+// second human would see of the rest of the grid. The local kart above is
+// never a guess, so it cannot show how a wrong one is drawn; these can. Each
+// kart's step is classed as the local kart's is, and counted by who drives
+// it -- a bot or a person -- since the speculation guesses the two
+// differently (8.120). A kart is followed by its slot, not its body: a load
+// of the archive may hand it a new body, and that frame is the one to see.
+static uint32_t g_drawothers[2][2][NUMDRAWSTEPS];   // [bot, person][frame with a pass][class]
+static fixed_t g_drawotherx[MAXPLAYERS], g_drawothery[MAXPLAYERS];
+static dboolean g_drawotherok[MAXPLAYERS];
+
+static void K_NoteDrawnOthers(dboolean ranloop, uint32_t gapus)
+{
+	const int32_t which = ranloop ? 1 : 0;
+	int32_t i;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		interpmobjstate_t st;
+		mobj_t *mo;
+
+		if (i == g_localplayers[0] || playeringame[i] == false || players[i].spectator
+			|| players[i].mo == NULL || P_MobjWasRemoved(players[i].mo))
+		{
+			g_drawotherok[i] = false;
+			continue;
+		}
+
+		mo = players[i].mo;
+		R_InterpolateMobjState(mo, rendertimefrac, &st);
+
+		// Moving -- over 2 units a tic -- and not a respawn or a teleport, as
+		// for the local kart.
+		if (g_drawotherok[i] && gapus > 0 && gapus < 100000
+			&& FixedHypot(mo->momx, mo->momy) > 2 * FRACUNIT)
+		{
+			const fixed_t dx = st.x - g_drawotherx[i], dy = st.y - g_drawothery[i];
+
+			if (FixedHypot(dx, dy) < 512 * FRACUNIT)
+				g_drawothers[players[i].bot ? 0 : 1][which][K_DrawStepClass(dx, dy, mo->momx, mo->momy, gapus)]++;
+		}
+
+		g_drawotherx[i] = st.x;
+		g_drawothery[i] = st.y;
+		g_drawotherok[i] = true;
+	}
+}
+
 // The inputs the standing speculation ran, tic by tic, checked against what the
 // server confirms for the same tics on the next pass.
 #define ROLLBACK_GUESSMAX 32
@@ -4017,6 +4065,7 @@ void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboole
 		// A gap spent in a menu or a wipe is not a frame the race drew late.
 		g_lastdrawnat = 0;
 		g_drawlastok = false;
+		memset(g_drawotherok, 0, sizeof g_drawotherok);
 		return;
 	}
 
@@ -4046,10 +4095,12 @@ void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboole
 				g_framegapmax = gap;
 
 			K_NoteDrawnKart(ranloop, gap);
+			K_NoteDrawnOthers(ranloop, gap);
 		}
 		else
 		{
 			K_NoteDrawnKart(ranloop, 0);
+			K_NoteDrawnOthers(ranloop, 0);
 		}
 
 		g_lastdrawnat = now;
@@ -4543,6 +4594,8 @@ static void K_ResetPassCosts(void)
 	memset(g_drawkart, 0, sizeof g_drawkart);
 	memset(g_drawview, 0, sizeof g_drawview);
 	g_drawlastok = false;
+	memset(g_drawothers, 0, sizeof g_drawothers);
+	memset(g_drawotherok, 0, sizeof g_drawotherok);
 
 	g_guesspasses = g_guessright = g_guessrightmoved = 0;
 	memset(g_guessfirstwrong, 0, sizeof g_guessfirstwrong);
@@ -4788,6 +4841,21 @@ static void K_ReportPassCosts(void)
 		g_drawview[0][DRAWSTEP_LONG], g_drawview[0][DRAWSTEP_BACK],
 		g_drawview[1][DRAWSTEP_EVEN], g_drawview[1][DRAWSTEP_SHORT],
 		g_drawview[1][DRAWSTEP_LONG], g_drawview[1][DRAWSTEP_BACK]);
+	{
+		int32_t k;
+
+		for (k = 0; k < 2; k++)
+		{
+			uint32_t (*c)[NUMDRAWSTEPS] = g_drawothers[k];
+
+			CONS_Printf("rollback_frames: the other karts as drawn, %s, frame to frame "
+				"while they move -- without a pass: even %u, short %u, long %u, backwards %u; "
+				"with one: even %u, short %u, long %u, backwards %u\n",
+				(k ? "people" : "bots"),
+				c[0][DRAWSTEP_EVEN], c[0][DRAWSTEP_SHORT], c[0][DRAWSTEP_LONG], c[0][DRAWSTEP_BACK],
+				c[1][DRAWSTEP_EVEN], c[1][DRAWSTEP_SHORT], c[1][DRAWSTEP_LONG], c[1][DRAWSTEP_BACK]);
+		}
+	}
 
 	CONS_Printf("rollback_hits: %u passes confirmed tics the speculation had guessed: "
 		"%u with every input right (%u of them with a kart moved by a correction), "

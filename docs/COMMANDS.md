@@ -364,7 +364,11 @@ itself.
     against the kart's speed and the time between the two frames -- even,
     short (under half), long (over one and a half) or backwards -- split by
     whether the frame carried a pass. Counted with prediction on or off, so a
-    race without it is the control;
+    race without it is the control. Since 2026-10-01 (`WORLDWIDE.md` 8.121),
+    two lines more: **the other karts** as drawn, the same classes for every
+    kart but this machine's, one line for the bots and one for the people.
+    A kart is followed by its slot, so a load that gives it a new body is
+    still measured;
   - `rollback_hits` — of the passes that confirmed tics the speculation had
     run, how many had every input right, the first wrong tic, whose input
     was wrong (this machine, bots, people) and in which ticcmd fields. ⚠ It

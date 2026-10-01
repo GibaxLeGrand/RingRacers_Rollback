@@ -7137,3 +7137,34 @@ the speculation never guesses a bot.
   both races). How the remote karts are drawn, the part a second human
   would see, has no instrument yet. Next: such an instrument, or
   `wwbots` driven by Gibax, looking at the bots.
+
+### 8.121 The other karts as drawn; races of up to sixteen karts
+
+Written on Gibax's go-ahead ("écris l'instrument pour les karts distants,
+pousse-le"), after 8.120: `rollback_frames` measured only the local kart and
+the view, and the local kart is never a guess, so nothing measured how a
+wrong guess is drawn. Gibax also asked whether sixteen karts could be run.
+
+- **`rollback_frames` gains two lines**, "the other karts as drawn", one for
+  the bots and one for the people. Every drawn frame, each kart but this
+  machine's is taken at the place the renderer draws it
+  (`R_InterpolateMobjState` at `rendertimefrac`), and its step from the
+  frame before is classed against its speed and the time between the two
+  frames, as the local kart's is (8.100): even, short (under half), long
+  (over one and a half) or backwards, and whether the frame carried a pass.
+  The same filters apply: moving over 2 units a tic, a step under 512 units,
+  frames under 100 ms apart.
+  - A kart is followed by its slot, not its body. A load of the archive may
+    hand it a new body, and that frame is the one a rebuild could make
+    shake.
+  - Reset and printed with the rest of `rollback_frames`, by
+    `rollback_twoclock`.
+- **Sixteen karts.** A Match Race fills to `maxplayers` (`k_bot.cpp`), capped
+  by `maxconnections` online, 16 by default and as saved here; the engine's
+  `MAXPLAYERS` is 16. `bots 6` in the scenarios is the bots' level, not
+  their number. `playtest.sh <scenario> karts=<n>` (notes, `harnais/`)
+  runs a copy of the server scenario with `maxplayers n`, 2 to 16, and the
+  logs carry `_k<n>`. No race measured before had more than nine.
+- Checked before pushing: the syntax, with the local gcc and `-Wall -Wextra`,
+  which caught an error put in on purpose; the substitution of `maxplayers`
+  on `wwbots`'s server scenario. Not built, not run.

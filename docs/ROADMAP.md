@@ -118,7 +118,8 @@ asked for first.**
 
 6. **Sixteen karts late in a race** (Phase B's gate), measured up to nine
    only. If it does not fit, the alpha's lobby is capped -- eight -- and
-   says so.
+   says so. The harness can run it unattended since 8.121
+   (`playtest.sh <scenario> dedicated join karts=16`).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
    `rollback_history 12` leaves the drawn world behind the newest input
    (about 5 tics at 428 ms). Raise it (up to 34) or set it from the round
