@@ -91,10 +91,10 @@ asked for first.**
 3. **A real network in the harness**: jitter and loss -- `rollback_lag` only
    delays. Then R2, the samples filed by sequence number, if R1 slips when
    the server's filing is not steady.
-4. **The release base** (*Compatibility*, below): ported onto `v2.4`,
-   locally, on 2026-10-01 (`worldwide-2.4`, WORLDWIDE.md 8.114): 15
-   conflicts, all resolved, the wire read as stock. Left: push it and make
-   CI build it, the bench on it, then against the stock 2.4 exe in the game
+4. **The release base** (*Compatibility*, below): ported onto `v2.4` on
+   2026-10-01 (`worldwide-2.4`, WORLDWIDE.md 8.114): 15 conflicts, all
+   resolved, the wire read as stock; CI builds it, dev and release (8.115).
+   Left: the bench on it, then against the stock 2.4 exe in the game
    folder -- a stock client refused with a readable message, a WORLDWIDE
    client playing delay-based on a vanilla server, a WORLDWIDE build hosting
    in vanilla mode for stock clients, and the leave putting the settings

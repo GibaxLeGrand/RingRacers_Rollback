@@ -110,8 +110,8 @@ scope.
    is the remedy for a real one, and the harness needs jitter first.
 4. **Vanilla compatibility**, against the policy below: a release base -- CI
    builds a release-config exe, but the branch still sits on upstream's
-   development line (8.30). **Ported onto v2.4, local and not built (8.114):
-   the local branch `worldwide-2.4`;** a WORLDWIDE client on a real vanilla server,
+   development line (8.30). **Ported onto v2.4 and built (8.114, 8.115):
+   the branch `worldwide-2.4`, not yet run;** a WORLDWIDE client on a real vanilla server,
    which needs that base; a stock client refused by a WORLDWIDE server (so
    far `rollback_vanillajoin` stands in for one); the leave. The savegame
    misread of 8.28 is fixed in code (8.29), never checked against a stock
@@ -6842,3 +6842,28 @@ game. Nothing was launched.
   run the compatibility cases against that stock exe: a WORLDWIDE client on
   a stock server, a stock client refused, a WORLDWIDE build hosting in
   vanilla mode, the leave.
+
+### 8.115 `worldwide-2.4` builds
+
+Pushed on Gibax's go-ahead, with the CI adjusted for the branch. Nothing was
+launched.
+
+- **The CI follows 2.4's dependencies.** 2.4 finds SDL2
+  (`find_package(SDL2 CONFIG)`). Upstream moved to SDL3 after 2.4, and so had
+  this workflow, its Alpine image and Kart Krew's prebuilt Windows SDK. The
+  first run failed at configure in all three jobs. On this branch only:
+  - Linux on Alpine 3.20, which still ships the real SDL2;
+  - Windows with the same llvm-mingw toolchain and SDK, plus SDL2 2.30.9
+    built from its repository, static;
+  - WebM recording off, as 2.4's own CI built it.
+- **Windows then failed after linking.** 2.4 copies the executable's DLLs
+  next to it after the link. A fully static build has none, and
+  `cmake -E copy_if_different` refuses a destination alone. Upstream
+  dropped that step after 2.4. `25a580e96` adds
+  `SRB2_CONFIG_COPY_RUNTIME_DLLS`, on by default, and the CI turns it off.
+- **Run 36839857285 (`d822760ec`): green in all three jobs.** Linux (GCC)
+  compiles and links the whole port. The Windows artefacts are
+  `ringracers-win64-d822760ec…` (dev) and `ringracers-win64-release-…`
+  (release-config, so version 2.4).
+- **Next** is the same as 8.114's: the bench on this build, then the
+  compatibility cases against the stock 2.4 exe.
