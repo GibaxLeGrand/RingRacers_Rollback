@@ -547,7 +547,7 @@ static void I_ReportSignal(int num, int coredumped, void* tracefromcpptrace)
 	I_ShowErrorMessageBox(sigmsg,
 #if defined (UNIXBACKTRACE)
 		true
-#elif defined (_WIN32) && defined (__GNUC__)
+#elif defined(__MINGW32__) && !defined(__MINGW64__) // WORLDWIDE: where exchndl writes the .rpt
 		!M_CheckParm("-noexchndl")
 #elif defined (USE_DBGHELP)
 		true

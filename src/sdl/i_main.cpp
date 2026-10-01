@@ -150,7 +150,7 @@ static void InitLogging(void)
 }
 #endif
 
-#if defined(_WIN32) && !defined(_MSC_VER)
+#if defined(__MINGW32__) && !defined(__MINGW64__) // WORLDWIDE: as where it is called
 static void init_exchndl()
 {
 	HMODULE exchndl_module = LoadLibraryA("exchndl.dll");
@@ -252,7 +252,10 @@ int main(int argc, char **argv)
 	//I_OutputMsg("I_StartupSystem() ...\n");
 	I_StartupSystem();
 
-#if defined (_WIN32) && !defined(_MSC_VER)
+	// WORLDWIDE: Dr. MinGW's exchndl.dll and mgwhelp.dll ship 32-bit with 2.4,
+	// and a 64-bit build cannot load them -- 2.4 then stops at start-up
+	// (WORLDWIDE.md 8.117). As upstream after 2.4, only 32-bit MinGW loads them.
+#if defined(__MINGW32__) && !defined(__MINGW64__)
 	if (!M_CheckParm("-noexchndl"))
 	{
 		init_exchndl();
