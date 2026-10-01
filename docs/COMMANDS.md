@@ -12,7 +12,7 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-10-01** — 31 commands, checked against
+**Up to date as of 2026-10-01** — 32 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
@@ -20,7 +20,8 @@ sides).
 `rollback_poolcopy` from `df8ed24e9` (8.82); `rollback_rawsnap` from
 `371ca7419` (8.88, merged as `49daf1196`); `rollback_histreal` from
 `7a455f6fe` (8.89); `rollback_keepearly` from `6209f1786` (8.98), off by
-default from `771bec680` (8.100); `rollback_join` from 2026-10-01 (8.119).
+default from `771bec680` (8.100); `rollback_join` (8.119) and
+`rollback_botsashuman` (8.120) from 2026-10-01.
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -627,6 +628,18 @@ Saves and restores the frontier on **every pass** without speculating
 anything. Isolates a single question: does the plain round trip through the
 archive, on its own, inside the real game loop, suffice to make the server
 react — with none of the speculation's own noise.
+
+### `rollback_botsashuman [0|1]`
+**Client side: the bots guessed as remote people are**, a stand-in for a
+second human (`WORLDWIDE.md` 8.120, ROADMAP item 2(a)). The speculation
+guesses a remote person by repeating their last input, but computes a bot's
+from this machine's world (`K_BuildBotTiccmd`), so a race of bots shows
+none of the rebuilds a person brings. With `1`, each bot is guessed like a
+person: its last input, repeated. Only what the speculation guesses
+changes; the server still sends every bot's real input, and a human who
+finished the race and drives on bot movement is still computed. Off by
+default. `rollback_drift`'s grid line says when it is on. The `wwbots`
+scenario of `playtest.sh` turns it on (run it with `join`).
 
 ### `rollback_lag [tics]`
 **Testing only.** Delays every packet received from a peer by this many tics.

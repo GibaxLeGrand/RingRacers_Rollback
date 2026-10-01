@@ -85,7 +85,8 @@ asked for first.**
      looked for over longer and more races.
 2. **A second human.** (a) A switch that guesses the bots as a remote human
    is guessed -- their last input repeated -- to see unattended the rebuilds
-   and the shaking a remote human would cause. (b) Two people on two
+   and the shaking a remote human would cause: written, `rollback_botsashuman`
+   and the `wwbots` scenario (8.120), not yet run. (b) Two people on two
    machines, on a LAN. (c) The same over the Internet. (d) One of them
    driving on the host (Phase D). How remote karts are drawn is decided
    after that (Phase D).

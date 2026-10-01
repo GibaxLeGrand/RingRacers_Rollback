@@ -3607,6 +3607,15 @@ static dboolean g_nullspec;
 // neededtic, which this switch never touches, so the driver reported no
 // difference between it off and on in the same race.
 static dboolean g_cleancmds = true;
+
+// A stand-in for a second human (ROADMAP item 2(a)). A remote person is
+// guessed by repeating their last input; a bot is not guessed at all, its
+// input is computed from this machine's world (K_RollbackPredictInputs). With
+// this on, the bots are guessed the way a person is, so a race nobody drives
+// shows the rebuilds and the shaking remote people would bring. Client side,
+// off by default; it changes only what the speculation guesses, never what
+// the server sends.
+static dboolean g_botsashuman;
 static uint32_t g_recvwrites;   // local slots of an already-received tic written over
 static uint32_t g_recvchanged;  // ... with an input that differed from the server's
 
@@ -7315,6 +7324,23 @@ static void Command_RollbackNullSpec_f(void)
 			: "off -- the speculation runs as usual"));
 }
 
+/** Console command: rollback_botsashuman [0/1]
+  *
+  * Client side. With it on, the speculation guesses each bot as it guesses a
+  * remote person, by repeating its last input, instead of computing it
+  * (g_botsashuman). Off by default.
+  */
+static void Command_RollbackBotsAsHuman_f(void)
+{
+	if (COM_Argc() > 1)
+		g_botsashuman = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_botsashuman: %s\n",
+		(g_botsashuman
+			? "on -- the speculation guesses each bot as a remote person: its last input, repeated"
+			: "off -- the speculation computes each bot's input from this machine's world"));
+}
+
 int32_t K_RollbackCorrectRate(void)
 {
 	if (g_correctrate > 0)
@@ -8173,7 +8199,8 @@ static void Command_RollbackDrift_f(void)
 			strlcat(grid, one, sizeof grid);
 		}
 
-		CONS_Printf("rollback_drift: grid --%s\n", grid);
+		CONS_Printf("rollback_drift: grid --%s%s\n", grid,
+			(g_botsashuman ? " -- the bots guessed as people (rollback_botsashuman)" : ""));
 	}
 
 	CONS_Printf("rollback_drift: %s\n",
@@ -8414,7 +8441,12 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 		// K_UpdateMatchRaceBots, which picks a skin when a bot is created.
 		// K_BuildBotTiccmd itself draws nothing, so predicting with it cannot
 		// walk the synchronised RNG away from the server's.
-		if (K_PlayerUsesBotMovement(&players[i]))
+		//
+		// rollback_botsashuman takes the bots, and only them, down the
+		// person's path below instead; a person who finished the race and
+		// drives on bot movement keeps this one.
+		if (K_PlayerUsesBotMovement(&players[i])
+			&& (g_botsashuman == false || players[i].bot == false))
 		{
 			K_BuildBotTiccmd(&players[i], to);
 			continue;
@@ -9110,6 +9142,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
 	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
 	COM_AddDebugCommand("rollback_join", Command_RollbackJoin_f);
+	COM_AddDebugCommand("rollback_botsashuman", Command_RollbackBotsAsHuman_f);
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);

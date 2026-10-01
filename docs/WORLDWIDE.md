@@ -7062,3 +7062,37 @@ can be run with nobody driving.
   Leaps, for its own input: 125 when joined by hand (21:15), 31 when joined
   by the command (21:21), against 4 to 5 driven. For the bots' inputs: 54
   and 24, against 0. Loads of the archive: 214 and 93, against 33.
+
+### 8.120 `rollback_botsashuman`: the bots guessed as remote people
+
+ROADMAP item 2(a), written on Gibax's go-ahead ("écris le mode bots prédits,
+pousse-le"). Nobody else can drive on this machine. The bench has bots, and
+the speculation never guesses a bot.
+
+- **How each kart is guessed today** (`K_RollbackPredictInputs`). This
+  machine's own input is not a guess: it is what is held now. A remote
+  person's is their last input, repeated, with the received flag cleared. A
+  bot's is computed from this machine's world by `K_BuildBotTiccmd`, which
+  draws no random number. That was chosen because repeating a bot's input
+  made every predicted tic wrong on a grid of bots. So a race of bots shows
+  none of the rebuilds, nor the shaking, that a person's changes of input
+  would bring, and the largest unknown (item 2) cannot be looked at
+  unattended.
+- **`rollback_botsashuman 1`** sends the bots, and only them, down the
+  person's path: their last input, repeated. A human who finished the race
+  and drives on bot movement keeps the computed one. Only the guess
+  changes: the server sends every bot's real input as before, the
+  confirmed world is the same, and the rebuilds count under "bots" as they
+  did. `rollback_drift`'s grid line says when it is on.
+- **The scenario `wwbots`** (notes, `harnais/`) is `wwwindows` with the
+  switch on, and nothing else changed. Run it with `join`, and with
+  `wwwindows join` as its control in the same session:
+  `playtest.sh wwbots dedicated join`.
+- **What to expect.** A bot recomputes its angle and its confirmations
+  every tic, so far more wrong guesses than a person who holds a button:
+  an upper bound, not a person's figure. The point is to see how the
+  rebuilds and the drawn karts behave when the guesses are wrong often.
+  The prediction proper is written before the first run.
+- Checked before pushing: the syntax, with the local gcc, which caught an
+  error put in on purpose; the scenario differs from `wwwindows` by the
+  one line. Not built, not run.
