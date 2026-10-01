@@ -7228,6 +7228,23 @@ wrong guess is drawn. Gibax also asked whether sixteen karts could be run.
   machine.
 - **Sixteen karts with every guess wrong do not.** C': 16.6 ms, 58% of a
   tic, and 866 frames skipped. That is the upper bound of 8.120 at sixteen.
+- **Sixteen karts on Opulence do not fit either, bots computed** (Gibax's
+  ask, "lance la 1, 16 karts sur Opulence"; `20cb1f2`, with a host, nobody
+  driving, 23:56; prediction in the notes' session note, before it). Pass
+  by pass, from the differences of the cumulative reports: 10.2, 10.7 and
+  10.3 ms in the three windows, **36 to 37% of a tic, over the gate**; in
+  the last window a save takes about 4.6 ms and the speculation about 5.5
+  (about one tic a pass). 94.6% of the race's passes kept; the 195
+  rebuilds for another's input all in the first window. 14126 frames, 2347
+  of them 16.7 to 28.6 ms apart and 147 over 50; 200 loop iterations past
+  a tic. 0 bodies below zero, 0 PARANOIA. Predicted 8 to 12 ms and over the
+  gate: held; "later windows dearer" did not (flat).
+- **Gibax saw the client stutter at sixteen karts**, under 144 frames a
+  second. Read from B': the frames that carry a tic, 35 a second, cost 9.9
+  ms on average at sixteen against 6.2 at eight, for 6.9 ms a frame at 144
+  Hz; 529 of 4600 over 16.7 ms against 5. The frames between tics cost 2.9
+  ms and are not the problem. The rest is the rebuilds (8.123) and the host
+  drawing its own window on the same machine.
 - **Against the prediction.** Held: T (99.8% kept, 1.07 ms of restore and
   speculation, the bots far steadier than A's); the 16-kart grid; B' under
   the gate; C' over it, with fewer frames and more skipped than B', and
@@ -7304,4 +7321,30 @@ launched for it.
   For a real second human, every guessed tic had the wrong stamp: this
   matters more there than with an idle host.
 - Checked before pushing: the syntax, with the local gcc, which caught an
-  error put in on purpose. Not built, not run.
+  error put in on purpose.
+- **Measured** (Gibax: "oui pousse et lance la mesure"): CI run
+  36932690677 green, `1b808d1e6` installed (sha256 `97db00ab…`, `20cb1f2`
+  kept as `.bak_20cb1f2`). B''s setup, nobody driving, the control first,
+  on `20cb1f2`, at 00:06, then the fix at 00:11:
+
+  | | control `20cb1f2` | fix `1b808d1` |
+  |---|---|---|
+  | the person's wrong inputs | 743 | **450** |
+  | ... differing in angle / latency / received | 465 / 741 / 278 | 449 / 448 / **1** |
+  | rebuilt for another's input, waiting map | 410 | **143** |
+  | ... race map | 314 | 299 |
+  | loads of the archive | 752 | **476** |
+  | a pass | 6.6 ms | **5.3 ms** |
+  | bodies below zero, PARANOIA | 0, 0 | 0, 0 |
+
+  - **The stamp-only guesses are gone**: those wrong in "received" and not
+    in the angle, 278, down to 1. The person's wrong inputs fall by 39%,
+    the archive's loads by 37%, the pass by 1.2 ms.
+  - **Not where predicted.** The race map's rebuilds hardly move (314 to
+    299, predicted about 200): there the host's wrong guesses are the
+    angle's, the camera turning through the start. The gain is on the
+    waiting map (410 to 143).
+  - **Wrong in the prediction**: the latency field does not vanish from the
+    remaining wrong guesses -- 448 of the 450 differ in it too, all of them
+    the angle's. Those tics' stamps are not the previous one plus one; not
+    read yet (the server repeating a sample, R1, would do it).
