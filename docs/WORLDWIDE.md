@@ -8338,3 +8338,40 @@ worldwide-2.4, et du coup on peut valider la phase B".
   with a host, on Opulence, to the race's end (8.136). Measured on this
   machine, at WORLDWIDE mode's depth; a depth Phase D settles on elsewhere
   is run again, and smaller machines stay ROADMAP item 13.
+
+### 8.138 Linux builds for `worldwide-2.4`
+
+Gibax: "avant tout le reste, je te propose de faire aussi un build linux sur
+worldwide-2.4 en CI", then "regarde sur la source gitlab de ring Racers nn ?",
+then, of a tarball or a Flatpak, "Les deux".
+
+- **Upstream.** 2.4's GitLab CI builds Linux on Debian (stable, oldstable,
+  testing; amd64, arm64, i386), Alpine and Batocera, each a bare binary
+  linked to that distribution's libraries -- a compile check more than a
+  download; master keeps Alpine alone. Kart Krew's Linux build for players
+  is their Flatpak on Flathub (`org.kartkrew.RingRacers`): the freedesktop
+  runtime 25.08, the release config, `-O3`, WebM on, the 2.4 data from
+  their GitHub release, `RINGRACERSWADDIR` set by a launcher. A Steam Deck
+  installs that one.
+- **The tarball** (job `linux-tarball`, dev and release): Ubuntu 22.04, GCC,
+  `RelWithDebInfo -O3`, libgcc and libstdc++ linked static, WebM off as in
+  the other jobs. Left to the system: glibc (2.35 the newest symbol
+  needed), SDL2 -- its display, audio and input stack, and a Steam Deck's
+  controller support -- and zlib. In `lib/`, each found through `$ORIGIN`:
+  curl and the 25 libraries it needs, opus, png -- 28 files, about 16 MB. A
+  README says where the data goes (a 2.4 folder, or `RINGRACERSWADDIR`).
+  **Checked on Ubuntu 24.04, Arch and Fedora** (job `linux-tarball-check`),
+  each with its own SDL2 and nothing else: every library the game and
+  `lib/` need is found (`ld.so --list`).
+- **The Flatpak** (job `flatpak`, release): the Flathub manifest -- same
+  runtime, modules (GLU, libyuv) and flags -- building this checkout, under
+  an app id of its own (`io.github.ringracers_worldwide.RingRacersWorldwide`),
+  so it installs beside Kart Krew's with a home of its own. It carries no
+  game data: its launcher reads the official Flatpak's, installed for the
+  user or system-wide, or the folder `RINGRACERSWADDIR` names.
+- **CI run 37039648238 green**, all nine jobs, `b6745014b` (no `src/`
+  change; the Alpine compile check kept). Artifacts
+  `ringracers-linux64[-release]-<sha>` (the tarball and its debug info, 51
+  MB) and `ringracers-flatpak-<sha>` (3.6 MB).
+- **Not yet run anywhere**: whether either starts, draws and plays is for a
+  launch -- on a Steam Deck first (ROADMAP item 5).

@@ -63,9 +63,11 @@ State on 2026-10-02.
 - **A face of its own** (not netcode): a title screen with WORLDWIDE's Earth
   and ring from an optional `data/worldwide.pk3` (8.113, 8.116), and the
   window's title and icon (8.122).
-- **Open:** a second human and a real network; the compatibility cases
-  against a stock 2.4; smaller machines; sixteen karts with a host to the
-  end; the join's chat line; the alpha kit. Ordered below.
+- **Linux**, built by the CI on `worldwide-2.4` (8.138): a tarball for the
+  harness and a Flatpak for testers, neither run yet.
+- **Open:** a second human and a real network; smaller machines, real ones;
+  the alpha kit, and what announces the public alpha (items 14 to 18).
+  Ordered below.
 
 ## Ground rules for every step
 
@@ -131,6 +133,14 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
    for modified builds (the game shows them before hosting publicly).
    `worldwide-2.4` is brought up to date again first if `rollback-netcode`
    has moved on.
+   **Linux** (8.138, `b6745014b`): the CI builds it on `worldwide-2.4` two
+   ways -- a tarball, dev and release, dropped into a 2.4 data folder like
+   the Windows exe, checked on three distributions; and a Flatpak, Kart
+   Krew's Flathub manifest building this checkout, reading the official
+   Flatpak's data. Left: both run on a Steam Deck, then on a desktop
+   distribution. The files go out on a GitHub release of the public
+   repository: a CI artifact needs a GitHub account and is gone after 90
+   days.
 
 **Strongly advised before announcing:**
 
@@ -191,9 +201,30 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
     Machine (Gibax, during the alpha). Phase E's calibration is the long
     answer.
 
+**The public alpha** (Gibax, 2026-10-02), on top of the kit:
+
+14. **A Discord**: where testers find the builds, report and send their
+    logs -- a channel for reports, with item 5's "what to report".
+15. **A simple install tutorial**, Windows and Linux: the zip into a 2.4
+    folder; on Linux, the tarball (into a 2.4 folder, the system's SDL2)
+    and the Flatpak (the official Ring Racers from Flathub, then this one);
+    and SteamOS -- the Flatpak installed in desktop mode, added to Steam as
+    a game from outside it, played in game mode. Each part written from a
+    run on that system.
+16. **A post for players**, simple and exact, no technique: what the fork
+    adds and how it feels -- inputs answer at once, whatever the distance
+    to the server; what a WORLDWIDE server is, and how it lives with a stock
+    2.4 (a stock player is refused there; this build plays on stock
+    servers as a stock 2.4); what is not there yet.
+17. **A teaser.**
+18. **A simple trailer**: real people on a real network are what it shows,
+    so after 2(b) and 2(c).
+
 **Order of work:** 4's cases, 6, 12 and 13's measurement are done (8.134 to
 8.136); then 3; 2(b) to 2(d) with a second person, a LAN first (8.135's
-loopback note); 7; 5; then the announcement.
+loopback note); 7; 5, with 14 and 15; the Steam Deck run of both Linux
+builds; 16, 17 and 18; then the announcement. The teaser can come as soon as
+the Discord exists, for it to point somewhere.
 
 **Branches** (Gibax, 2026-10-01). Work goes on `rollback-netcode`.
 `worldwide-2.4` is the public alpha's branch, on the 2.4 release, brought up
