@@ -135,7 +135,10 @@ scope.
 7. **B2 on by default** since `c24d8d205` (8.125): sixteen karts on
    Opulence, a pass of 6.2 to 6.8 ms (with a host) or 5.7 to 6.6 (fifteen,
    dedicated), under the gate, against about 10.5 with network snapshots.
-   Left: the leak soak again (where 8.94 saw the double claim).
+   Left: the leak soak again (where 8.94 saw the double claim). **Late in
+   the race (8.126)**: a pass about 7.2 ms without rebuilds, but a cascade
+   of rebuilds for this machine's own idle input took windows to 12 and 18
+   ms, as at 00:35 (8.125) -- not understood.
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -7520,3 +7523,80 @@ not B2's. Written on 2026-10-02, not built, not run.
   race's first 1:48: about 6 to 7 ms a pass, 21 to 24% of a tic. Not yet
   the gate's whole condition: late in a race (the windows end at 1:48), and
   at the depth Phase D settles on.
+
+### 8.126 The race to its end: the cascade again, nobody touching
+
+Gibax, at work, nobody at the machine: "allez donc lance 1 et 2 et 3 et 4
+dans cet ordre, par contre tu t'arrêtes si un résultat n'est pas attendu ou
+qu'il ne peut pas valider une étape"; then "tu peux mettre 5 minutes et
+assure toi aussi que le player est tjr en spectateur ou que y'a un auto
+destruct pour le dernier sinon ça va pas se finir".
+
+- **The scenario**: `wwlong` (harness), `wwwindows` with ten 1000-tic
+  windows (to about 5:09 of leveltime), the server kept 12500 tics after
+  the race map; `windows.py` reads a log window by window (it gives back
+  8.125's figures). A race map with one person in it is free play: no
+  POSITION, the race starts at leveltime 0. The race ends by itself: half
+  the grid finished starts a 30 s countdown (`P_CheckRacers`), and its end
+  times out every kart still racing (`P_DoTimeOver`), the idle one too.
+  Prediction in the notes before the race (notes `dd81e78`).
+- **Run**: `playtest.sh wwlong dedicated join karts=15 map=RR_Opulence`,
+  `c24d8d2` (sha256 `a360e3f4…`), 08:47 to 08:53
+  (`playlog_wwlong_RR_Opulence_join_k15_20261002-085335_c24d8d2.txt`).
+  The player entered; "Guest ran out of time." in window 7; the race ended
+  at leveltime 9026, then the intermission, the vote and Wavecrash
+  Dimension. 0 bodies below zero, 0 PARANOIA, no crash.
+
+  | window, leveltime | a pass | passes past a tic | rebuilt, an input | speculated tics a pass | one speculated tic |
+  |---|---|---|---|---|---|
+  | 0, to 1805 | 5.9 ms | 0 | 0 | 1.0 | 4.7 ms |
+  | 1, to 2805 | 6.5 ms | 0 | 0 | 1.0 | 5.2 ms |
+  | 2, to 3890 | **11.8 ms** | 86 | 87 | 1.7 | 5.3 ms |
+  | 3, to 4914 | 8.9 ms | 25 | 25 | 1.2 | 5.8 ms |
+  | 4, to 6092 | **18.2 ms** | 176 | 174 | 2.3 | 5.7 ms |
+  | 5, to 7268 | **18.1 ms** | 158 | 159 | 2.3 | 5.8 ms |
+  | 6, to 8404 | 14.5 ms | 111 | 110 | 1.9 | 5.8 ms |
+  | 7, to 9026 (the end) | 6.6 ms | 0 | 0 | 1.0 | 5.4 ms |
+
+- **Held: the witness, windows 0 and 1** (5.9 and 6.5 ms, in 5.1-6.3 and
+  5.8-7.0). **Wrong: window 2** (11.8 ms, out of 5.9-7.3), so by the rule
+  set before the race the run stopped there: no soak, nothing launched
+  after it. **Held: the race ends by itself**, the idle kart timed out, a
+  new map after. **Wrong, the instrument**: no `finished` phase line --
+  a timed-out kart gets `PF_NOCONTEST`, not `exiting`, which is all
+  `K_PassPhase` reads.
+- **The pass without rebuilds, late in the race: about 7.2 ms** (25% of a
+  tic): one speculated tic grows from 4.7 ms (window 0) to 5.8 (windows 3
+  to 6), plus a save of about 1.2 and 0.2 of network and corrections.
+  Under the gate, about 1.4 ms to spare.
+- **The cascade**: in window 2 the client began rebuilding for its own
+  input -- an idle kart's, so it differs only in the latency stamp (65 of
+  the window's) and `received` (22) -- and the sample the server applied
+  was mostly one older than the one replayed (53). A rebuild re-runs about
+  eight tics, over a tic of time, so the client fell behind (1085 tics of
+  leveltime in 1000 passes) and made no sample of its own on 85 tics. The
+  server's report shows the same from its side: this machine's samples,
+  filed a tic late 500 times in 500 until leveltime 2600 (the slot taken,
+  steady), then 328 late and 41 tics with none, repeated; steady again from
+  3600 to 4600 (window 3 lower), then disturbed from 4600 to 8600 (windows 4
+  to 6). Window 7, the bots finishing and the idle kart timed out: 0.
+- **A theory, not checked**: a loop that feeds itself. One stall longer
+  than a tic makes the client miss a sample; the server repeats the one
+  before, and the tic each later sample is filed at moves by one; the
+  client then replays the wrong sample of its own kart, the stamp differs,
+  it rebuilds; the rebuild is the next stall. Late in the race a tic costs
+  more, so a rebuild costs more (about 2.3 speculated tics a pass in
+  windows 4 and 5). What starts it is not known: 8.125's two races passed
+  the same leveltime with no cascade. **This machine was not idle**:
+  Windows Update installed Microsoft Gaming Services at 08:45:46, then
+  Microsoft GameInput (MSI, with a restore point and a shadow copy) from
+  08:45:54 to 08:50:01, where it failed -- "Service 'GameInput Redist
+  Service' could not be stopped" (Application log, 11921, 1603). The
+  server's first disturbed report covers about 08:49:06 to 08:49:21.
+  At 00:35 (8.125), the other cascade, the Application log has GameBar.exe
+  hanging (1002, reported at 00:36:12). Two coincidences, not a cause.
+- **So**: Phase B's gate holds late in a race only while nothing sets off
+  the cascade: about 7.2 ms a pass without rebuilds, 18 ms inside it. The
+  cascade is the open problem, ahead of the gate: why this machine's own
+  sample is replayed one off once the server's filing moves, and why that
+  feeds itself. Step 2 (the leak soak) and what follows were not run.
