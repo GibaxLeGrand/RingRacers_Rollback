@@ -7701,3 +7701,76 @@ Step 3 of Gibax's four: the open questions, nothing launched.
   le 2": the client fills the tics it missed, then if needed it follows the
   server's shift). Still open: why `rollback_hits` sees no wrong guess
   after the start (the `neededtic` reading).
+
+### 8.129 The cascade read in the code: one sample for a gap; `rollback_fill`
+
+Gibax, on 8.126's cascade: "ça serait pas top de mettre trop de stress aux
+rebuild nn ? genre le 3 en théorie ça nous sauve quoi et c'est quoi les
+risques ?" -- then, of the ways offered: "Ouais 1 puis si vraiment ça passe
+pas, on fait le 2" (1: the client fills the tics it missed; 2: the client
+follows the server's filing when it moves). Written on 2026-10-02 on a local
+branch, `wip/fill`; not pushed, not built, not run.
+
+**The mechanism, read in the code and against the server's reports.**
+- The server files each sample of a client on the tic it arrives
+  (`faketic = maketic`; the remote client's packets show `faketic -
+  realstart` at 7 or 8, the transit, with no delay added), or on the tic
+  after when that one already holds one (`d_clisrv.c`, "1 tic of buffer").
+- In the steady state every sample finds its tic taken by the one before
+  and goes a tic later: the server's reports, 500 "a tic late because the
+  slot was taken" in 500. That state holds itself: a sample a tic late
+  still lands where the steady state puts it.
+- The client sends **one sample a `NetUpdate`**, however many tics went by
+  (`Local_Maketic(realtics)`). After a frame past a tic, its one sample
+  finds its tic free, and so does the next: the filing moves a tic earlier
+  and loses its step. The tics in the gap get the sample before, repeated
+  (`SV_Maketic`).
+- R1 gives the sample before a gap of k tics all k (8.87). In the steady
+  state it owns k - 1: for a round trip, the replay of this machine's own
+  input runs one sample off. An idle kart's samples differ in the stamp
+  alone, a driver's in the steering too: rebuilds either way.
+- A rebuild re-runs about eight tics, 45 to 60 ms on Opulence at fifteen --
+  past a tic -- and leaves the next gap. Two packets in one server tic put
+  the filing back in step, a tic later, which the replay does not know
+  either ("older by 1", 53 in 8.126's window 2). So the loop.
+- The test latency is no part of it: `rollback_lag` holds what the client
+  receives (`d_net.cpp`, "store and forward, on reception"); what it sends
+  reaches the server when it is sent.
+
+**`rollback_fill`** (client, off by default until measured). After a gap of
+k real tics, in a level, this machine sends two samples: a copy of the
+newest, stamped a tic earlier so the anchor tells the two apart, then the
+newest, with the same delay. The copy takes the free tic, the newest the
+next -- where the steady state puts it -- and the filing keeps its step.
+R1 is told the sample before the gap owns k - 1 tics, the copy one. Only
+the client changes; a stock server files the two as it files any pair (its
+rule handles two a tic; a third would overwrite). The copy's stamp, a tic
+earlier, counts as a tic more of control lag on its tic, as a sample made
+on time would have.
+
+**`rollback_stall <ms> [every]`** (client, for testing): holds the loop at
+the end of `NetUpdate`, once or every so many tics of a level -- the busy
+machine of 8.126, on demand. **`rollback_cascadelog 1`**: a dated line for
+each gap (alone, or sent with a copy) and each rebuild for this machine's
+input (the stamps, a repeat or not, the applied sample against the
+replayed one). The `rollback_keepspec` report also prints the chat lines
+held back as a rerun's (8.128). The `rollback_history` report counts the
+gaps sent with a copy and the stalls.
+
+- Checked: the syntax of `k_rollback.c` and `d_clisrv.c` with the local gcc
+  (the one error left, `CL_DOWNLOADHTTPFILES`, is the fake config's, there
+  without the change too), each catching an error put in on purpose.
+- **The test, before and after in one session**: `wwstall` (fill 0) and
+  `wwstallfill` (fill 1), 15 karts dedicated on Opulence, the loop held
+  100 ms every 500 tics from the windows' start (7 stalls), `cascade.py`
+  laying out what each stall set off.
+- **Prediction**:
+  - `wwstall`: each stall leaves a gap sent alone, and the server's report
+    shows the filing out of step (fewer than 500 late in 500, repeats). At
+    least 3 rebuilds for this machine's input after at least 5 of the 7
+    stalls; a window's pass at least 1 ms over 8.125's (5.7 to 6.6 ms).
+  - `wwstallfill`: each gap sent with a copy; the server's filing in step
+    but for the gap's repeats; **at most 7 rebuilds for this machine's
+    input in all**, none in a chain; each window within 0.5 ms of
+    `wwstall`'s first window before any stall, plus the stalls themselves.
+  - Both: 0 bodies below zero, 0 PARANOIA, no crash.
