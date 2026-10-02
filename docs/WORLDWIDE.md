@@ -7918,3 +7918,38 @@ go by. Written on 2026-10-02 on a local branch, `wip/ontime2`; not pushed.
   than 7** (at least one for each stall's rebuild); **no chain: at most 4
   rebuilds after any stall, at most 20 after the first stall in all**; the
   control as before, with chains. 0 bodies below zero, 0 PARANOIA.
+- **Measured** (Gibax: "Pousse, et Ouais tu peux lancer"). `df4b3e2b7`
+  pushed, CI run 36983588015 green on its three jobs, installed in both
+  folders (sha256 `167b5ded…`; `aa9629f` kept as `.bak_aa9629f`). One after
+  the other, nobody touching: `wwstall` at 10:27
+  (`playlog_wwstall_RR_Opulence_join_k15_20261002-103020_df4b3e2.txt`),
+  `wwstallontime` at 10:30
+  (`playlog_wwstallontime_RR_Opulence_join_k15_20261002-103302_df4b3e2.txt`).
+
+  | | `wwstall` (ontime 0) | `wwstallontime` (ontime 1) |
+  |---|---|---|
+  | samples made between two tics of a pass | -- | **49** |
+  | gaps (samples after more than one real tic) | 118 | **11** |
+  | rebuilds for this machine's input after each stall | 3, 1, 3, 50, 1, 59, 11 | **4, 1, 1, 1, 7, 1, 1** |
+  | after the first stall, in all | 128 | **16** |
+  | windows 0 / 1 / 2, a pass | 6.3 / 9.6 / 11.0 ms | **6.3 / 6.5 / 7.1 ms** |
+  | server: late / over one already there / repeated (p15) | 2015 / 12 / 166 | 2999 / 12 / **71** |
+
+  - **Held: no chain.** One gap a stall -- the stall's own -- and 16
+    rebuilds after the first stall in all (predicted at most 20), against
+    128 with chains of 50 and 59. The windows under the gate. 49 samples
+    made between two tics of a pass (predicted more than 7).
+  - **Wrong, by a little**: one stall was followed by 7 rebuilds (over 82
+    real tics, with no gap after its own), not 4 at most.
+  - The server's filing kept its step (2999 late, 71 repeated, against
+    2015 and 166). 0 bodies below zero, 0 PARANOIA, no crash.
+- **So `rollback_ontime` breaks the cascade's loop**: an outside stall still
+  costs its own gap and a few rebuilds, and they no longer feed the next.
+  Still off by default. Next, as Gibax asked once a fix worked ("tu peux
+  tester en condition normale comme avant, comme ça on confirme que ça
+  fixe le pb"): the race to its end in normal conditions, `wwlongontime`
+  (`wwlong` with `rollback_ontime 1`), 15 karts dedicated on Opulence.
+  **Prediction**: every race window under the gate (at most 7.5 ms, as
+  8.126's clean race), no window with more than 20 rebuilds for this
+  machine's input, samples made between two tics of a pass more than 0;
+  the race ends by itself; 0 bodies below zero, 0 PARANOIA.

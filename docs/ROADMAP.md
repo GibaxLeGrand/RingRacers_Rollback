@@ -129,8 +129,9 @@ asked for first.**
    replayed one off, took windows to 12 and 18 ms -- the second time
    (00:35, 8.125). Left: the cascade -- its mechanism read, a first fix,
    `rollback_fill`, measured worse (8.129), a second, `rollback_ontime`,
-   which never ran for want of a live clock (8.130) and has one now (8.131)
-   -- and sixteen with a host to the end.
+   which never ran for want of a live clock (8.130) and, on one, **breaks
+   the loop** (8.131: 16 rebuilds after seven stalls against 128, the
+   windows under the gate) -- and sixteen with a host to the end.
    Sixteen needs a host (a dedicated server has 15 slots, and upstream's
    code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
