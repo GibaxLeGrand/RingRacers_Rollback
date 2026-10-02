@@ -7664,3 +7664,40 @@ was off, not that the case came up.
   619 us, a verified restore 1329 us. `rollback_test` after the soak: the
   round trip identical over 282095 bytes, PASS.
 - **So B2's last open check is done**: no count off where 8.94 saw one.
+
+### 8.128 Read without launching: the dedicated server's dump, the join's missing chat line
+
+Step 3 of Gibax's four: the open questions, nothing launched.
+
+- **The dump** (`ringracers_rollback-netcode.exe.dmp`, 2026-10-01 23:26, the
+  dedicated server at sixteen karts, 8.121). Read with `cdb`: an access
+  violation on a deliberate `mov dword ptr [0],4`, and on the stack the
+  formatted message "assert failed: newplayernum < MAXPLAYERS, file
+  .../src/d_clisrv.c, line 4163" (the format string checked in
+  `.bak_d56763c`, the exe that ran). **Upstream's assert, as 8.121 read
+  it**: the bots took every slot and a client joined. Closed; the harness
+  already refuses sixteen karts on a dedicated server.
+- **No "entered the game" on the client with `rollback_join`** (8.119).
+  A tic writes that line (`P_SpectatorJoinGame`, from
+  `K_CheckSpectateStatus` in the tic loop), and a line a tic writes is
+  written only the first time this machine runs the tic (8.108). In the
+  join of 2026-10-01 21:15, made by hand, the line came from speculated
+  tics past the horizon ("rollback_chat: a tic's line written on tic 60
+  (leveltime 59, speculated ...)"). In today's two `rollback_join` joins
+  there is no `rollback_chat` line at all: the join's line was held back
+  as a rerun's. **A reading, not checked**: the netxcmd that sets
+  `PF_WANTSTOJOIN` reaches the client with a confirmed tic its standing
+  speculation has already run past, so the tic that joins was first run
+  without the join, and the run that joins is a rebuild's, below the
+  horizon. If so, any player's join line can go missing on a WORLDWIDE
+  client, not only the harness's -- a thing to look at before the alpha.
+  The count of held lines (`g_chatheld`) is printed only beside a line
+  written; a report that prints it would settle it.
+- Three more of the list -- the latency stamp's "+1" under load (8.125),
+  the host's latency and angle errors (8.121), the idle kart rebuilding
+  more (8.119) -- are about the sample the server files against the one
+  the client replays, the cascade's ground (8.126); left to that work,
+  which Gibax chose next ("Ouais 1 puis si vraiment ça passe pas, on fait
+  le 2": the client fills the tics it missed, then if needed it follows the
+  server's shift). Still open: why `rollback_hits` sees no wrong guess
+  after the start (the `neededtic` reading).
