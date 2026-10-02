@@ -7574,6 +7574,11 @@ dboolean TryRunTics(tic_t realtics)
 			lastconfirmedtic = gametic;
 			Consistancy_Describe(gametic);
 
+			// rollback_ontime (WORLDWIDE.md 8.130): a loop catching up on
+			// several tics still sends a sample for each real tic it runs over.
+			if (client && gamestate == GS_LEVEL)
+				K_RollbackSampleBetweenTics();
+
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
 
 			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
@@ -8142,6 +8147,39 @@ void NetKeepAlive(void)
 	{
 		NetVoiceUpdate();
 	}
+}
+
+dboolean CL_SampleOnTime(void)
+{
+	tic_t nowtime;
+	int32_t realtics, i;
+
+	if (client == false || netgame == false || demo.playback || gamestate != GS_LEVEL
+		|| cl_mode != CL_CONNECTED || addedtogame == false)
+		return false;
+
+	nowtime = I_GetTime();
+
+	if (nowtime <= gametime)
+		return false;
+
+	// As NetUpdate counts them, and clamps them for a client.
+	realtics = (int32_t)(nowtime - gametime);
+
+	if (realtics > 5)
+		realtics = 5;
+
+	gametime = nowtime;
+
+	// The sample from the controls as they stand; their events are read at
+	// the next NetUpdate, as ever, not in the middle of a pass.
+	for (i = 0; i <= splitscreen; i++)
+		CreateNewLocalCMD((uint8_t)i, realtics);
+
+	K_RollbackNoteSample(realtics);
+	CL_SendClientCmd();
+
+	return true;
 }
 
 // If a tree falls in the forest but nobody is around to hear it, does it make a tic?

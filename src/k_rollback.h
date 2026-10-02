@@ -176,6 +176,10 @@ void K_RollbackNoteSample(int32_t realtics);
   * of the client's NetUpdate. */
 void K_RollbackStallPoint(void);
 
+/** rollback_ontime: between two confirmed tics the tic loop runs, a sample
+  * made and sent if a real tic has gone by (WORLDWIDE.md 8.130). */
+void K_RollbackSampleBetweenTics(void);
+
 /** The server has filed one player's sample: a tic later than it arrived,
   * because that slot was taken (shifted), and over a sample already filed there
   * (overwrote). Server side. */

@@ -3733,6 +3733,16 @@ static uint32_t g_stalls;
 // can be laid out in time (8.129).
 static dboolean g_cascadelog;
 
+// rollback_ontime (WORLDWIDE.md 8.130): this machine makes and sends one
+// sample a NetUpdate, at the top of a pass. A pass that runs past a tic -- a
+// rebuild re-runs about eight -- leaves the tics it ran over without one; the
+// server sees a gap, its filing loses its step, and the replay of this
+// machine's input runs one off: more rebuilds, more gaps (8.126, 8.129). On:
+// between two tics a pass runs, a sample is made and sent as soon as a real
+// tic has gone by, on the frontier's clock, as NetUpdate's are.
+static dboolean g_ontime;           // rollback_ontime; off, the control, until measured
+static uint32_t g_ontimesamples;    // samples made between two tics of a pass
+
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
 // lands on moves with the delay the server files this machine's inputs with --
@@ -7118,6 +7128,43 @@ static void K_NotePassPhase(void)
 		g_phasecount[ph][KPC_KEPT]++;
 }
 
+/** rollback_ontime: a sample, if a real tic has gone by, between two tics of
+  * a speculation, stamped with the frontier's leveltime as NetUpdate's are.
+  * The history ages by one, so the applied sample's age does too, and the
+  * rest of the speculation reads the samples it was laid out with. */
+static void K_SampleOnTime(tic_t frontierlevel)
+{
+	const tic_t level = leveltime;
+	dboolean made;
+	int32_t i;
+
+	if (g_ontime == false)
+		return;
+
+	leveltime = frontierlevel;
+	made = CL_SampleOnTime();
+	leveltime = level;
+
+	if (made == false)
+		return;
+
+	g_ontimesamples++;
+
+	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
+	{
+		if (g_histunacked[i] >= 0)
+			g_histunacked[i]++;
+	}
+}
+
+void K_RollbackSampleBetweenTics(void)
+{
+	// Between two confirmed tics the world is the frontier, and its clock is
+	// the one NetUpdate stamps with; the speculation maps the history afresh.
+	if (g_ontime && CL_SampleOnTime())
+		g_ontimesamples++;
+}
+
 /** A kept pass: the frontier has moved on, the world is still at the head, and
   * only the tics the clock now asks for beyond it are run. */
 static void K_KeepExtend(void)
@@ -7139,7 +7186,10 @@ static void K_KeepExtend(void)
 	g_speculating = true;
 
 	while (gametic < frontier + (tic_t)ahead)
+	{
 		K_RunSpeculatedTic(frontier, true);
+		K_SampleOnTime(g_keeplevel[s]);
+	}
 
 	g_speculating = false;
 
@@ -7223,14 +7273,20 @@ void K_RollbackSpeculate(void)
 	started = I_GetPreciseTime();
 	g_speculating = true;
 
-	for (i = 0; i < ahead; i++)
 	{
-		// Your own input is not a guess and goes in as itself; everyone else is
-		// predicted. Same step the old loop used, and the only part of it worth
-		// keeping. The frontier's start is saved above; with rollback_keepspec
-		// every later tic's start is saved too, so that any of them can become
-		// the frontier without running again.
-		K_RunSpeculatedTic(g_confirmedtic, i > 0);
+		// The frontier's clock, for a sample made on time (rollback_ontime).
+		const tic_t frontierlevel = leveltime;
+
+		for (i = 0; i < ahead; i++)
+		{
+			// Your own input is not a guess and goes in as itself; everyone else is
+			// predicted. Same step the old loop used, and the only part of it worth
+			// keeping. The frontier's start is saved above; with rollback_keepspec
+			// every later tic's start is saved too, so that any of them can become
+			// the frontier without running again.
+			K_RunSpeculatedTic(g_confirmedtic, i > 0);
+			K_SampleOnTime(frontierlevel);
+		}
 	}
 
 	g_speculating = false;
@@ -8716,6 +8772,7 @@ static void K_SetHistory(int32_t want)
 	g_drawnvalid = false;
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
+	g_ontimesamples = 0;
 	g_anchorambiguous = 0;
 	g_histstretched = 0;
 }
@@ -8753,6 +8810,12 @@ static void Command_RollbackHistory_f(void)
 
 	if (g_stalls > 0)
 		CONS_Printf("rollback_history: rollback_stall held the loop %u times\n", g_stalls);
+
+	if (g_ontime || g_ontimesamples > 0)
+	{
+		CONS_Printf("rollback_history: rollback_ontime %s -- %u samples made between two "
+			"tics of a pass\n", g_ontime ? "on" : "off", g_ontimesamples);
+	}
 
 	if (g_histpasses == 0)
 	{
@@ -9322,6 +9385,22 @@ static void Command_RollbackJoin_f(void)
 	CONS_Printf("rollback_join: player %d asked to join the game\n", who);
 }
 
+/** Console command: rollback_ontime [0/1]
+  *
+  * Client side. On: between two tics a pass runs -- confirmed or speculated --
+  * a sample is made and sent as soon as a real tic has gone by, so a long pass
+  * leaves the server no gap (WORLDWIDE.md 8.130). Off, the default until
+  * measured: one sample a NetUpdate, as before. */
+static void Command_RollbackOnTime_f(void)
+{
+	if (COM_Argc() > 1)
+		g_ontime = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_ontime: %s -- %u samples made between two tics of a pass\n",
+		(g_ontime ? "on -- a long pass still sends a sample each real tic"
+			: "off -- one sample a NetUpdate, as before"), g_ontimesamples);
+}
+
 /** Console command: rollback_stall [ms] [every]
   *
   * Client side, for testing: holds this machine's loop for ms milliseconds,
@@ -9409,5 +9488,6 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);
 	COM_AddDebugCommand("rollback_stall", Command_RollbackStall_f);
+	COM_AddDebugCommand("rollback_ontime", Command_RollbackOnTime_f);
 	COM_AddDebugCommand("rollback_cascadelog", Command_RollbackCascadeLog_f);
 }
