@@ -7953,3 +7953,57 @@ go by. Written on 2026-10-02 on a local branch, `wip/ontime2`; not pushed.
   8.126's clean race), no window with more than 20 rebuilds for this
   machine's input, samples made between two tics of a pass more than 0;
   the race ends by itself; 0 bodies below zero, 0 PARANOIA.
+- **The race to its end, normal conditions** (`wwlongontime`, 10:34 to
+  10:40, `playlog_wwlongontime_RR_Opulence_join_k15_20261002-104025_df4b3e2.txt`).
+
+  | window, leveltime | 0, 1820 | 1, 2820 | 2, 3820 | 3, 4820 | 4, 5820 | 5, 6820 | 6, 7916 | 7, 8916 | 8, 9532 (end) |
+  |---|---|---|---|---|---|---|---|---|---|
+  | a pass | 5.9 ms | 6.4 | 6.4 | 6.7 | 6.0 | 6.4 | **12.3** | 6.0 | 5.7 |
+  | rebuilt, an input | 0 | 0 | 0 | 0 | 0 | 0 | **81** | 0 | 0 |
+  | samples between two tics of a pass | 0 | 0 | 0 | 0 | 0 | 0 | 208 | 0 | 0 |
+  | same stamp as the one before / anchors matching two | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | **94 / 134** | 0 / 0 | 0 / 0 |
+
+  - **Held**: eight of the nine race windows clean, 5.7 to 6.7 ms with no
+    rebuild at all; the idle kart timed out ("Guest ran out of time.")
+    and the race ended at leveltime 9532, Bigtime Breakdown after it; 5
+    gaps in the whole race; 0 bodies below zero, 0 PARANOIA.
+  - **Wrong: window 6**, 12.3 ms and 81 rebuilds for this machine's input,
+    over the gate (predicted none over, none past 20). It began at
+    leveltime 6914 with the frontier jumping four tics (stamp 250 to 253,
+    then 255 to 3), then settled into a rebuild every eleven tics or so
+    for six hundred, "newer by 2" most of them (39 of 75) -- with 208
+    samples made between two tics of a pass, 94 with the same stamp as the
+    one before and 134 passes whose anchor matched two samples, where every
+    other window has 0 of each. **The stamps made twins**: in a kept pass
+    the frontier moves on by one, so a sample made in it at "frontier + 1"
+    has the stamp the next pass's first sample takes. `rollback_ontime`
+    stopped feeding the loop with gaps and fed it with twins instead.
+
+### 8.132 Stamps that step
+
+Written on 2026-10-02 on a local branch, `wip/ontime3`; not pushed.
+
+- **With `rollback_ontime`, no stamp the same as the one before**
+  (`K_RollbackStepStamp`, from `CreateNewLocalCMD`): a new sample's stamp
+  at or up to seven tics behind the one before is moved on to the one
+  after it; one further behind -- a new level, its leveltime starting
+  again -- is left as it is. A sample made in a speculation is on the
+  frontier's clock again (8.131's "+ n" taken out), the step doing the
+  rest. The `rollback_history` report counts the stamps moved on.
+- The stamp is also what a server reads a sample's control lag from, and
+  what another client guesses at a tic a tic for a person (8.123): moved
+  on by at most the frontier's own stalls, it now does move a tic a
+  sample, as that guess has it.
+- Checked: the syntax of `k_rollback.c`, `d_clisrv.c` (C) and `d_net.cpp`
+  (C++20), an error put in on purpose caught.
+- **Prediction**: `wwstall`, `wwstallontime`, then `wwlongontime`, one
+  build, one session.
+  - `wwstallontime` as in 8.131 or better: at most 20 rebuilds after the
+    first stall, one gap a stall, **no sample with the same stamp as the
+    one before** in the race's windows, and the anchors matching two
+    samples down to a handful.
+  - `wwlongontime`: **every race window under the gate** and none with
+    more than 20 rebuilds for this machine's input; no sample with the
+    same stamp as the one before in the race.
+  - `wwstall`, the control, with chains as before. 0 bodies below zero, 0
+    PARANOIA everywhere.

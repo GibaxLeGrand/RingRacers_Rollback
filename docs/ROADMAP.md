@@ -131,7 +131,9 @@ asked for first.**
    `rollback_fill`, measured worse (8.129), a second, `rollback_ontime`,
    which never ran for want of a live clock (8.130) and, on one, **breaks
    the loop** (8.131: 16 rebuilds after seven stalls against 128, the
-   windows under the gate) -- and sixteen with a host to the end.
+   windows under the gate), but its stamps made twins in a normal race,
+   one window over the gate; stamps that step written (8.132) -- and
+   sixteen with a host to the end.
    Sixteen needs a host (a dedicated server has 15 slots, and upstream's
    code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
