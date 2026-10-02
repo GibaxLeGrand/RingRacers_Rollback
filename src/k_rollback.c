@@ -136,9 +136,17 @@ static rollbackslot_t *rollbackring = NULL;
 // rollback_rawsnap (WORLDWIDE.md 8.82, 8.83, 8.88): 0 network snapshots, as
 // ever; 1 raw ones; 2 raw ones checked after every restore against the full
 // archive of the same tic, byte for byte and reference count by count.
-static int32_t g_rawsnap;
+//
+// 1 by default since WORLDWIDE.md 8.125: on Opulence a save went from 2.9 to
+// 1.1 ms and a restore from 6.5 to 1.9 (8.95), and the open points were closed
+// or found not to be B2's (8.124): the players-block difference is the item
+// list's capacity, the double claim is counted once, Lua's floorspriteslope
+// goes the network way. The tests compare archives and need 0 or 2; the
+// harness's scenarios that run them set 0.
+static int32_t g_rawsnap = 1;
 static int16_t g_rawmap = -1;       // the level raw snapshots were last taken in
 static uint32_t g_rawsaves, g_rawrestores, g_rawrefused;
+static uint32_t g_rawfallbacks;   // snapshots that went the network way (K_RawUnsafe)
 static uint64_t g_rawsaveus, g_rawrestoreus;
 static uint64_t g_rawnetbytes, g_rawpoolbytes, g_rawheadbytes;
 static uint32_t g_rawverified, g_rawbytesoff, g_rawcountchecks, g_rawcountbad;
@@ -215,6 +223,27 @@ void K_ClearRollback(void)
 	rollbackring = NULL;
 }
 
+/** Whether the world holds something a raw snapshot does not carry, so that
+  * this one must go the network way: an object with a floorspriteslope. Only
+  * Lua makes one (P_CreateFloorSpriteSlope); the network archive saves and
+  * rebuilds it, and the raw copy would bring back a pointer to a plane that
+  * may have been freed (WORLDWIDE.md 8.93, 8.124). */
+static dboolean K_RawUnsafe(void)
+{
+	thinker_t *th;
+
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+	{
+		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
+			continue;
+
+		if (((mobj_t *)th)->floorspriteslope != NULL)
+			return true;
+	}
+
+	return false;
+}
+
 /** Writes a snapshot of the current state into a caller-supplied slot.
   *
   * Split out of K_SaveGameState so that rollback_test can take a second
@@ -235,13 +264,20 @@ static dboolean K_WriteSnapshot(rollbackslot_t *slot, tic_t tic)
 	// the full archive beside it.
 	if (g_rawsnap > 0)
 	{
-		if (K_WriteRawSnapshot(slot) == false)
-			return false;
+		if (K_RawUnsafe())
+		{
+			g_rawfallbacks++;   // the network snapshot below, restored the network way
+		}
+		else
+		{
+			if (K_WriteRawSnapshot(slot) == false)
+				return false;
 
-		slot->israw = true;
+			slot->israw = true;
+		}
 	}
 
-	if (g_rawsnap == 1)
+	if (g_rawsnap == 1 && slot->israw)
 	{
 		slot->used = 0;
 	}
@@ -468,6 +504,28 @@ static void K_VerifyRawRestore(const rollbackslot_t *slot)
 				"differs from the snapshot's at byte %s (%s against %s bytes), in the %s block\n",
 				(uint32_t)slot->tic, sizeu1(at), sizeu2(used), sizeu3(slot->used),
 				P_LocateSnapshotBlock(slot->buffer, slot->used, at));
+
+			// The players block has no markers inside it: read the offset as a
+			// player and a field, as rollback_test does (WORLDWIDE.md 8.124).
+			// The record offsets are the archive written last's, which is the
+			// check's own, laid out as the snapshot's up to the difference.
+			if (at < used && at < slot->used)
+			{
+				uint8_t who;
+				size_t into;
+
+				CONS_Printf("rollback_rawsnap: VERIFY   the byte was 0x%02x, after the restore 0x%02x\n",
+					slot->buffer[at], g_rawverifybuf[at]);
+
+				if (P_LocatePlayerField(at, &who, &into))
+				{
+					const char *field = P_NamePlayerField(g_rawverifybuf, used, who, into);
+
+					CONS_Printf("rollback_rawsnap: VERIFY   player %u (%s), %s bytes into the record -- %s\n",
+						who, (playeringame[who] ? (players[who].bot ? "a bot" : "a person") : "not in game"),
+						sizeu1(into), (field != NULL) ? field : "past the fields that can be named");
+				}
+			}
 		}
 	}
 
@@ -570,6 +628,13 @@ static void K_ReportRawSnap(void)
 			sizeu3((size_t)(g_rawheadbytes / g_rawsaves / 1024)));
 	}
 
+	if (g_rawfallbacks > 0)
+	{
+		CONS_Printf("rollback_rawsnap: %u snapshots went the network way -- an object had "
+			"a floorspriteslope, which only Lua makes and the raw copy does not carry\n",
+			g_rawfallbacks);
+	}
+
 	if (g_rawrestores > 0 || g_rawrefused > 0)
 	{
 		CONS_Printf("rollback_rawsnap: %u raw restores, %u us each (a verified one includes "
@@ -587,7 +652,8 @@ static void K_ReportRawSnap(void)
 
 /** Console command: rollback_rawsnap [0|1|2]
   *
-  * Client side, and the tests. 0: network snapshots, as before. 1: raw
+  * Client side, and the tests. 0: network snapshots, as before. 1, the
+  * default since WORLDWIDE.md 8.125: raw
   * snapshots -- the level pools copied whole, with the heads pointing into
   * them, beside an archive of the rest -- restored at their own addresses,
   * every reference count rebuilt (WORLDWIDE.md 8.88). 2: the same, plus the
@@ -602,7 +668,7 @@ static void Command_RollbackRawSnap_f(void)
 		const int32_t want = atoi(COM_Argv(1));
 
 		g_rawsnap = (want <= 0) ? 0 : ((want >= 2) ? 2 : 1);
-		g_rawsaves = g_rawrestores = g_rawrefused = 0;
+		g_rawsaves = g_rawrestores = g_rawrefused = g_rawfallbacks = 0;
 		g_rawsaveus = g_rawrestoreus = 0;
 		g_rawnetbytes = g_rawpoolbytes = g_rawheadbytes = 0;
 		g_rawverified = g_rawbytesoff = g_rawcountchecks = g_rawcountbad = 0;
@@ -3607,6 +3673,15 @@ static dboolean g_nullspec;
 // neededtic, which this switch never touches, so the driver reported no
 // difference between it off and on in the same race.
 static dboolean g_cleancmds = true;
+
+// A stand-in for a second human (ROADMAP item 2(a)). A remote person is
+// guessed by repeating their last input; a bot is not guessed at all, its
+// input is computed from this machine's world (K_RollbackPredictInputs). With
+// this on, the bots are guessed the way a person is, so a race nobody drives
+// shows the rebuilds and the shaking remote people would bring. Client side,
+// off by default; it changes only what the speculation guesses, never what
+// the server sends.
+static dboolean g_botsashuman;
 static uint32_t g_recvwrites;   // local slots of an already-received tic written over
 static uint32_t g_recvchanged;  // ... with an input that differed from the server's
 
@@ -3645,6 +3720,29 @@ static int32_t g_samplerealtics[MAXGENTLEMENDELAY];
 static uint32_t g_samplehead;
 static int32_t g_histheld[MAXSPLITSCREENPLAYERS]; // confirmed tics already holding the applied sample
 static uint32_t g_histstretched;    // passes R1 laid out differently from one sample a tic
+
+// rollback_stall: holds this client's loop once, or every so many tics, the
+// way a busy machine does -- the cascade's trigger, on demand (8.129).
+static int32_t g_stallms;           // 0 = off
+static int32_t g_stallperiod;       // 0 = once
+static tic_t g_stallnext, g_stalllast;
+static uint32_t g_stalls;
+
+// rollback_cascadelog: each gap and each rebuild for this machine's input, on
+// a line of its own, dated by the level's clock and the real one, so a cascade
+// can be laid out in time (8.129).
+static dboolean g_cascadelog;
+
+// rollback_ontime (WORLDWIDE.md 8.130): this machine makes and sends one
+// sample a NetUpdate, at the top of a pass. A pass that runs past a tic -- a
+// rebuild re-runs about eight -- leaves the tics it ran over without one; the
+// server sees a gap, its filing loses its step, and the replay of this
+// machine's input runs one off: more rebuilds, more gaps (8.126, 8.129). On:
+// between two tics a pass runs, a sample is made and sent as soon as a real
+// tic has gone by, on the frontier's clock, as NetUpdate's are.
+static dboolean g_ontime;           // rollback_ontime; WORLDWIDE mode turns it on (8.133)
+static uint32_t g_ontimesamples;    // samples made between two tics of a pass
+static uint32_t g_ontimestepped;    // samples whose stamp was moved on past the one before
 
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
@@ -3893,6 +3991,54 @@ static void K_NoteDrawnKart(dboolean ranloop, uint32_t gapus)
 	g_drawlastok = true;
 }
 
+// The other karts as drawn, frame to frame (WORLDWIDE.md 8.121): what a
+// second human would see of the rest of the grid. The local kart above is
+// never a guess, so it cannot show how a wrong one is drawn; these can. Each
+// kart's step is classed as the local kart's is, and counted by who drives
+// it -- a bot or a person -- since the speculation guesses the two
+// differently (8.120). A kart is followed by its slot, not its body: a load
+// of the archive may hand it a new body, and that frame is the one to see.
+static uint32_t g_drawothers[2][2][NUMDRAWSTEPS];   // [bot, person][frame with a pass][class]
+static fixed_t g_drawotherx[MAXPLAYERS], g_drawothery[MAXPLAYERS];
+static dboolean g_drawotherok[MAXPLAYERS];
+
+static void K_NoteDrawnOthers(dboolean ranloop, uint32_t gapus)
+{
+	const int32_t which = ranloop ? 1 : 0;
+	int32_t i;
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		interpmobjstate_t st;
+		mobj_t *mo;
+
+		if (i == g_localplayers[0] || playeringame[i] == false || players[i].spectator
+			|| players[i].mo == NULL || P_MobjWasRemoved(players[i].mo))
+		{
+			g_drawotherok[i] = false;
+			continue;
+		}
+
+		mo = players[i].mo;
+		R_InterpolateMobjState(mo, rendertimefrac, &st);
+
+		// Moving -- over 2 units a tic -- and not a respawn or a teleport, as
+		// for the local kart.
+		if (g_drawotherok[i] && gapus > 0 && gapus < 100000
+			&& FixedHypot(mo->momx, mo->momy) > 2 * FRACUNIT)
+		{
+			const fixed_t dx = st.x - g_drawotherx[i], dy = st.y - g_drawothery[i];
+
+			if (FixedHypot(dx, dy) < 512 * FRACUNIT)
+				g_drawothers[players[i].bot ? 0 : 1][which][K_DrawStepClass(dx, dy, mo->momx, mo->momy, gapus)]++;
+		}
+
+		g_drawotherx[i] = st.x;
+		g_drawothery[i] = st.y;
+		g_drawotherok[i] = true;
+	}
+}
+
 // The inputs the standing speculation ran, tic by tic, checked against what the
 // server confirms for the same tics on the next pass.
 #define ROLLBACK_GUESSMAX 32
@@ -3953,6 +4099,7 @@ enum
 	KEEPSHIFT_LOST, NUMKEEPSHIFT
 };
 static uint32_t g_keepmissshift[NUMKEEPSHIFT];
+static uint32_t g_chatheld;     // defined with K_RollbackChatSilenced, further down
 
 // Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
 // Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
@@ -4008,6 +4155,7 @@ void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboole
 		// A gap spent in a menu or a wipe is not a frame the race drew late.
 		g_lastdrawnat = 0;
 		g_drawlastok = false;
+		memset(g_drawotherok, 0, sizeof g_drawotherok);
 		return;
 	}
 
@@ -4037,10 +4185,12 @@ void K_RollbackNoteFrame(precise_t work, dboolean ranloop, dboolean drew, dboole
 				g_framegapmax = gap;
 
 			K_NoteDrawnKart(ranloop, gap);
+			K_NoteDrawnOthers(ranloop, gap);
 		}
 		else
 		{
 			K_NoteDrawnKart(ranloop, 0);
+			K_NoteDrawnOthers(ranloop, 0);
 		}
 
 		g_lastdrawnat = now;
@@ -4404,6 +4554,11 @@ static void Command_RollbackKeepSpec_f(void)
 		"(%u of them through a correction that changed nothing)\n",
 		armed, g_keepcount[KEEP_KEPT], g_keepcorrnoop);
 
+	// A tic's chat line not written because the tic was a rerun's -- the join's
+	// "entered the game" with rollback_join, if 8.128 reads it right.
+	CONS_Printf("rollback_keepspec: %u chat lines a tic wrote were held back as a rerun's\n",
+		g_chatheld);
+
 	for (r = 1; r < KEEP_NUMREASONS; r++)
 	{
 		if (g_keepcount[r] > 0)
@@ -4534,6 +4689,8 @@ static void K_ResetPassCosts(void)
 	memset(g_drawkart, 0, sizeof g_drawkart);
 	memset(g_drawview, 0, sizeof g_drawview);
 	g_drawlastok = false;
+	memset(g_drawothers, 0, sizeof g_drawothers);
+	memset(g_drawotherok, 0, sizeof g_drawotherok);
 
 	g_guesspasses = g_guessright = g_guessrightmoved = 0;
 	memset(g_guessfirstwrong, 0, sizeof g_guessfirstwrong);
@@ -4779,6 +4936,21 @@ static void K_ReportPassCosts(void)
 		g_drawview[0][DRAWSTEP_LONG], g_drawview[0][DRAWSTEP_BACK],
 		g_drawview[1][DRAWSTEP_EVEN], g_drawview[1][DRAWSTEP_SHORT],
 		g_drawview[1][DRAWSTEP_LONG], g_drawview[1][DRAWSTEP_BACK]);
+	{
+		int32_t k;
+
+		for (k = 0; k < 2; k++)
+		{
+			uint32_t (*c)[NUMDRAWSTEPS] = g_drawothers[k];
+
+			CONS_Printf("rollback_frames: the other karts as drawn, %s, frame to frame "
+				"while they move -- without a pass: even %u, short %u, long %u, backwards %u; "
+				"with one: even %u, short %u, long %u, backwards %u\n",
+				(k ? "people" : "bots"),
+				c[0][DRAWSTEP_EVEN], c[0][DRAWSTEP_SHORT], c[0][DRAWSTEP_LONG], c[0][DRAWSTEP_BACK],
+				c[1][DRAWSTEP_EVEN], c[1][DRAWSTEP_SHORT], c[1][DRAWSTEP_LONG], c[1][DRAWSTEP_BACK]);
+		}
+	}
 
 	CONS_Printf("rollback_hits: %u passes confirmed tics the speculation had guessed: "
 		"%u with every input right (%u of them with a kart moved by a correction), "
@@ -4946,7 +5118,7 @@ dboolean K_RollbackSoundsSilenced(void)
 	return g_speculating;
 }
 
-static uint32_t g_chatheld;     // chat lines held back as a rerun's
+static uint32_t g_chatheld;     // chat lines held back as a rerun's (declared above)
 
 dboolean K_RollbackChatSilenced(void)
 {
@@ -6761,6 +6933,20 @@ static int32_t K_NoteKeepMiss(tic_t from, tic_t tic)
 				g_keepmissshift[KEEPSHIFT_OLDER1]++;
 			else
 				g_keepmissshift[KEEPSHIFT_OLDER2]++;
+
+			if (g_cascadelog)
+			{
+				CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- rebuilt for this "
+					"machine's input on tic %u (%d from the frontier): ran stamp %u%s, the "
+					"server's %u%s, its sample %s\n",
+					(unsigned)I_GetTime(), (unsigned)leveltime, (unsigned)tic, at,
+					(unsigned)ran->latency, (ran->flags & TICCMD_RECEIVED) ? "" : " (a repeat)",
+					(unsigned)real->latency, (real->flags & TICCMD_RECEIVED) ? "" : " (a repeat)",
+					(ranage < 0 || realage < 0) ? "not in the history"
+						: (realage == ranage) ? "the same to the anchor"
+						: va("%s by %d", (realage > ranage) ? "older" : "newer",
+							(realage > ranage) ? realage - ranage : ranage - realage));
+			}
 		}
 	}
 
@@ -6943,6 +7129,69 @@ static void K_NotePassPhase(void)
 		g_phasecount[ph][KPC_KEPT]++;
 }
 
+/** rollback_ontime: a sample, if a real tic has gone by, between two tics of
+  * a speculation, on the frontier's clock as NetUpdate's are -- its stamp
+  * then moved on past the one before (K_RollbackStepStamp). The history ages
+  * by one, so the applied sample's age does too, and the rest of the
+  * speculation reads the samples it was laid out with. */
+static void K_SampleOnTime(tic_t frontierlevel)
+{
+	const tic_t level = leveltime;
+	dboolean made;
+	int32_t i;
+
+	if (g_ontime == false)
+		return;
+
+	leveltime = frontierlevel;
+	made = CL_SampleOnTime();
+	leveltime = level;
+
+	if (made == false)
+		return;
+
+	g_ontimesamples++;
+
+	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
+	{
+		if (g_histunacked[i] >= 0)
+			g_histunacked[i]++;
+	}
+}
+
+void K_RollbackStepStamp(ticcmd_t *cmd, const ticcmd_t *before)
+{
+	uint8_t back;
+
+	// A stamp is the frontier's leveltime when the sample is made, and the
+	// frontier does not move a tic for every sample: a sample made in a
+	// speculation, or two passes on one confirmed tic, share a stamp with the
+	// one before -- twins to the anchor for a kart held still, and the replay
+	// takes the wrong one. 94 in the window of 8.131's normal race that went
+	// over the gate, 0 in every other. With rollback_ontime, a stamp at or a
+	// few tics behind the one before is moved on to the one after it, so no
+	// two samples running are the same; one further behind -- a new level, a
+	// leveltime starting again -- is left as it is (WORLDWIDE.md 8.132).
+	if (g_ontime == false || gamestate != GS_LEVEL || cmd == NULL || before == NULL)
+		return;
+
+	back = (uint8_t)((before->latency - cmd->latency) & TICCMD_LATENCYMASK);
+
+	if (cmd->latency == before->latency || back < 8)
+	{
+		cmd->latency = (uint8_t)((before->latency + 1) & TICCMD_LATENCYMASK);
+		g_ontimestepped++;
+	}
+}
+
+void K_RollbackSampleBetweenTics(void)
+{
+	// Between two confirmed tics the world is the frontier, and its clock is
+	// the one NetUpdate stamps with; the speculation maps the history afresh.
+	if (g_ontime && CL_SampleOnTime())
+		g_ontimesamples++;
+}
+
 /** A kept pass: the frontier has moved on, the world is still at the head, and
   * only the tics the clock now asks for beyond it are run. */
 static void K_KeepExtend(void)
@@ -6964,7 +7213,10 @@ static void K_KeepExtend(void)
 	g_speculating = true;
 
 	while (gametic < frontier + (tic_t)ahead)
+	{
 		K_RunSpeculatedTic(frontier, true);
+		K_SampleOnTime(g_keeplevel[s]);
+	}
 
 	g_speculating = false;
 
@@ -7048,14 +7300,20 @@ void K_RollbackSpeculate(void)
 	started = I_GetPreciseTime();
 	g_speculating = true;
 
-	for (i = 0; i < ahead; i++)
 	{
-		// Your own input is not a guess and goes in as itself; everyone else is
-		// predicted. Same step the old loop used, and the only part of it worth
-		// keeping. The frontier's start is saved above; with rollback_keepspec
-		// every later tic's start is saved too, so that any of them can become
-		// the frontier without running again.
-		K_RunSpeculatedTic(g_confirmedtic, i > 0);
+		// The frontier's clock, for a sample made on time (rollback_ontime).
+		const tic_t frontierlevel = leveltime;
+
+		for (i = 0; i < ahead; i++)
+		{
+			// Your own input is not a guess and goes in as itself; everyone else is
+			// predicted. Same step the old loop used, and the only part of it worth
+			// keeping. The frontier's start is saved above; with rollback_keepspec
+			// every later tic's start is saved too, so that any of them can become
+			// the frontier without running again.
+			K_RunSpeculatedTic(g_confirmedtic, i > 0);
+			K_SampleOnTime(frontierlevel);
+		}
 	}
 
 	g_speculating = false;
@@ -7315,6 +7573,23 @@ static void Command_RollbackNullSpec_f(void)
 			: "off -- the speculation runs as usual"));
 }
 
+/** Console command: rollback_botsashuman [0/1]
+  *
+  * Client side. With it on, the speculation guesses each bot as it guesses a
+  * remote person, by repeating its last input, instead of computing it
+  * (g_botsashuman). Off by default.
+  */
+static void Command_RollbackBotsAsHuman_f(void)
+{
+	if (COM_Argc() > 1)
+		g_botsashuman = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_botsashuman: %s\n",
+		(g_botsashuman
+			? "on -- the speculation guesses each bot as a remote person: its last input, repeated"
+			: "off -- the speculation computes each bot's input from this machine's world"));
+}
+
 int32_t K_RollbackCorrectRate(void)
 {
 	if (g_correctrate > 0)
@@ -7490,6 +7765,12 @@ void K_RollbackNoteSample(int32_t realtics)
 	{
 		g_samplelate++;
 		g_samplelatetics += (uint32_t)(realtics - 1);
+
+		if (g_cascadelog)
+		{
+			CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- a sample after %d real "
+				"tics\n", (unsigned)I_GetTime(), (unsigned)leveltime, (int)realtics);
+		}
 	}
 
 	now = D_LocalTiccmdAge(0, 0);
@@ -7497,6 +7778,32 @@ void K_RollbackNoteSample(int32_t realtics)
 
 	if (now != NULL && before != NULL && now->latency == before->latency)
 		g_samplesamestamp++;
+}
+
+void K_RollbackStallPoint(void)
+{
+	if (g_stallms <= 0 || gamestate != GS_LEVEL)
+		return;
+
+	// A new level: its clock starts again, and so does the count to the next.
+	if (leveltime < g_stalllast)
+		g_stallnext = (tic_t)g_stallperiod;
+
+	g_stalllast = leveltime;
+
+	if (leveltime < g_stallnext)
+		return;
+
+	I_Sleep((uint32_t)g_stallms);
+	g_stalls++;
+
+	CONS_Printf("rollback_stall: the loop held %d ms at leveltime %u (real tic %u)\n",
+		(int)g_stallms, (unsigned)leveltime, (unsigned)I_GetTime());
+
+	if (g_stallperiod > 0)
+		g_stallnext = leveltime + (tic_t)g_stallperiod;
+	else
+		g_stallms = 0;
 }
 
 void K_RollbackNoteFiling(int32_t player, dboolean shifted, dboolean overwrote)
@@ -8173,7 +8480,8 @@ static void Command_RollbackDrift_f(void)
 			strlcat(grid, one, sizeof grid);
 		}
 
-		CONS_Printf("rollback_drift: grid --%s\n", grid);
+		CONS_Printf("rollback_drift: grid --%s%s\n", grid,
+			(g_botsashuman ? " -- the bots guessed as people (rollback_botsashuman)" : ""));
 	}
 
 	CONS_Printf("rollback_drift: %s\n",
@@ -8414,7 +8722,12 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 		// K_UpdateMatchRaceBots, which picks a skin when a bot is created.
 		// K_BuildBotTiccmd itself draws nothing, so predicting with it cannot
 		// walk the synchronised RNG away from the server's.
-		if (K_PlayerUsesBotMovement(&players[i]))
+		//
+		// rollback_botsashuman takes the bots, and only them, down the
+		// person's path below instead; a person who finished the race and
+		// drives on bot movement keeps this one.
+		if (K_PlayerUsesBotMovement(&players[i])
+			&& (g_botsashuman == false || players[i].bot == false))
 		{
 			K_BuildBotTiccmd(&players[i], to);
 			continue;
@@ -8422,6 +8735,18 @@ void K_RollbackPredictInputs(tic_t tic, int32_t ahead)
 
 		*to = netcmds[(tic - 1) % BACKUPTICS][i];
 		to->flags &= ~TICCMD_RECEIVED;
+
+		// The latency field is not pressed: it is the sender's leveltime when it
+		// built the input (G_BuildTiccmd), which G_Ticker turns into a lag, and
+		// the game reads that lag (drift and angle leniency in p_user.c, the
+		// roulette's fudge). A person's machine stamps every tic's input with
+		// that tic, so the stamp moves on by one a tic. Repeated as it was, a
+		// guessed tic was wrong in it every time, and the speculation rebuilt
+		// for a stamp nobody pressed (WORLDWIDE.md 8.123). A bot's stamp does
+		// not move, so a bot guessed as a person (rollback_botsashuman) keeps
+		// its own.
+		if (players[i].bot == false)
+			to->latency = (uint8_t)((to->latency + 1) & TICCMD_LATENCYMASK);
 	}
 }
 
@@ -8474,6 +8799,7 @@ static void K_SetHistory(int32_t want)
 	g_drawnvalid = false;
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
+	g_ontimesamples = g_ontimestepped = 0;
 	g_anchorambiguous = 0;
 	g_histstretched = 0;
 }
@@ -8507,6 +8833,16 @@ static void Command_RollbackHistory_f(void)
 		CONS_Printf("rollback_history: %u samples made, %u after more than one real tic "
 			"(%u tics got no sample of their own), %u with the same stamp as the one "
 			"before\n", g_samples, g_samplelate, g_samplelatetics, g_samplesamestamp);
+	}
+
+	if (g_stalls > 0)
+		CONS_Printf("rollback_history: rollback_stall held the loop %u times\n", g_stalls);
+
+	if (g_ontime || g_ontimesamples > 0)
+	{
+		CONS_Printf("rollback_history: rollback_ontime %s -- %u samples made between two "
+			"tics of a pass, %u stamps moved on past the one before\n",
+			g_ontime ? "on" : "off", g_ontimesamples, g_ontimestepped);
 	}
 
 	if (g_histpasses == 0)
@@ -8954,6 +9290,7 @@ static void K_WorldwideClientOff(void)
 	K_SetHistory(0);
 	K_SetTwoClock(0);
 	g_correctapply = false;
+	g_ontime = false;
 
 	// Two-clock switches the snapshot keeper on and nothing switches it off,
 	// and with two-clock off the keeper saves the whole world every tic
@@ -8986,11 +9323,16 @@ void K_WorldwideJoin(dboolean serverhasit)
 	K_SetHistory(WORLDWIDE_HISTORY);
 	K_SetKeepSpec(true);
 	g_correctapply = true;
+
+	// A long pass still sends a sample each real tic, its stamps stepped:
+	// the cascade of rebuilds no longer feeds itself (WORLDWIDE.md 8.131,
+	// 8.132), and a clean race costs nothing for it (8.133).
+	g_ontime = true;
 	g_wwclient = true;
 
 	CONS_Printf("worldwide: this server runs WORLDWIDE mode -- predicting, "
 		"rollback_twoclock %d, rollback_history %d, rollback_keepspec on, "
-		"corrections applied\n", WORLDWIDE_TWOCLOCK, WORLDWIDE_HISTORY);
+		"rollback_ontime on, corrections applied\n", WORLDWIDE_TWOCLOCK, WORLDWIDE_HISTORY);
 }
 
 void K_WorldwideLeave(void)
@@ -9039,6 +9381,111 @@ static void Command_RollbackVanillaJoin_f(void)
 			: "off -- joins declare this client WORLDWIDE"));
 }
 
+// rollback_join: the pause menu's Enter Game, from the console. A client
+// nobody drives stays a spectator, so the bench never ran the join's path
+// (WORLDWIDE.md 8.113); the client scenarios call this instead. It asks only
+// as the menu does, for a spectator not already waiting to join: the same
+// message for a player in the race would make that player spectate
+// (Got_Spectate, d_netcmd.c).
+static void Command_RollbackJoin_f(void)
+{
+	const int32_t who = g_localplayers[0];
+	uint8_t buf[2];
+
+	if (!Playing() || who < 0 || who >= MAXPLAYERS || !playeringame[who])
+	{
+		CONS_Printf("rollback_join: not in a game yet -- nothing sent\n");
+		return;
+	}
+	if (!players[who].spectator)
+	{
+		CONS_Printf("rollback_join: player %d is already in the game -- nothing sent\n", who);
+		return;
+	}
+	if (players[who].pflags & PF_WANTSTOJOIN)
+	{
+		CONS_Printf("rollback_join: player %d has already asked to join -- nothing sent\n", who);
+		return;
+	}
+	if (!G_GametypeHasSpectators() || !cv_allowteamchange.value)
+	{
+		CONS_Printf("rollback_join: the game takes no spectator in now -- nothing sent\n");
+		return;
+	}
+
+	buf[0] = (uint8_t)who;
+	buf[1] = 1; // join, as the menu's Enter Game
+	SendNetXCmd(XD_SPECTATE, buf, sizeof buf);
+	CONS_Printf("rollback_join: player %d asked to join the game\n", who);
+}
+
+/** Console command: rollback_ontime [0/1]
+  *
+  * Client side. On: between two tics a pass runs -- confirmed or speculated --
+  * a sample is made and sent as soon as a real tic has gone by, so a long pass
+  * leaves the server no gap, and no sample's stamp is the same as the one
+  * before (WORLDWIDE.md 8.130 to 8.132). WORLDWIDE mode turns it on at the
+  * join and off on leaving (8.133); off otherwise: one sample a NetUpdate, as
+  * a stock client. */
+static void Command_RollbackOnTime_f(void)
+{
+	if (COM_Argc() > 1)
+		g_ontime = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_ontime: %s -- %u samples made between two tics of a pass\n",
+		(g_ontime ? "on -- a long pass still sends a sample each real tic"
+			: "off -- one sample a NetUpdate, as before"), g_ontimesamples);
+}
+
+/** Console command: rollback_stall [ms] [every]
+  *
+  * Client side, for testing: holds this machine's loop for ms milliseconds,
+  * once at the next tic of a level, or every so many tics of it -- the busy
+  * machine that set off 8.126's cascade, on demand (WORLDWIDE.md 8.129). 0 to
+  * stop. */
+static void Command_RollbackStall_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_stallms = atoi(COM_Argv(1));
+		g_stallperiod = (COM_Argc() > 2) ? atoi(COM_Argv(2)) : 0;
+
+		if (g_stallms < 0)
+			g_stallms = 0;
+		if (g_stallms > 2000)
+			g_stallms = 2000;
+		if (g_stallperiod < 0)
+			g_stallperiod = 0;
+
+		g_stallnext = (tic_t)g_stallperiod;
+		g_stalllast = 0;
+	}
+
+	if (g_stallms <= 0)
+		CONS_Printf("rollback_stall: off -- %u held so far\n", g_stalls);
+	else if (g_stallperiod > 0)
+		CONS_Printf("rollback_stall: %d ms every %d tics of a level, from leveltime %d -- %u held so far\n",
+			(int)g_stallms, (int)g_stallperiod, (int)g_stallperiod, g_stalls);
+	else
+		CONS_Printf("rollback_stall: %d ms once, at the next tic of a level -- %u held so far\n",
+			(int)g_stallms, g_stalls);
+}
+
+/** Console command: rollback_cascadelog [0/1]
+  *
+  * Client side. On: a line for each sample made after more than one real tic,
+  * and for each rebuild for this machine's own input, dated by the level's
+  * clock and the real one (WORLDWIDE.md 8.129). Off by default. */
+static void Command_RollbackCascadeLog_f(void)
+{
+	if (COM_Argc() > 1)
+		g_cascadelog = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_cascadelog: %s\n",
+		(g_cascadelog ? "on -- each gap and each rebuild for this machine's input, dated"
+			: "off"));
+}
+
 void K_RegisterRollbackStuff(void)
 {
 	// Debug commands rather than plain ones: they are diagnostics, and being
@@ -9071,7 +9518,12 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_inputlog", Command_RollbackInputLog_f);
 	COM_AddDebugCommand("rollback_relabel", Command_RollbackRelabel_f);
 	COM_AddDebugCommand("rollback_vanillajoin", Command_RollbackVanillaJoin_f);
+	COM_AddDebugCommand("rollback_join", Command_RollbackJoin_f);
+	COM_AddDebugCommand("rollback_botsashuman", Command_RollbackBotsAsHuman_f);
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);
+	COM_AddDebugCommand("rollback_stall", Command_RollbackStall_f);
+	COM_AddDebugCommand("rollback_ontime", Command_RollbackOnTime_f);
+	COM_AddDebugCommand("rollback_cascadelog", Command_RollbackCascadeLog_f);
 }

@@ -35,6 +35,10 @@ extern consvar_t cv_timescale;
 */
 tic_t I_GetTime(void);
 
+/**	rief  The tic count as it stands now, which I_GetTime only reports as of
+	the frame's I_UpdateTime. Does not update the clock. */
+tic_t I_GetTimeNow(void);
+
 /**	\brief  Initializes timing system.
 */
 void I_InitializeTime(void);

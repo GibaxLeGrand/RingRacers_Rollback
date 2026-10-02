@@ -94,14 +94,14 @@ BEGIN
         BEGIN
             VALUE "Comments", "Go go-karting with Dr. Robotnik!\0"
             VALUE "CompanyName", "Kart Krew Dev\0"
-            VALUE "FileDescription", "Dr. Robotnik's Ring Racers\0"
+            VALUE "FileDescription", "Dr. Robotnik's Ring Racers Worldwide\0"
             VALUE "FileVersion", "2.4"
             VALUE "InternalName", "ringracers\0"
             VALUE "LegalCopyright", "Copyright 2018-2025 Kart Krew Dev\0"
             VALUE "LegalTrademarks", "Dr. Robotnik and related characters are trademarks of Sega.\0"
             VALUE "OriginalFilename", "ringracers.exe\0"
             VALUE "PrivateBuild", "\0"
-            VALUE "ProductName", "Dr. Robotnik's Ring Racers\0"
+            VALUE "ProductName", "Dr. Robotnik's Ring Racers Worldwide\0"
             VALUE "ProductVersion", "2.4"
             VALUE "SpecialBuild", "\0"
         END

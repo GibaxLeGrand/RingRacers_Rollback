@@ -172,6 +172,19 @@ void K_RollbackNoteRelabel(int32_t delta, dboolean fromhost, dboolean inlevel);
   * which it fills by repeating the one before (WORLDWIDE.md 8.85). Client side. */
 void K_RollbackNoteSample(int32_t realtics);
 
+/** rollback_stall: holds this client's loop when one is due. Called at the end
+  * of the client's NetUpdate. */
+void K_RollbackStallPoint(void);
+
+/** rollback_ontime: between two confirmed tics the tic loop runs, a sample
+  * made and sent if a real tic has gone by (WORLDWIDE.md 8.130). */
+void K_RollbackSampleBetweenTics(void);
+
+/** rollback_ontime: moves a new sample's stamp on past the one before when it
+  * is the same or a few tics behind, so no two samples running are twins to
+  * the anchor (WORLDWIDE.md 8.132). Client side, in a level. */
+void K_RollbackStepStamp(ticcmd_t *cmd, const ticcmd_t *before);
+
 /** The server has filed one player's sample: a tic later than it arrived,
   * because that slot was taken (shifted), and over a sample already filed there
   * (overwrote). Server side. */

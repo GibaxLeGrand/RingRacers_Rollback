@@ -8605,16 +8605,27 @@ static void P_NetUnArchiveThinkersRaw(savebuffer_t *save)
 		if (th->function.acp1 == (actionf_p1)P_RemoveThinkerDelayed)
 			continue;
 
-		// Counted, as the network load now counts it (LoadMobjThinker).
 		if (mo->player != NULL && TypeIsNetSynced(mo->type))
-		{
 			mo->player->mo = mo;
-			mo->thinker.references++;
+	}
+
+	// Counted once a player, for the body that stays. Two synced objects can
+	// carry the same player; counted as they came, the first kept a reference
+	// the live game does not hold, one kart's count rebuilt one over (8.94:
+	// 67 against 66). The live game holds one reference, for players[].mo:
+	// P_SpawnPlayer's P_SetTarget (WORLDWIDE.md 8.124).
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		mobj_t *mo = players[i].mo;
+
+		if (mo == NULL)
+			continue;
+
+		mo->thinker.references++;
 #ifdef PARANOIA
-			if (mo->type == MT_PLAYER)
-				K_RollbackRefTrace(mo, 1, __FILE__, __LINE__); // the claim, not a P_SetTarget
+		if (mo->type == MT_PLAYER)
+			K_RollbackRefTrace(mo, 1, __FILE__, __LINE__); // the claim, not a P_SetTarget
 #endif
-		}
 	}
 }
 

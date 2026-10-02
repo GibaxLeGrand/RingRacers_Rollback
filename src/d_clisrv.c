@@ -7226,6 +7226,10 @@ static void CreateNewLocalCMD(UINT8 p, INT32 realtics)
 
 	G_BuildTiccmd(&localcmds[p][0], realtics, p+1);
 	localcmds[p][0].flags |= TICCMD_RECEIVED;
+
+	// rollback_ontime (WORLDWIDE.md 8.132): no stamp the same as the one before.
+	if (client)
+		K_RollbackStepStamp(&localcmds[p][0], &localcmds[p][1]);
 }
 
 static void Local_Maketic(INT32 realtics)
@@ -7653,6 +7657,11 @@ boolean TryRunTics(tic_t realtics)
 			consistancy[gametic % BACKUPTICS] = Consistancy();
 			lastconfirmedtic = gametic;
 			Consistancy_Describe(gametic);
+
+			// rollback_ontime (WORLDWIDE.md 8.130): a loop catching up on
+			// several tics still sends a sample for each real tic it runs over.
+			if (client && gamestate == GS_LEVEL)
+				K_RollbackSampleBetweenTics();
 
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
 
@@ -8224,6 +8233,42 @@ void NetKeepAlive(void)
 	}
 }
 
+dboolean CL_SampleOnTime(void)
+{
+	tic_t nowtime;
+	int32_t realtics, i;
+
+	if (client == false || netgame == false || demo.playback || gamestate != GS_LEVEL
+		|| cl_mode != CL_CONNECTED || addedtogame == false)
+		return false;
+
+	// The clock as it stands, not as of this frame's start: I_GetTime does
+	// not move during a pass, which is the time this is for (8.131). The next
+	// NetUpdate, on the frame's clock, then finds this tic already sampled.
+	nowtime = I_GetTimeNow();
+
+	if (nowtime <= gametime)
+		return false;
+
+	// As NetUpdate counts them, and clamps them for a client.
+	realtics = (int32_t)(nowtime - gametime);
+
+	if (realtics > 5)
+		realtics = 5;
+
+	gametime = nowtime;
+
+	// The sample from the controls as they stand; their events are read at
+	// the next NetUpdate, as ever, not in the middle of a pass.
+	for (i = 0; i <= splitscreen; i++)
+		CreateNewLocalCMD((uint8_t)i, realtics);
+
+	K_RollbackNoteSample(realtics);
+	CL_SendClientCmd();
+
+	return true;
+}
+
 // If a tree falls in the forest but nobody is around to hear it, does it make a tic?
 #define DEDICATEDIDLETIME (10*TICRATE)
 
@@ -8342,6 +8387,8 @@ void NetUpdate(void)
 
 		CL_SendClientCmd(); // Send tic cmd
 		hu_redownloadinggamestate = cl_redownloadinggamestate;
+
+		K_RollbackStallPoint();
 	}
 	else
 	{

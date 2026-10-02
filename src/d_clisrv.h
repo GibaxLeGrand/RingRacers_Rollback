@@ -849,6 +849,12 @@ ticcmd_t *D_LocalTiccmd(UINT8 ss);
   * is built and sent per pass, so this is also the send order. */
 ticcmd_t *D_LocalTiccmdAge(uint8_t ss, int32_t age);
 
+/** rollback_ontime (WORLDWIDE.md 8.130): if a real tic has gone by since the
+  * last sample, makes one and sends it, as NetUpdate does, without reading the
+  * network. For a long pass, between two of its tics. True when one was made.
+  * Client side, in a level. */
+dboolean CL_SampleOnTime(void);
+
 /* Hash of the parts of the game state the netcode compares between
    machines. Exposed for the rollback netcode, which uses it to check a
    restored state against the one it was taken from. */
