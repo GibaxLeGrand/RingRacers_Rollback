@@ -10,6 +10,11 @@ name: Build
 # On worldwide-2.4 (the work ported onto the 2.4 release, WORLDWIDE.md 8.114)
 # the dependencies are 2.4's: SDL2, not the SDL3 upstream moved to after 2.4,
 # and WebM recording off, as 2.4's own CI built it.
+#
+# Linux, playable, two ways: a tarball for the harness (built as upstream 2.4's
+# Debian jobs build, with its libraries carried in lib/, then checked on three
+# distributions), and a Flatpak for testers (Kart Krew's Flathub manifest,
+# .github/flatpak/). The Alpine job stays the compile check upstream runs.
 
 on:
   # A push or pull request that touches only docs and Markdown files builds
@@ -69,6 +74,195 @@ jobs:
 
       - name: Build
         run: cmake --build build/
+
+  # A Linux binary to run: the harness's build outside Windows (the laptop, the
+  # Steam Deck in desktop mode, ROADMAP item 13), dropped into a 2.4 data folder
+  # like the Windows exe. Built on Ubuntu 22.04, as upstream 2.4's Debian jobs
+  # build theirs, so it runs on glibc 2.35 and newer. The system's SDL2 is used
+  # (it brings the display, audio and input stack, and a Steam Deck's controller
+  # support); what a desktop may lack, or have in another version -- curl and
+  # what it needs, opus, png -- goes in lib/, found through $ORIGIN.
+  linux-tarball:
+    name: Linux x86_64 (Ubuntu 22.04, GCC, ${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: dev
+            dev_build: 'ON'
+            artifact: ringracers-linux64
+          - variant: release
+            dev_build: 'OFF'
+            artifact: ringracers-linux64-release
+
+    steps:
+      - name: Install prerequisites
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git ca-certificates pkg-config \
+            libsdl2-dev libpng-dev zlib1g-dev libcurl4-openssl-dev libopus-dev \
+            patchelf
+
+      - uses: actions/checkout@v4
+
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Configure
+        run: |
+          cmake -B build -S . \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_FLAGS_RELWITHDEBINFO="-g -O3 -DNDEBUG" \
+            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-g -O3 -DNDEBUG" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
+            -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF \
+            -DSRB2_CONFIG_DEV_BUILD=${{ matrix.dev_build }}
+
+      - name: Build
+        run: cmake --build build
+
+      # The build already split its debug info into <exe>.debug (src/CMakeLists.txt).
+      - name: Package
+        run: |
+          set -eu
+          exe=$(find build/bin -maxdepth 1 -type f -name 'ringracers*' ! -name '*.debug' | head -n 1)
+          name=$(basename "$exe")
+          pkg="ringracers-worldwide-2.4-${{ matrix.variant }}-linux64"
+          mkdir -p "dist/$pkg/lib"
+          cp "$exe" "dist/$pkg/"
+          [ -e "$exe.debug" ] && cp "$exe.debug" dist/
+
+          # The system's own: glibc; SDL2 and the display, audio and input stack it
+          # loads; and what the drivers share with it, newer on the host than here.
+          system_lib() {
+            case "$1" in
+              linux-vdso*|ld-linux*|libc.so.*|libm.so.*|libdl.so.*|libpthread.so.*|librt.so.*|libresolv.so.*|libutil.so.*|libanl.so.*|libnsl.so.*) return 0 ;;
+              libSDL2-2.0.so.*) return 0 ;;
+              libGL*|libEGL*|libOpenGL*|libvulkan*|libX*|libxcb*|libwayland*|libdrm*|libgbm*|libasound*|libpulse*|libdbus*|libudev*|libsystemd*) return 0 ;;
+              libz.so.*|libffi.so.*|libzstd.so.*|liblzma.so.*|libexpat.so.*|libgcc_s.so.*|libstdc++.so.*) return 0 ;;
+            esac
+            return 1
+          }
+          resolved() { ldd "$1" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}'; }
+
+          # Each library the game names, and all it needs in turn, but the system's.
+          for soname in $(objdump -p "$exe" | awk '$1 == "NEEDED" {print $2}'); do
+            system_lib "$soname" && continue
+            path=$(resolved "$exe" | awk -v n="$soname" '$1 == n {print $2}')
+            { echo "$soname $path"; resolved "$path"; } | while read -r so p; do
+              system_lib "$so" && continue
+              [ -e "dist/$pkg/lib/$so" ] || cp -L "$p" "dist/$pkg/lib/$so"
+            done
+          done
+          for lib in "dist/$pkg"/lib/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
+          patchelf --set-rpath '$ORIGIN/lib' "dist/$pkg/$name"
+
+          echo "Bundled:"; ls -l "dist/$pkg/lib"
+          echo "Left to the system:"; ldd "dist/$pkg/$name" | grep -v "dist/$pkg/lib" || true
+          echo "Newest glibc symbol needed:"
+          objdump -T "dist/$pkg/$name" "dist/$pkg"/lib/* | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1
+
+          cat > "dist/$pkg/README-linux.txt" <<EOF
+          Ring Racers Worldwide on the 2.4 release, Linux x86_64, ${{ matrix.variant }} build,
+          commit ${{ github.sha }}.
+
+          The game's data is not here. Put these files in a folder that holds the
+          Ring Racers 2.4 data (bios.pk3 and the rest) and run ./$name from that
+          folder, or set RINGRACERSWADDIR to the data folder. Config, saves and logs
+          go to ~/.ringracers, or to the folder given with -home.
+
+          Needs glibc 2.35 or newer (built on Ubuntu 22.04) and the system's SDL2,
+          2.0.20 or newer, or sdl2-compat: libsdl2-2.0-0 on Debian and Ubuntu,
+          sdl2-compat on Arch and SteamOS, SDL2 on Fedora. What else it needs is in
+          lib/.
+          EOF
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+
+      # A zip would lose the executable bit: the artifact carries the tarball.
+      - name: Upload build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.debug
+          if-no-files-found: error
+
+  # The tarball on distributions it was not built on, each with nothing but its
+  # own SDL2: every library the game and lib/ need must be found.
+  linux-tarball-check:
+    name: Linux tarball on ${{ matrix.distro }}
+    needs: linux-tarball
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: Ubuntu 24.04
+            image: ubuntu:24.04
+            install: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libsdl2-2.0-0
+          - distro: Arch Linux
+            image: archlinux:latest
+            install: pacman -Syu --noconfirm sdl2-compat tar gzip
+          - distro: Fedora
+            image: fedora:latest
+            install: dnf install -y SDL2 tar gzip
+
+    steps:
+      - name: Install the system's SDL2
+        run: ${{ matrix.install }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ringracers-linux64-release-${{ github.sha }}
+
+      - name: Every library found
+        run: |
+          set -eu
+          tar -xzf ringracers-worldwide-2.4-release-linux64.tar.gz
+          cd ringracers-worldwide-2.4-release-linux64
+          exe=$(find . -maxdepth 1 -type f -name 'ringracers*')
+          for f in "$exe" lib/*; do
+            echo "== $f"
+            /lib64/ld-linux-x86-64.so.2 --list "$f" | tee -a ../list.txt
+          done
+          if grep "not found" ../list.txt; then
+            echo "ERROR: libraries missing on ${{ matrix.distro }}"
+            exit 1
+          fi
+
+  # Kart Krew's own Linux build is their Flathub Flatpak: this is its manifest
+  # (.github/flatpak/), building this checkout, carrying no game data. For the
+  # alpha's testers -- a Steam Deck installs it from its desktop mode.
+  flatpak:
+    name: Linux x86_64 (Flatpak, release)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+
+    steps:
+      # In src/, so flatpak-builder's own folders, made in the workspace, stay
+      # out of the source it copies.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: src/.github/flatpak/io.github.ringracers_worldwide.RingRacersWorldwide.yaml
+          bundle: ringracers-worldwide-2.4.flatpak
+          artifact-name: ringracers-flatpak-${{ github.sha }}
 
   windows:
     name: Windows x86_64 (clang cross, ${{ matrix.variant }})

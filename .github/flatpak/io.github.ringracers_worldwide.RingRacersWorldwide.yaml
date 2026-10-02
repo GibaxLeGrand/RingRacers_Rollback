@@ -1,0 +1,82 @@
+# Ring Racers Worldwide on the 2.4 release, as a Flatpak.
+#
+# Kart Krew's own Linux build is the Flathub one (github.com/flathub/
+# org.kartkrew.RingRacers): this is its manifest, kept as close as it goes --
+# same runtime, same modules, same compile flags -- with three differences:
+#   - the source is this checkout, not an upstream tarball;
+#   - the game's data is not bundled: the launcher reads it from the official
+#     Flatpak, when installed, or from RINGRACERSWADDIR (ringracers-worldwide.sh);
+#   - its own app id, so it installs next to the official one, with its own
+#     home (~/.var/app/<this id>/.ringracers), never sharing a config with it.
+#
+# Built by the workflow (.github/workflows/build.yml); the checkout sits in
+# src/, two directories up from this file.
+
+app-id: io.github.ringracers_worldwide.RingRacersWorldwide
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: ringracers-worldwide.sh
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --socket=wayland
+  - --device=all
+  - --persist=.ringracers
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/discord-ipc-0
+  # The official Flatpak's data, read only, per-user install then system-wide.
+  - --filesystem=xdg-data/flatpak/app/org.kartkrew.RingRacers:ro
+  - --filesystem=/var/lib/flatpak/app/org.kartkrew.RingRacers:ro
+
+modules:
+
+  # Flathub's shared-modules/glu/glu-9.json.
+  - name: glu
+    buildsystem: meson
+    sources:
+      - type: archive
+        url: https://archive.mesa3d.org/glu/glu-9.0.3.tar.xz
+        sha256: bd43fe12f374b1192eb15fe20e45ff456b9bc26ab57f0eee919f96ca0f8a330f
+    cleanup:
+      - /include
+      - /lib/*.a
+      - /lib/*.la
+      - /lib/pkgconfig
+
+  - name: libyuv
+    buildsystem: cmake
+    builddir: true
+    sources:
+      - type: git
+        url: https://salsa.debian.org/debian/libyuv.git
+        commit: 8f0761d7b98aa402548983b2f823e5c1e81d687b
+    config-opts:
+      - -DCMAKE_BUILD_TYPE="Release"
+
+  - name: ringracers
+    buildsystem: cmake-ninja
+    builddir: true
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - -DCMAKE_C_FLAGS=-g1 -O3
+      - -DCMAKE_CXX_FLAGS=-g1 -O3 -fpermissive
+      - -DSRB2_CONFIG_DEV_BUILD=OFF
+      - -DSRB2_SDL2_EXE_NAME=ringracers
+    post-install:
+      - mkdir -p $FLATPAK_DEST/bin
+      - mv $FLATPAK_DEST/ringracers $FLATPAK_DEST/bin/ringracers
+      - install -Dm 755 ../.github/flatpak/ringracers-worldwide.sh -t $FLATPAK_DEST/bin
+      - install -Dm 644 ../.github/flatpak/$FLATPAK_ID.desktop -t $FLATPAK_DEST/share/applications
+      - install -Dm 644 ../srb2.png $FLATPAK_DEST/share/icons/hicolor/256x256/apps/$FLATPAK_ID.png
+
+cleanup:
+  - '*.a'
+  - '/include'

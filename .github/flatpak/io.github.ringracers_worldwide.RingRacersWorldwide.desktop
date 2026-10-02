@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Ring Racers Worldwide
+Comment=Dr. Robotnik's Ring Racers with client-side prediction (in development)
+Exec=ringracers-worldwide.sh
+Icon=io.github.ringracers_worldwide.RingRacersWorldwide
+Terminal=false
+Categories=Game;ActionGame;
