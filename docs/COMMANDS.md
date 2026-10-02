@@ -325,8 +325,9 @@ A server hosting in WORLDWIDE mode:
 A WORLDWIDE client reads the bit when it joins. Against a server that has
 it, it switches on what the driven `keep` race ran (`WORLDWIDE.md` 8.78):
 `rollback_twoclock 4`, `rollback_cleancmds 1`, `rollback_history 12`,
-`rollback_keepspec 1`, and the corrections applied (`rollback_drift 1`);
-its log says `worldwide: this server runs WORLDWIDE mode`. Against any other
+`rollback_keepspec 1`, the corrections applied (`rollback_drift 1`), and,
+since `8c9dd904e`, `rollback_ontime 1` (`WORLDWIDE.md` 8.133); its log says
+`worldwide: this server runs WORLDWIDE mode`. Against any other
 server it switches all of them off and plays the stock netcode. Leaving the
 server undoes what the join switched on, and nothing else. The switches
 can still be moved by hand after joining, for measuring.
@@ -693,10 +694,11 @@ the rebuilds that followed left the next gap: the cascade of 8.126. With
   to the anchor made a normal race go over the gate, 8.131).
 
 `rollback_history` reports the samples made between two tics of a pass and
-the stamps moved on. **Off by default** for now; measured on: seven stalls
-of 100 ms leave no chain (8.131), and the race to its end on Opulence at
-fifteen karts holds Phase B's gate in every window (8.132). The
-`wwstallontime` and `wwlongontime` scenarios turn it on.
+the stamps moved on. **Off by default; WORLDWIDE mode turns it on at the
+join** (since `8c9dd904e`, 8.133) and off on leaving. Measured on: seven
+stalls of 100 ms leave no chain (8.131), and the race to its end on
+Opulence at fifteen karts holds Phase B's gate in every window (8.132,
+8.133). The `wwstall` control turns it off after the join.
 
 ### `rollback_lag [tics]`
 **Testing only.** Delays every packet received from a peer by this many tics.

@@ -143,7 +143,7 @@ scope.
    damps it or feeds it is not understood. **With `rollback_ontime` and
    stamps that step (8.131, 8.132)**, the race to its end held the gate in
    every window, 5.6 to 6.6 ms, and seven stalls of 100 ms left no chain;
-   still off by default.
+   WORLDWIDE mode turns it on since `8c9dd904e` (8.133).
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -8079,3 +8079,32 @@ branch, `wip/ontime-ww` (`72857f680`); not pushed.
   more than 20 rebuilds for this machine's input; no sample with the same
   stamp as the one before in the race's windows; the race ends by itself;
   0 bodies below zero, 0 PARANOIA.
+- **Measured** (Gibax: "oui"). `8c9dd904e` pushed, CI run 37005934047
+  green, installed in both folders (sha256 `e06575fc…`; `70814eb` kept as
+  `.bak_70814eb`). `wwlong` as it stands, nobody touching, 14:24 to 14:30
+  (`playlog_wwlong_RR_Opulence_join_k15_20261002-143042_8c9dd90.txt`).
+  The join's line: "worldwide: this server runs WORLDWIDE mode -- predicting,
+  rollback_twoclock 4, rollback_history 12, rollback_keepspec on,
+  rollback_ontime on, corrections applied".
+
+  | window | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 (the end) |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | leveltime | 1821 | 2821 | 3821 | 4821 | 5821 | 6821 | 7821 | 8827 | 9861 | 10029 |
+  | a pass | 5.7 ms | 6.0 | 6.2 | 6.5 | 6.8 | 6.7 | 6.6 | 6.5 | 7.3 | 5.7 |
+  | rebuilt, an input | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 15 | 0 |
+  | gaps / samples made between two tics of a pass | 0 / 1 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 13 | 8 / 47 | 0 / 0 |
+
+  - **Held, every count of the prediction**: the join's line; 229 stamps
+    moved on; every race window under the gate, at most 7.3 ms (25% of a
+    tic); none with more than 20 rebuilds for an input (15 at most); 0
+    samples with the same stamp as the one before; "Guest ran out of
+    time." and the race ended, the session closing in the intermission;
+    0 bodies below zero, 0 PARANOIA.
+  - Window 8, near the race's end, had a disturbance of its own -- 8 gaps,
+    47 samples made between two tics of a pass, 15 rebuilds -- and it went
+    no further: 7.3 ms, the next window clean.
+- **So the fix is in: a WORLDWIDE client sends a sample each real tic
+  through a long pass, with stamps that step**, and the race to its end
+  holds Phase B's gate at fifteen karts, dedicated, on Opulence. Left for
+  smaller machines: the cap on a rebuild's cost (C), then the laptop, the
+  Steam Deck and the Steam Machine during the alpha.

@@ -134,8 +134,9 @@ asked for first.**
    windows under the gate), but its stamps made twins in a normal race,
    one window over the gate; with stamps that step, **the race to its end
    held the gate in every window** (8.132: 5.6 to 6.6 ms, one rebuild).
-   Left: `rollback_ontime` with WORLDWIDE mode (written, 8.133), the cap
-   on a rebuild's cost (C), and sixteen with a host to the end.
+   `rollback_ontime` on with WORLDWIDE mode since `8c9dd904e` (8.133:
+   the race to its end, no switch set, at most 7.3 ms). Left: the cap on a
+   rebuild's cost (C), and sixteen with a host to the end.
    Sixteen needs a host (a dedicated server has 15 slots, and upstream's
    code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
