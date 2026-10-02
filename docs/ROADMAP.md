@@ -119,9 +119,9 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
    refused by a WORLDWIDE server; a WORLDWIDE client on a stock server,
    switched to the stock netcode, in the race; a WORLDWIDE build hosting in
    vanilla mode for a stock client; the leave putting the switches back --
-   and a WORLDWIDE race on the 2.4 release, 1.5 ms a pass. Left: the refusal's
-   text seen on screen (the stock 2.4 shows its photosensitivity warning at
-   every start, over it), and a stock client in the race rather than
+   and a WORLDWIDE race on the 2.4 release, 1.5 ms a pass. **The refusal's
+   text on screen, and AZERTY's menus, chat and Off, checked by Gibax**
+   with his own 2.4 (8.139). Left: a stock client in the race rather than
    watching (2.4 has no console command to join).
 5. **The alpha kit** (Phase F): a zip of the release-config exe on 2.4,
    `worldwide.pk3` and a notice, the GPL and a link to the source, and none
@@ -462,8 +462,9 @@ stock one. Left: a real stock client, a vanilla server -- which needs the
 release base -- step 7, a menu entry and a mark in the server browser.
 **On 2026-10-02:** the release base exists and is resynced (*Next, in
 order*, item 4); the menu entry exists (`89aba69fb`); the four clauses of
-*Done when* checked against the stock 2.4 exe (8.135), the refusal's text
-on screen excepted. Left: step 7 and a mark in the server browser.
+*Done when* checked against the stock 2.4 exe (8.135), and the refusal's
+text on screen by Gibax (8.139). Left: step 7 and a mark in the server
+browser.
 
 ---
 

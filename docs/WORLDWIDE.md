@@ -8375,3 +8375,13 @@ then, of a tarball or a Flatpak, "Les deux".
   MB) and `ringracers-flatpak-<sha>` (3.6 MB).
 - **Not yet run anywhere**: whether either starts, draws and plays is for a
   launch -- on a Steam Deck first (ROADMAP item 5).
+
+### 8.139 The refusal's text and AZERTY, checked by Gibax
+
+Gibax, on 2026-10-03, of the fifth step of the list he was given (8.138's
+session) -- the refusal's text with his own 2.4, and AZERTY's menu text
+boxes, chat and Off, left open since 8.117: "tu peux valider déjà le 5 j'ai
+testé de mon côté". Checked by him, by hand, on his machines; nothing of it
+was run or measured from here. ROADMAP item 4 and *Compatibility* updated:
+of the compatibility cases, a stock client in the race rather than watching
+is left.
