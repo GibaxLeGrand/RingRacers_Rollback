@@ -8158,7 +8158,10 @@ dboolean CL_SampleOnTime(void)
 		|| cl_mode != CL_CONNECTED || addedtogame == false)
 		return false;
 
-	nowtime = I_GetTime();
+	// The clock as it stands, not as of this frame's start: I_GetTime does
+	// not move during a pass, which is the time this is for (8.131). The next
+	// NetUpdate, on the frame's clock, then finds this tic already sampled.
+	nowtime = I_GetTimeNow();
 
 	if (nowtime <= gametime)
 		return false;

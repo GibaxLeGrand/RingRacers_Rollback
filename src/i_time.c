@@ -41,6 +41,19 @@ tic_t I_GetTime(void)
 	return g_time.time;
 }
 
+tic_t I_GetTimeNow(void)
+{
+	// I_GetTime is the tic count at this frame's I_UpdateTime, and stands
+	// still until the next: a pass that runs for two tics runs on one tic's
+	// clock (WORLDWIDE.md 8.131). This reads the clock without moving it --
+	// the time since that update, on top of what it left over.
+	const double ticratescaled = (double)TICRATE * FIXED_TO_FLOAT(I_GetTimeScale());
+	const double elapsed = (double)(I_GetPreciseTime() - oldenterprecise) / I_GetPrecisePrecision();
+	const double ahead = (tictimer + elapsed) * ticratescaled;
+
+	return g_time.time + ((ahead > 0.0) ? (tic_t)ahead : 0);
+}
+
 void I_InitializeTime(void)
 {
 	g_time.time = 0;

@@ -3742,6 +3742,7 @@ static dboolean g_cascadelog;
 // tic has gone by, on the frontier's clock, as NetUpdate's are.
 static dboolean g_ontime;           // rollback_ontime; off, the control, until measured
 static uint32_t g_ontimesamples;    // samples made between two tics of a pass
+static tic_t g_ontimepass;          // ... in the speculation now running
 
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
@@ -7129,9 +7130,17 @@ static void K_NotePassPhase(void)
 }
 
 /** rollback_ontime: a sample, if a real tic has gone by, between two tics of
-  * a speculation, stamped with the frontier's leveltime as NetUpdate's are.
-  * The history ages by one, so the applied sample's age does too, and the
-  * rest of the speculation reads the samples it was laid out with. */
+  * a speculation. The history ages by one, so the applied sample's age does
+  * too, and the rest of the speculation reads the samples it was laid out
+  * with.
+  *
+  * Its stamp: NetUpdate's are the frontier's leveltime, and the frontier does
+  * not move while a speculation runs -- the next pass's sample, made before
+  * any tic runs, has the frontier's stamp too. A sample made here on it would
+  * be that one's twin, the same to the anchor for a kart held still, and the
+  * replay would take the wrong one. So the n-th made in a speculation is
+  * stamped n tics past the frontier, as one made on time would have been
+  * (WORLDWIDE.md 8.131). */
 static void K_SampleOnTime(tic_t frontierlevel)
 {
 	const tic_t level = leveltime;
@@ -7141,7 +7150,7 @@ static void K_SampleOnTime(tic_t frontierlevel)
 	if (g_ontime == false)
 		return;
 
-	leveltime = frontierlevel;
+	leveltime = frontierlevel + g_ontimepass + 1;
 	made = CL_SampleOnTime();
 	leveltime = level;
 
@@ -7149,6 +7158,7 @@ static void K_SampleOnTime(tic_t frontierlevel)
 		return;
 
 	g_ontimesamples++;
+	g_ontimepass++;
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 	{
@@ -7184,6 +7194,7 @@ static void K_KeepExtend(void)
 	K_KeepEarlyCheck(frontier);
 
 	g_speculating = true;
+	g_ontimepass = 0;
 
 	while (gametic < frontier + (tic_t)ahead)
 	{
@@ -7276,6 +7287,8 @@ void K_RollbackSpeculate(void)
 	{
 		// The frontier's clock, for a sample made on time (rollback_ontime).
 		const tic_t frontierlevel = leveltime;
+
+		g_ontimepass = 0;
 
 		for (i = 0; i < ahead; i++)
 		{
