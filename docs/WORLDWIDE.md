@@ -8108,3 +8108,41 @@ branch, `wip/ontime-ww` (`72857f680`); not pushed.
   holds Phase B's gate at fifteen karts, dedicated, on Opulence. Left for
   smaller machines: the cap on a rebuild's cost (C), then the laptop, the
   Steam Deck and the Steam Machine during the alpha.
+
+### 8.134 C: a budget on a rebuild, and a smaller machine on this one
+
+Gibax: "allez fait la suite (le 1.) puis oui, l'étape 4" -- the cap on a
+rebuild's cost, then the alpha. `rollback_ontime` stopped the gaps feeding a
+cascade (8.131 to 8.133), but a rebuild is still a hitch: about eight tics
+re-run, 45 to 60 ms on Opulence at fifteen karts here, and what a smaller
+machine takes for a tic times eight. Written on 2026-10-02 on a local
+branch, `wip/budget` (`9e11a355c`); not pushed.
+
+- **`rollback_rebuildbudget <ms>`** (client, off by default until
+  measured): a speculation stops once it has run that many milliseconds,
+  one tic at least, and the passes after run on from where it stopped -- in
+  a rebuild and in a kept pass's extension alike. No pass far past a tic;
+  the price, a drawn world a few tics short of its lead until the passes
+  after have caught up, which `rollback_history` counts as "the drawn world
+  moved against the clock". The report counts the speculations cut short
+  and the tics left to the passes after.
+- **`rollback_slowtic <us>`** (client, for testing): every tic the client
+  runs, confirmed or speculated, takes that many microseconds more -- a
+  smaller machine on this one. 4000 us is a guess at a Steam Deck's
+  Opulence tic at fifteen karts (about 10 ms against 5.8 here); the laptop
+  and the Steam Deck themselves come during the alpha.
+- **Harness**: `wwslow` and `wwslowbudget`, `wwstall`'s race (stalls of
+  100 ms every 500 tics, `rollback_ontime` on with WORLDWIDE mode) with
+  `rollback_slowtic 4000` and `rollback_rebuildbudget` 0 or 20, set at the
+  windows' start. `windows.py` now prints, per window, the frames whose
+  work with a pass ran over 50 ms and the drawn world's moves against the
+  clock.
+- Checked: the syntax of `k_rollback.c`, an error put in on purpose caught.
+- **Prediction** (`wwslow` then `wwslowbudget`, one build, one session):
+  - `wwslow`: a pass about 11 to 13 ms (over the gate: the gate is this
+    machine's, and a slower one pays more for every tic), and **at least 20
+    frames with a pass over 50 ms** in the windows -- the rebuilds.
+  - `wwslowbudget`: speculations cut short more than 0; **frames with a
+    pass over 50 ms at most a quarter of `wwslow`'s**; the drawn world
+    moving against the clock more often than in `wwslow` -- the price.
+  - Both: 0 bodies below zero, 0 PARANOIA, no crash.
