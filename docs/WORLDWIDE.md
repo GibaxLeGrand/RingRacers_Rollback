@@ -135,8 +135,8 @@ scope.
 7. **B2 on by default** since `c24d8d205` (8.125): sixteen karts on
    Opulence, a pass of 6.2 to 6.8 ms (with a host) or 5.7 to 6.6 (fifteen,
    dedicated), under the gate, against about 10.5 with network snapshots.
-   Left: the leak soak again (where 8.94 saw the double claim). **To the
-   race's end (8.126)**: 5.9 to 7.5 ms a pass in every window at fifteen,
+   The leak soak again (8.127): 0 reference counts off in 1716 verified
+   restores. **To the race's end (8.126)**: 5.9 to 7.5 ms a pass in every window at fifteen,
    dedicated, under the gate -- once Windows Update was done. During its
    install, a cascade of rebuilds for this machine's own idle input took
    windows to 12 and 18 ms, as at 00:35 (8.125): the loop is real, and what
@@ -7637,3 +7637,30 @@ destruct pour le dernier sinon ça va pas se finir".
   itself. The cascade stays open (the next step if it comes back: date each
   stall and each rebuild for this machine's input, then the replay of its
   own sample when the server's filing moves).
+
+### 8.127 The leak soak again, raw snapshots verified: no count off
+
+Step 2 of Gibax's four ("lance 1 et 2 et 3 et 4 dans cet ordre"), once the
+same race again had held the gate (8.126). Prediction in the notes before
+it (`7d6a0d2`): 0 reference counts rebuilt differently (8.94: one kart at
+67 against 66, in 6 restores), 0 soak failures, archive differences 0 or
+the item list's capacity, a raw save about 0.8 ms and a verified restore
+1.6 to 1.8. Said before: nothing counts double claims, so a 0 says no count
+was off, not that the case came up.
+
+- **Run**: `soak.sh leakraw map=RR_Opulence`, `c24d8d2`, unattended, 09:09
+  to 09:12 (`soaklog_leakraw_RR_Opulence_20261002-091258_c24d8d2.txt`).
+  Opulence, 8 racers (7 bots), one level, 0 stalls, 0 PARANOIA.
+- **Held: 0 reference counts rebuilt differently** in 1716 verified raw
+  restores -- 8.124's claim counted once, for the body that stays.
+- **Wrong: 1 soak failure of 286** (predicted 0; 8.94 had 0 of 278). It is
+  the item list's capacity: the leak check at leveltime 2300 found one byte,
+  byte 4114, in the players block, 0x00 become 0x20, player 2 (a bot), 1007
+  bytes into the record -- 8.124's pattern. The same byte is the verify's
+  4 restores with the archive differing, all at tic 2301. Harmless, shared
+  with the network restore (8.124), and it counts as a failure whenever a
+  bot's first roulette falls inside a check.
+- The cost, cheaper than predicted (eight racers, not fifteen): a raw save
+  619 us, a verified restore 1329 us. `rollback_test` after the soak: the
+  round trip identical over 282095 bytes, PASS.
+- **So B2's last open check is done**: no count off where 8.94 saw one.
