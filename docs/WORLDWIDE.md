@@ -8146,3 +8146,44 @@ branch, `wip/budget` (`9e11a355c`); not pushed.
     pass over 50 ms at most a quarter of `wwslow`'s**; the drawn world
     moving against the clock more often than in `wwslow` -- the price.
   - Both: 0 bodies below zero, 0 PARANOIA, no crash.
+
+### 8.135 `worldwide-2.4` resynced, and the ROADMAP audited again
+
+Gibax: "allez fait la suite (le 1.) puis oui, l'étape 4, et refait un
+audit/corrige/met à jour la roadmap.md aussi".
+
+- **`worldwide-2.4` brought up to date** from `rollback-netcode` at
+  `8c9dd904e`, as the branch policy says it is for the alpha (ROADMAP,
+  *Branches*). The 2.4 branch was ported from `093a79aeb` (`k_rollback.c`
+  identical, byte for byte, between the two), and the AZERTY change was
+  ported to it on its own (`0a9877dd1`); so the code changes since are
+  `git diff 1fcef131b 8c9dd904e -- src` -- 11 files, 884 lines in and 122
+  out: `rollback_join`, `rollback_botsashuman`, the other karts as drawn
+  (8.119 to 8.121), the window's title and icon (8.122), a guessed person's
+  stamp (8.123), B2 on by default (8.124, 8.125), `rollback_stall` and
+  `rollback_cascadelog` (8.129), `rollback_ontime` with its live clock and
+  stepped stamps, on in WORLDWIDE mode (8.130 to 8.133). Applied three-way
+  on the 2.4 worktree: one conflict, the window's creation, where 2.4's
+  SDL2 takes a position the development line's no longer does -- 2.4's call
+  kept, with the Worldwide title. **`b3c6cbb7d`, local**: it touches `src/`,
+  so it is pushed on Gibax's word.
+- Checked in the 2.4 tree: `k_rollback.c`, `d_clisrv.c`, `i_time.c` (C),
+  `p_saveg.cpp`, `d_net.cpp` (C++20, with fmt, span and Tracy's headers)
+  error-free but for upstream's own under the fake configuration, the same
+  as before the change; an error put in on purpose caught in each kind.
+  `i_video.cpp` needs SDL2's headers, absent here: the CI's.
+- **C is left out** (`rollback_rebuildbudget`, 8.134, still to measure);
+  it goes to the 2.4 branch with the next update if it is kept.
+- **The ROADMAP audited again**: *Where this starts from* and *Next, in
+  order* rewritten for 2026-10-02 -- the `MT_PLAYER` item closed, B2 done,
+  sixteen karts down to "with a host, to the end", the release base and its
+  four cases, a real network's jitter tied to the filing of 8.129 -- with
+  the item numbers kept, since this file and the harness cite them, and two
+  items added: 12, the join's chat line (8.128), and 13, smaller machines
+  (8.134). Phase B's status, Phase C's full races, the compatibility
+  section's status and the risks brought up to date.
+- **Next for item 4**: the four cases against the stock 2.4 exe in the game
+  folder, once the 2.4 build is pushed and built -- a stock client refused
+  by a WORLDWIDE server, a WORLDWIDE client on a stock server, a WORLDWIDE
+  build hosting in vanilla mode for a stock client, and the leave putting
+  the switches back.
