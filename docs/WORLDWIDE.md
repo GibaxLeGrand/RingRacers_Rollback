@@ -135,10 +135,12 @@ scope.
 7. **B2 on by default** since `c24d8d205` (8.125): sixteen karts on
    Opulence, a pass of 6.2 to 6.8 ms (with a host) or 5.7 to 6.6 (fifteen,
    dedicated), under the gate, against about 10.5 with network snapshots.
-   Left: the leak soak again (where 8.94 saw the double claim). **Late in
-   the race (8.126)**: a pass about 7.2 ms without rebuilds, but a cascade
-   of rebuilds for this machine's own idle input took windows to 12 and 18
-   ms, as at 00:35 (8.125) -- not understood.
+   Left: the leak soak again (where 8.94 saw the double claim). **To the
+   race's end (8.126)**: 5.9 to 7.5 ms a pass in every window at fifteen,
+   dedicated, under the gate -- once Windows Update was done. During its
+   install, a cascade of rebuilds for this machine's own idle input took
+   windows to 12 and 18 ms, as at 00:35 (8.125): the loop is real, and what
+   damps it or feeds it is not understood.
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -7600,3 +7602,38 @@ destruct pour le dernier sinon ça va pas se finir".
   cascade is the open problem, ahead of the gate: why this machine's own
   sample is replayed one off once the server's filing moves, and why that
   feeds itself. Step 2 (the leak soak) and what follows were not run.
+- **The same race again** (Gibax: "relancer la même course. Si ça passe,
+  ouf, sinon tu passes à 2 et 3"), 09:02 to 09:08, prediction in the notes
+  before it (`bf3a4d6`)
+  (`playlog_wwlong_RR_Opulence_join_k15_20261002-090823_c24d8d2.txt`).
+  Windows Update idle (`wuauserv` stopped, no MSI event since 08:50:01);
+  GameInput still 3.3 and its redist service stuck in StopPending since the
+  failed install, left as it is (a system change, Gibax's to make).
+
+  | window, leveltime | 0, 1831 | 1, 2831 | 2, 3830 | 3, 4840 | 4, 5840 | 5, 6840 | 6, 7840 | 7, 8839 | 8, 9843 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | a pass | 5.9 ms | 6.1 | 6.6 | **7.5** | 6.5 | 6.4 | 6.4 | 6.1 | 6.4 |
+  | rebuilt, an input | 4 | 0 | 0 | 12 | 0 | 0 | 0 | 0 | 9 |
+  | passes past a tic | 4 | 0 | 0 | 12 | 0 | 0 | 0 | 0 | 9 |
+
+  - **Held: no cascade, every window under the gate**, the worst 7.5 ms
+    (26% of a tic), the race's last minutes 6.1 to 6.5. The witness in
+    its band (5.9, 6.1). 0 bodies below zero, 0 PARANOIA, no crash.
+  - **Wrong, in the details**: no slow rise to 7.2-7.5 ms -- the windows
+    stay flat about 6.4; window 3 had 12 rebuilds (predicted under 10).
+    The bots were slower: the idle kart ran out of time between leveltime
+    9843 and 10097, and the session ended in the intermission, before
+    another map.
+  - **The loop's first step, seen twice, and it died out**: the server
+    filed this machine's samples a tic late 500 times in 500 in every
+    report but two -- leveltime 4100 to 5100 (39 then 166 late, 10 tics
+    with none, repeated: window 3's 12 rebuilds) and 8600 to 9100 (5
+    repeated: window 8's 9). Each time the filing came back steady by the
+    next report. This morning the same step fed itself for two minutes.
+- **So: Phase B's gate holds to the race's end** at fifteen karts,
+  dedicated, on Opulence, B2 on: a pass of 5.9 to 7.5 ms, 21 to 26% of a
+  tic. Not proven: sixteen with a host to the end, and a machine under
+  load -- where this morning's cascade shows a missed sample can feed
+  itself. The cascade stays open (the next step if it comes back: date each
+  stall and each rebuild for this machine's input, then the replay of its
+  own sample when the server's filing moves).

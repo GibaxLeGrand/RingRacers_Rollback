@@ -122,11 +122,12 @@ asked for first.**
    says so. **Measured on 2026-10-01 and 02** (8.121, 8.125), nobody
    driving, the race's first 1:48: Skyscraper Leaps 6.2 ms a pass at
    sixteen; Opulence 10.2 to 10.7 ms with network snapshots, **6.2 to 6.8
-   with B2** (5.7 to 6.6 at fifteen, dedicated) -- under the gate. **Late
-   in a race** (8.126, fifteen, dedicated, to the race's end): about 7.2 ms
-   a pass without rebuilds, under the gate; but a cascade of rebuilds for
-   this machine's own idle input, its stamp replayed one off, took windows
-   to 12 and 18 ms -- the second time (00:35, 8.125). Left: the cascade.
+   with B2** (5.7 to 6.6 at fifteen, dedicated) -- under the gate. **To
+   the race's end** (8.126, fifteen, dedicated): 5.9 to 7.5 ms a pass in
+   every window, under the gate. But during a Windows Update install a
+   cascade of rebuilds for this machine's own idle input, its stamp
+   replayed one off, took windows to 12 and 18 ms -- the second time
+   (00:35, 8.125). Left: the cascade, and sixteen with a host to the end.
    Sixteen needs a host (a dedicated server has 15 slots, and upstream's
    code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
