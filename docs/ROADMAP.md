@@ -132,8 +132,10 @@ asked for first.**
    which never ran for want of a live clock (8.130) and, on one, **breaks
    the loop** (8.131: 16 rebuilds after seven stalls against 128, the
    windows under the gate), but its stamps made twins in a normal race,
-   one window over the gate; stamps that step written (8.132) -- and
-   sixteen with a host to the end.
+   one window over the gate; with stamps that step, **the race to its end
+   held the gate in every window** (8.132: 5.6 to 6.6 ms, one rebuild).
+   Left: `rollback_ontime` on by default, the cap on a rebuild's cost (C),
+   and sixteen with a host to the end.
    Sixteen needs a host (a dedicated server has 15 slots, and upstream's
    code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,

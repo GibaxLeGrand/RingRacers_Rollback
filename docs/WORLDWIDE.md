@@ -140,7 +140,10 @@ scope.
    dedicated, under the gate -- once Windows Update was done. During its
    install, a cascade of rebuilds for this machine's own idle input took
    windows to 12 and 18 ms, as at 00:35 (8.125): the loop is real, and what
-   damps it or feeds it is not understood.
+   damps it or feeds it is not understood. **With `rollback_ontime` and
+   stamps that step (8.131, 8.132)**, the race to its end held the gate in
+   every window, 5.6 to 6.6 ms, and seven stalls of 100 ms left no chain;
+   still off by default.
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -8007,3 +8010,48 @@ Written on 2026-10-02 on a local branch, `wip/ontime3`; not pushed.
     same stamp as the one before in the race.
   - `wwstall`, the control, with chains as before. 0 bodies below zero, 0
     PARANOIA everywhere.
+- **Measured** (Gibax: "Oui lance"). `70814ebc0` pushed, CI run
+  37003491079 green, installed in both folders (sha256 `8e191b35…`;
+  `df4b3e2` kept as `.bak_df4b3e2`). One after the other, nobody touching:
+  `wwstall` at 13:58
+  (`playlog_wwstall_RR_Opulence_join_k15_20261002-140138_70814eb.txt`),
+  `wwstallontime` at 14:01 (`..._20261002-140420_70814eb.txt`),
+  `wwlongontime` at 14:04
+  (`playlog_wwlongontime_RR_Opulence_join_k15_20261002-141026_70814eb.txt`).
+
+  | stalls of 100 ms | `wwstall` (ontime 0) | `wwstallontime` (ontime 1) |
+  |---|---|---|
+  | rebuilds for this machine's input after each stall | 1, 3, 1, 1, 3, 8, 1 | 2, 1, 1, 1, 1, 1, 7 |
+  | after the first stall, in all | 18 | 14 |
+  | gaps | 21 | 11 |
+  | windows 0 / 1 / 2, a pass | 6.3 / 6.6 / 7.2 ms | 6.2 / 6.5 / 6.9 ms |
+  | samples with the same stamp as the one before, in the race's windows | 21 | **0** |
+  | anchors matching two samples, in the race's windows | 33 | 8 (window 0), then 0 |
+
+  | `wwlongontime`, window | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 (the end) |
+  |---|---|---|---|---|---|---|---|---|---|
+  | a pass | 5.7 ms | 6.4 | 6.2 | 6.6 | 5.9 | 6.3 | 6.6 | 6.3 | 5.6 |
+  | rebuilt, an input | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+  - **Held, the race to its end**: every race window under the gate, at
+    most 6.6 ms (23% of a tic); one rebuild for an input in all; no gap in
+    the race; 0 samples with the same stamp as the one before. The idle
+    kart timed out and the race ended at leveltime 9475, Monkey Mall after
+    it (the next window, 24 passes at 71 ms, is that map loading, not a
+    race). 13 samples made between two tics of a pass, 123 stamps moved on.
+  - **Held, the stalls**: at most 20 rebuilds after the first stall (14),
+    one gap a stall, no twin stamp in the race's windows, the ambiguous
+    anchors down to 8, all in the first window.
+  - **Wrong, the control**: it hardly cascaded this time -- one chain of 8,
+    18 rebuilds after the first stall, against 128 and 138 in the two
+    before. The cascade is not certain from a stall; the comparison this
+    time says little more than "no worse". The ambiguous anchors before the
+    race windows -- the join and each map's start, where leveltime starts
+    again under stamps still in the history -- are the same with and
+    without (115 and 127).
+  - 0 bodies below zero, 0 PARANOIA, no crash, in all three.
+- **So, with 8.131: `rollback_ontime` and its stepped stamps break the
+  cascade's loop and cost nothing in a clean race** -- Phase B's gate held
+  to the race's end at fifteen karts, dedicated, on Opulence. Still off by
+  default; next, on by default (or with WORLDWIDE mode), then the cap on a
+  rebuild's cost for smaller machines.
