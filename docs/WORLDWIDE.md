@@ -7774,3 +7774,45 @@ gaps sent with a copy and the stalls.
     input in all**, none in a chain; each window within 0.5 ms of
     `wwstall`'s first window before any stall, plus the stalls themselves.
   - Both: 0 bodies below zero, 0 PARANOIA, no crash.
+- **Measured** (Gibax: "lance"). `85ccac6e2` pushed (CI run 36979386803,
+  green on its three jobs), installed in both folders (sha256
+  `7029595f…`; `c24d8d2` kept as `.bak_c24d8d2`); the exe carries the new
+  strings. One after the other, nobody touching: `wwstall` at 09:41
+  (`playlog_wwstall_RR_Opulence_join_k15_20261002-094340_85ccac6.txt`) and
+  `wwstallfill` at 09:44
+  (`playlog_wwstallfill_RR_Opulence_join_k15_20261002-094652_85ccac6.txt`).
+
+  | | `wwstall` (fill 0) | `wwstallfill` (fill 1) |
+  |---|---|---|
+  | stalls of 100 ms | 7 | 7 |
+  | gaps (alone / sent with a copy) | 32 / 0 | 0 / 161 |
+  | rebuilds for this machine's input | 62 | **229** |
+  | after each stall | 10, 2, 8, 2, 2, 2, 9 | 35, 10, 60, 24, 2, 42, 9 |
+  | windows 0 / 1 / 2, a pass | 7.0 / 7.2 / 7.3 ms | **8.6 / 11.8 / 9.7 ms** |
+  | server: late / over one already there / repeated (p15, whole session) | 3024 / 12 / 91 | 3223 / **56** / 144 |
+  | chat lines held back as a rerun's | 1 | -- |
+
+  - **Held, the control**: every stall leaves a gap and rebuilds for this
+    machine's input after it, "older by 1" most often; three of the seven
+    run on in a chain (8 to 10 rebuilds, 60 to 195 real tics). **Wrong in
+    the count**: 3 stalls of 7 with 3 rebuilds or more, not 5; and the
+    windows 0.7 to 1.3 ms over 8.125's, not 1 ms in each.
+  - **Wrong, the fix: worse in every count** -- 229 rebuilds, 47 of them
+    before the first stall; the windows over the gate. The server's
+    filing kept its step more often, but **wrote over a sample 56 times**:
+    the pair landed where the sample before already sat. A gap the client
+    counts in whole tics (`realtics`) is not always a gap at the server --
+    a frame begun late in one tic and ended early two tics on is two by
+    `realtics` and about one by the wire -- and then the copy takes the next
+    tic, the sample overwrites it, and the replay runs a copy the server
+    never applied ("newer by 1", most of them). The client cannot tell the
+    two cases apart from its own clock.
+  - **The chat**: "1 chat lines a tic wrote were held back as a rerun's" in
+    the control, the join's line: 8.128's reading holds.
+  - 0 bodies below zero, 0 PARANOIA, no crash in either.
+- **So**: the mechanism holds (a gap, the filing out of step, the replay
+  one off, rebuilds past a tic, the next gap) and the trigger can be had
+  on demand; `rollback_fill` stays off, its default, and is to be taken
+  out. What a fix has to break is the loop's gain -- our own rebuilds
+  leaving gaps -- rather than to guess the server's filing from the
+  client's clock.
