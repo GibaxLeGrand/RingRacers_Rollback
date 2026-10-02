@@ -4116,6 +4116,7 @@ enum
 };
 static uint32_t g_keepmissshift[NUMKEEPSHIFT];
 static uint32_t g_chatheld;     // defined with K_RollbackChatSilenced, further down
+static uint32_t g_chatlate;     // ... likewise
 
 // Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
 // Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
@@ -4572,8 +4573,9 @@ static void Command_RollbackKeepSpec_f(void)
 
 	// A tic's chat line not written because the tic was a rerun's -- the join's
 	// "entered the game" with rollback_join, if 8.128 reads it right.
-	CONS_Printf("rollback_keepspec: %u chat lines a tic wrote were held back as a rerun's\n",
-		g_chatheld);
+	CONS_Printf("rollback_keepspec: %u chat lines a tic wrote were held back as a rerun's or "
+		"written already, %u written by a rerun, no run having written them (8.136)\n",
+		g_chatheld, g_chatlate);
 
 	for (r = 1; r < KEEP_NUMREASONS; r++)
 	{
@@ -5140,10 +5142,67 @@ dboolean K_RollbackSoundsSilenced(void)
 }
 
 static uint32_t g_chatheld;     // chat lines held back as a rerun's (declared above)
+static uint32_t g_chatlate;     // ... and written by a rerun, no run having written them
 
-dboolean K_RollbackChatSilenced(void)
+// The chat lines written lately, by their text, and when (real tics). With the
+// speculation kept, a line is written once, by the first run that has it,
+// whatever the tic: a join the server's netxcmd brought to a tic the standing
+// speculation had already run was first run by a rebuild, below the horizon,
+// and its "entered the game" was held back as a rerun's -- every join through
+// rollback_join (WORLDWIDE.md 8.128, 8.129); and each rebuild moving a join a
+// tic later wrote it again on a tic past the horizon, 1 to 5 times (8.109).
+#define CHATSEEN_MAX 32
+#define CHATSEEN_TICS (5*TICRATE)
+static struct
+{
+	uint32_t hash;
+	tic_t at;
+} g_chatseen[CHATSEEN_MAX];
+static uint32_t g_chatseenhead;
+
+static uint32_t K_ChatHash(const char *s)
+{
+	uint32_t h = 2166136261u;
+
+	while (*s)
+	{
+		h ^= (uint8_t)*s++;
+		h *= 16777619u;
+	}
+
+	return h;
+}
+
+dboolean K_RollbackChatSilenced(const char *text)
 {
 	const dboolean silenced = K_RollbackSoundsSilenced();
+
+	// A speculation kept: the line's first writing, not the tic's first run.
+	if (text != NULL && g_keepspec && g_twoclock > 0 && gamestate == GS_LEVEL)
+	{
+		const uint32_t h = K_ChatHash(text);
+		const tic_t now = I_GetTime();
+		uint32_t i;
+
+		for (i = 0; i < CHATSEEN_MAX; i++)
+		{
+			if (g_chatseen[i].at != 0 && g_chatseen[i].hash == h
+				&& now - g_chatseen[i].at < CHATSEEN_TICS)
+			{
+				g_chatheld++;
+				return true;
+			}
+		}
+
+		g_chatseen[g_chatseenhead % CHATSEEN_MAX].hash = h;
+		g_chatseen[g_chatseenhead % CHATSEEN_MAX].at = (now != 0) ? now : 1;
+		g_chatseenhead++;
+
+		if (silenced)
+			g_chatlate++;
+
+		return false;
+	}
 
 	if (silenced)
 	{
