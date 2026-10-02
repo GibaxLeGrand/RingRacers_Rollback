@@ -144,7 +144,8 @@ scope.
    stamps that step (8.131, 8.132)**, the race to its end held the gate in
    every window, 5.6 to 6.6 ms, and seven stalls of 100 ms left no chain;
    WORLDWIDE mode turns it on since `8c9dd904e` (8.133). **Sixteen karts
-   with a host held the gate to the race's end** (8.136).
+   with a host held the gate to the race's end** (8.136): **Phase B
+   validated** (8.137).
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -8318,3 +8319,22 @@ race's end (item 6), in one race.
 - **So Phase B's gate holds at sixteen karts**, with a host, on Opulence, to
   the race's end, on this machine; and a WORLDWIDE client shows a joining
   player's line once.
+
+### 8.137 Phase B validated, and `worldwide-2.4` resynced again
+
+Gibax: "si ça demande rien, tu fais ces changements de code dans
+worldwide-2.4, et du coup on peut valider la phase B".
+
+- **`worldwide-2.4` at `dd636160e`**: the code since its last resync
+  (`8c9dd904e`, 8.135) -- the rebuild budget and the smaller machine
+  (`rollback_rebuildbudget`, off by default, `rollback_slowtic`, 8.134), and
+  the chat line written once by the first run that has it (8.136).
+  `k_rollback.c` and `k_rollback.h` applied three-way, cleanly; `hu_stuff`
+  is still C on 2.4 (`hu_stuff.c`), so its one changed call was carried by
+  hand. Syntax checked in the 2.4 tree, an error put in on purpose caught.
+  `bb69dff0f`, pushed on Gibax's word, CI run 37016669243.
+- **Phase B validated**, on Gibax's word, by its *Done when*: a pass in 30%
+  of a tic at sixteen karts late in a race -- 5.9 to 7.0 ms, at most 24.5%,
+  with a host, on Opulence, to the race's end (8.136). Measured on this
+  machine, at WORLDWIDE mode's depth; a depth Phase D settles on elsewhere
+  is run again, and smaller machines stay ROADMAP item 13.

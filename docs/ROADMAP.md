@@ -111,7 +111,8 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
    below): `worldwide-2.4`, ported onto `v2.4` (8.114), built by the CI, dev
    and release (8.115), starting in a stock 2.4 folder since `68f5eb582`
    (8.117), and **resynced from `rollback-netcode` at `8c9dd904e` on
-   2026-10-02** (8.135, `b3c6cbb7d`, CI green). **The four cases checked
+   2026-10-02** (8.135, `b3c6cbb7d`, CI green), then at `dd636160e` -- the
+   rebuild budget and the join's chat line (8.137, `bb69dff0f`). **The four cases checked
    against the stock 2.4 exe** (32-bit, ours 64-bit; 8.135): a stock client
    refused by a WORLDWIDE server; a WORLDWIDE client on a stock server,
    switched to the stock netcode, in the race; a WORLDWIDE build hosting in
@@ -275,6 +276,13 @@ check could take.
 ---
 
 ## Phase B -- Make it fit at a real grid
+
+**Validated on 2026-10-02** (Gibax: "du coup on peut valider la phase B"):
+a pass fits in 30% of a tic at sixteen karts, late in a race -- 5.9 to 7.0
+ms, at most 24.5%, with a host, on Opulence, to the race's end (8.136), on
+this machine, at WORLDWIDE mode's depth (`rollback_history 12`,
+`rollback_twoclock 4`). If Phase D settles on another depth, the race is run
+again at it. Smaller machines are item 13 of *Next, in order*.
 
 **The gate for the alpha.** Every cost figure is two to nine karts, mostly early
 in a race. A Ring Racers grid is sixteen, and a snapshot grows from 120 KiB at
