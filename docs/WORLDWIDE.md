@@ -8187,3 +8187,46 @@ audit/corrige/met à jour la roadmap.md aussi".
   by a WORLDWIDE server, a WORLDWIDE client on a stock server, a WORLDWIDE
   build hosting in vanilla mode for a stock client, and the leave putting
   the switches back.
+- **The cases against the stock 2.4 exe** (Gibax: "Tu peux pousser
+  worldwide-2.4 du coup si c'est corrigé", then "tu peux screen si besoin",
+  "tu peux aussi tester une run classique genre client/serveur worldwide avec
+  la release 2.4", "tu peux appuyer sur les touches si besoin"). `b3c6cbb7d`
+  pushed, CI run 37008262875 green on its three jobs (`i_video.cpp`'s SDL2
+  call built there); its **release** build installed as
+  `ringracers_worldwide-2.4-release.exe` (sha256 `81b8e143…`, 64-bit; a
+  development build reports version 0, which a 2.4 refuses for that alone).
+  The stock exe: the game folder's `ringracers.exe`, v2.4 `7f895c9a7`,
+  32-bit. Harness: `compat.sh` (notes), each side in a folder of its own,
+  nobody touching, dedicated servers that never advertise.
+
+  | case | server | client | what the logs say |
+  |---|---|---|---|
+  | `refuse` | WORLDWIDE, `worldwide On` | stock 2.4 | "worldwide: refused node 1 -- it did not declare itself WORLDWIDE"; the join request sent, never joined |
+  | `stockserver` | stock 2.4 | WORLDWIDE | "worldwide: this server runs the stock netcode -- so does this client"; joined and **entered the race** (`rollback_join`); `rollback_ontime` and `rollback_keepspec` off, `rollback_twoclock` 0; 0 game states reloaded, 0 timeouts |
+  | `vanillahost` | WORLDWIDE, `worldwide Off` | stock 2.4 | joined, stayed about 100 s, watching (2.4 has no console command to join); no refusal, 0 timeouts |
+  | `leave` | WORLDWIDE, `worldwide On` | WORLDWIDE | on at the join (`rollback_ontime`, `rollback_keepspec`, `rollback_twoclock 4`), off after `exitgame` |
+  | `wwrace` | WORLDWIDE, `worldwide On` | WORLDWIDE | the join's line with "rollback_ontime on"; entered the race; **1.5 to 1.6 ms a pass**, 5% of a tic, on Skyscraper Leaps at eight karts, 0 rebuilds in the three windows, about 144 frames a second |
+
+  - **Held**: every case as predicted (notes, session of 2026-10-02).
+  - **Not seen: the refusal's text on screen.** The stock 2.4 shows its
+    photosensitivity warning at every start, over the refusal's box; a key
+    posted to its window (allowed by Gibax) took the warning away, and
+    behind it the menu of a first start -- the stock exe keeps its data
+    under the game folder's `ringracers`, not the `-home` it was given -- with
+    no box. The text is in the code; seeing it is left to a stock 2.4 of
+    Gibax's own. (A first attempt with `SendKeys` and the window brought to
+    the front could not take the focus, and its key went to the window in
+    front instead.)
+  - **Wrong, three times in the harness, not the code**: the two instances
+    write one log between them (the game folder's `ringracers/logs`, named
+    for the last to start), which `compat.sh` now reads as one; a comment
+    with a `;` ran as a second command in 2.4; the leave case's first run
+    used `disconnect`, which Ring Racers does not have (`exitgame`), so it
+    never left -- run again, it held.
+  - In a release build, the refs report counts no kart body below zero
+    ("counted only in a PARANOIA build"): the 0 there proves nothing, and
+    `windows.py` no longer takes those words for a PARANOIA line.
+  - Seen in passing: on a loopback (no test latency), the `leave` case's
+    client, watching on the waiting map, rebuilt 92 times in 700 passes for
+    its own input, "the newest input guessed past it", "newer by 1". To read
+    with a LAN, where the round trip is that short (ROADMAP item 2(b)).

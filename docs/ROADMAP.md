@@ -111,12 +111,15 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
    below): `worldwide-2.4`, ported onto `v2.4` (8.114), built by the CI, dev
    and release (8.115), starting in a stock 2.4 folder since `68f5eb582`
    (8.117), and **resynced from `rollback-netcode` at `8c9dd904e` on
-   2026-10-02** (8.135). The stock 2.4 exe is 32-bit and ours 64-bit, so
-   every case also crosses the two. Left, against the stock 2.4 exe in the
-   game folder: a stock client refused with a readable message by a
-   WORLDWIDE server; a WORLDWIDE client playing delay-based on a stock
-   server; a WORLDWIDE build hosting in vanilla mode for stock clients; the
-   leave putting the settings back. None checked yet.
+   2026-10-02** (8.135, `b3c6cbb7d`, CI green). **The four cases checked
+   against the stock 2.4 exe** (32-bit, ours 64-bit; 8.135): a stock client
+   refused by a WORLDWIDE server; a WORLDWIDE client on a stock server,
+   switched to the stock netcode, in the race; a WORLDWIDE build hosting in
+   vanilla mode for a stock client; the leave putting the switches back --
+   and a WORLDWIDE race on the 2.4 release, 1.5 ms a pass. Left: the refusal's
+   text seen on screen (the stock 2.4 shows its photosensitivity warning at
+   every start, over it), and a stock client in the race rather than
+   watching (2.4 has no console command to join).
 5. **The alpha kit** (Phase F): a zip of the release-config exe on 2.4,
    `worldwide.pk3` and a notice, the GPL and a link to the source, and none
    of Kart Krew's files; how to host (the menu entry exists since
@@ -418,8 +421,9 @@ clause holds (8.97), and the third with a WORLDWIDE build standing in for a
 stock one. Left: a real stock client, a vanilla server -- which needs the
 release base -- step 7, a menu entry and a mark in the server browser.
 **On 2026-10-02:** the release base exists and is resynced (*Next, in
-order*, item 4); the menu entry exists (`89aba69fb`); the cases against the
-stock 2.4 exe are next.
+order*, item 4); the menu entry exists (`89aba69fb`); the four clauses of
+*Done when* checked against the stock 2.4 exe (8.135), the refusal's text
+on screen excepted. Left: step 7 and a mark in the server browser.
 
 ---
 
