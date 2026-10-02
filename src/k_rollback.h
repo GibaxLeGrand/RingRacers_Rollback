@@ -256,10 +256,13 @@ dboolean K_RollbackSoundsSilenced(void);
   * K_RollbackSoundsSilenced, what the menus start between tics is not. */
 void K_RollbackTicRunning(dboolean running);
 
-/** K_RollbackSoundsSilenced for a chat line, and in WORLDWIDE mode a console
-  * line for each one a tic writes: on which tic, against the horizon and the
-  * frontier, and how many were held back before it (WORLDWIDE.md 8.109). */
-dboolean K_RollbackChatSilenced(void);
+/** Whether a chat line is held back. With the speculation kept, a line is
+  * written once, by the first run that has it, whatever the tic -- the same
+  * text written in the last five seconds is held back (WORLDWIDE.md 8.136).
+  * Otherwise K_RollbackSoundsSilenced, as for a sound; and a console line for
+  * each one a tic writes: on which tic, against the horizon and the frontier,
+  * and how many were held back before it (8.109). */
+dboolean K_RollbackChatSilenced(const char *text);
 
 struct thinker_t;
 

@@ -507,11 +507,11 @@ static void HU_removeChatText_Log(void)
 
 void HU_AddChatText(const char *text, boolean playsound)
 {
-	// A line a tic writes -- "entered the game" -- once, the first time this
-	// machine runs the tic, as its sounds are: every rerun of a speculation
-	// wrote it again, 17 times for one join (WORLDWIDE.md 8.108). Chat from
-	// netxcmds comes before G_Ticker in the tic loop and is never held back.
-	if (K_RollbackChatSilenced())
+	// A line a tic writes -- "entered the game" -- once: every rerun of a
+	// speculation wrote it again, 17 times for one join (WORLDWIDE.md 8.108).
+	// With the speculation kept, once by the first run that has it, whatever
+	// the tic, so a join first run by a rebuild still shows (8.136).
+	if (K_RollbackChatSilenced(text))
 		return;
 
 	if (playsound && cv_consolechat.value != 2)	// Don't play the sound if we're using hidden chat.

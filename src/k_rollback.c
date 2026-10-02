@@ -3744,6 +3744,22 @@ static dboolean g_ontime;           // rollback_ontime; WORLDWIDE mode turns it 
 static uint32_t g_ontimesamples;    // samples made between two tics of a pass
 static uint32_t g_ontimestepped;    // samples whose stamp was moved on past the one before
 
+// rollback_rebuildbudget (WORLDWIDE.md 8.134): a rebuild re-runs about eight
+// tics -- 45 to 60 ms on Opulence at fifteen karts here, and what a smaller
+// machine takes for a tic times that. With a budget, a speculation stops once
+// it has run that many milliseconds, at least one tic in, and the passes after
+// run on from where it stopped: no pass far past a tic, at the price of a
+// drawn world a few tics short of its lead for as long as that takes.
+static int32_t g_budgetms;          // 0 = off
+static uint32_t g_budgetcuts;       // speculations cut short
+static uint32_t g_budgettics;       // ... the tics they left to the passes after
+
+// rollback_slowtic: each tic this client runs, confirmed or speculated, takes
+// this many microseconds more -- a smaller machine, on this one, to measure the
+// budget against (8.134). For testing.
+static int32_t g_slowtic;           // microseconds; 0 = off
+static void K_SlowTic(void);       // defined with K_SampleOnTime, further down
+
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
 // lands on moves with the delay the server files this machine's inputs with --
@@ -4100,6 +4116,7 @@ enum
 };
 static uint32_t g_keepmissshift[NUMKEEPSHIFT];
 static uint32_t g_chatheld;     // defined with K_RollbackChatSilenced, further down
+static uint32_t g_chatlate;     // ... likewise
 
 // Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
 // Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
@@ -4556,8 +4573,9 @@ static void Command_RollbackKeepSpec_f(void)
 
 	// A tic's chat line not written because the tic was a rerun's -- the join's
 	// "entered the game" with rollback_join, if 8.128 reads it right.
-	CONS_Printf("rollback_keepspec: %u chat lines a tic wrote were held back as a rerun's\n",
-		g_chatheld);
+	CONS_Printf("rollback_keepspec: %u chat lines a tic wrote were held back as a rerun's or "
+		"written already, %u written by a rerun, no run having written them (8.136)\n",
+		g_chatheld, g_chatlate);
 
 	for (r = 1; r < KEEP_NUMREASONS; r++)
 	{
@@ -5099,6 +5117,11 @@ static dboolean g_intic;    // G_Ticker is running a tic
 void K_RollbackTicRunning(dboolean running)
 {
 	g_intic = running;
+
+	// The tic loop's confirmed tic just ran: on a smaller machine it took
+	// longer (rollback_slowtic, 8.134).
+	if (running == false)
+		K_SlowTic();
 }
 
 dboolean K_RollbackSoundsSilenced(void)
@@ -5119,10 +5142,67 @@ dboolean K_RollbackSoundsSilenced(void)
 }
 
 static uint32_t g_chatheld;     // chat lines held back as a rerun's (declared above)
+static uint32_t g_chatlate;     // ... and written by a rerun, no run having written them
 
-dboolean K_RollbackChatSilenced(void)
+// The chat lines written lately, by their text, and when (real tics). With the
+// speculation kept, a line is written once, by the first run that has it,
+// whatever the tic: a join the server's netxcmd brought to a tic the standing
+// speculation had already run was first run by a rebuild, below the horizon,
+// and its "entered the game" was held back as a rerun's -- every join through
+// rollback_join (WORLDWIDE.md 8.128, 8.129); and each rebuild moving a join a
+// tic later wrote it again on a tic past the horizon, 1 to 5 times (8.109).
+#define CHATSEEN_MAX 32
+#define CHATSEEN_TICS (5*TICRATE)
+static struct
+{
+	uint32_t hash;
+	tic_t at;
+} g_chatseen[CHATSEEN_MAX];
+static uint32_t g_chatseenhead;
+
+static uint32_t K_ChatHash(const char *s)
+{
+	uint32_t h = 2166136261u;
+
+	while (*s)
+	{
+		h ^= (uint8_t)*s++;
+		h *= 16777619u;
+	}
+
+	return h;
+}
+
+dboolean K_RollbackChatSilenced(const char *text)
 {
 	const dboolean silenced = K_RollbackSoundsSilenced();
+
+	// A speculation kept: the line's first writing, not the tic's first run.
+	if (text != NULL && g_keepspec && g_twoclock > 0 && gamestate == GS_LEVEL)
+	{
+		const uint32_t h = K_ChatHash(text);
+		const tic_t now = I_GetTime();
+		uint32_t i;
+
+		for (i = 0; i < CHATSEEN_MAX; i++)
+		{
+			if (g_chatseen[i].at != 0 && g_chatseen[i].hash == h
+				&& now - g_chatseen[i].at < CHATSEEN_TICS)
+			{
+				g_chatheld++;
+				return true;
+			}
+		}
+
+		g_chatseen[g_chatseenhead % CHATSEEN_MAX].hash = h;
+		g_chatseen[g_chatseenhead % CHATSEEN_MAX].at = (now != 0) ? now : 1;
+		g_chatseenhead++;
+
+		if (silenced)
+			g_chatlate++;
+
+		return false;
+	}
 
 	if (silenced)
 	{
@@ -7159,6 +7239,32 @@ static void K_SampleOnTime(tic_t frontierlevel)
 	}
 }
 
+/** rollback_slowtic: holds the processor this many microseconds, as a tic on
+  * a smaller machine would. Client side only. */
+static void K_SlowTic(void)
+{
+	precise_t until;
+
+	if (g_slowtic <= 0 || client == false)
+		return;
+
+	until = I_GetPreciseTime()
+		+ (precise_t)(((uint64_t)g_slowtic * (uint64_t)I_GetPrecisePrecision()) / 1000000u);
+
+	while (I_GetPreciseTime() < until)
+		;
+}
+
+/** rollback_rebuildbudget: whether a speculation begun at since has run past
+  * its budget. Never with the budget off. */
+static dboolean K_OverBudget(precise_t since)
+{
+	if (g_budgetms <= 0)
+		return false;
+
+	return (K_PreciseToMicros(I_GetPreciseTime() - since) >= (uint32_t)g_budgetms * 1000u);
+}
+
 void K_RollbackStepStamp(ticcmd_t *cmd, const ticcmd_t *before)
 {
 	uint8_t back;
@@ -7216,6 +7322,14 @@ static void K_KeepExtend(void)
 	{
 		K_RunSpeculatedTic(frontier, true);
 		K_SampleOnTime(g_keeplevel[s]);
+
+		// The rest to the passes after, past the budget (8.134).
+		if (gametic < frontier + (tic_t)ahead && K_OverBudget(started))
+		{
+			g_budgetcuts++;
+			g_budgettics += (uint32_t)(frontier + (tic_t)ahead - gametic);
+			break;
+		}
 	}
 
 	g_speculating = false;
@@ -7313,6 +7427,15 @@ void K_RollbackSpeculate(void)
 			// the frontier without running again.
 			K_RunSpeculatedTic(g_confirmedtic, i > 0);
 			K_SampleOnTime(frontierlevel);
+
+			// One tic at least; the rest to the passes after, past the
+			// budget (8.134). A kept pass runs on from this head.
+			if (i + 1 < ahead && K_OverBudget(started))
+			{
+				g_budgetcuts++;
+				g_budgettics += (uint32_t)(ahead - i - 1);
+				break;
+			}
 		}
 	}
 
@@ -7518,6 +7641,7 @@ static void K_RunSpeculatedTic(tic_t frontier, dboolean savestart)
 		g_intic = true;
 		G_Ticker(true);
 		g_intic = false;
+		K_SlowTic();
 		K_NoteSpeculatedTic(I_GetPreciseTime() - ticat);
 	}
 
@@ -8800,6 +8924,7 @@ static void K_SetHistory(int32_t want)
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
 	g_ontimesamples = g_ontimestepped = 0;
+	g_budgetcuts = g_budgettics = 0;
 	g_anchorambiguous = 0;
 	g_histstretched = 0;
 }
@@ -8844,6 +8969,16 @@ static void Command_RollbackHistory_f(void)
 			"tics of a pass, %u stamps moved on past the one before\n",
 			g_ontime ? "on" : "off", g_ontimesamples, g_ontimestepped);
 	}
+
+	if (g_budgetms > 0 || g_budgetcuts > 0)
+	{
+		CONS_Printf("rollback_history: rollback_rebuildbudget %d ms -- %u speculations cut "
+			"short, %u tics left to the passes after\n",
+			(int)g_budgetms, g_budgetcuts, g_budgettics);
+	}
+
+	if (g_slowtic > 0)
+		CONS_Printf("rollback_history: rollback_slowtic -- every tic %d us longer\n", (int)g_slowtic);
 
 	if (g_histpasses == 0)
 	{
@@ -9437,6 +9572,52 @@ static void Command_RollbackOnTime_f(void)
 			: "off -- one sample a NetUpdate, as before"), g_ontimesamples);
 }
 
+/** Console command: rollback_rebuildbudget [ms]
+  *
+  * Client side. A speculation stops once it has run this many milliseconds,
+  * one tic at least, and the passes after run on from where it stopped: no
+  * pass far past a tic on a rebuild, for a drawn world a few tics short of
+  * its lead meanwhile (WORLDWIDE.md 8.134). 0, the default until measured:
+  * every speculation runs its whole depth. */
+static void Command_RollbackRebuildBudget_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_budgetms = atoi(COM_Argv(1));
+
+		if (g_budgetms < 0)
+			g_budgetms = 0;
+	}
+
+	if (g_budgetms > 0)
+		CONS_Printf("rollback_rebuildbudget: %d ms a speculation -- %u cut short so far, %u tics "
+			"left to the passes after\n", (int)g_budgetms, g_budgetcuts, g_budgettics);
+	else
+		CONS_Printf("rollback_rebuildbudget: off -- every speculation runs its whole depth\n");
+}
+
+/** Console command: rollback_slowtic [us]
+  *
+  * Client side, for testing: every tic this machine runs, confirmed or
+  * speculated, takes this many microseconds more -- a smaller machine, on
+  * this one (WORLDWIDE.md 8.134). 0 to stop. */
+static void Command_RollbackSlowTic_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_slowtic = atoi(COM_Argv(1));
+
+		if (g_slowtic < 0)
+			g_slowtic = 0;
+		if (g_slowtic > 50000)
+			g_slowtic = 50000;
+	}
+
+	CONS_Printf("rollback_slowtic: %s\n", (g_slowtic > 0)
+		? va("every tic %d us longer", (int)g_slowtic)
+		: "off");
+}
+
 /** Console command: rollback_stall [ms] [every]
   *
   * Client side, for testing: holds this machine's loop for ms milliseconds,
@@ -9525,5 +9706,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);
 	COM_AddDebugCommand("rollback_stall", Command_RollbackStall_f);
 	COM_AddDebugCommand("rollback_ontime", Command_RollbackOnTime_f);
+	COM_AddDebugCommand("rollback_rebuildbudget", Command_RollbackRebuildBudget_f);
+	COM_AddDebugCommand("rollback_slowtic", Command_RollbackSlowTic_f);
 	COM_AddDebugCommand("rollback_cascadelog", Command_RollbackCascadeLog_f);
 }
