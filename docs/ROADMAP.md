@@ -133,13 +133,12 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
 
 **Strongly advised before announcing:**
 
-6. **Sixteen karts to the race's end** (Phase B's gate). **Fifteen,
-   dedicated, on Opulence, held it to the end** (8.133: no switch set, 5.7
-   to 7.3 ms a pass), after the cascade was fixed (8.126 to 8.132). Sixteen
-   needs a host -- a dedicated server has 15 slots, and upstream's code
-   stops on an assert if bots take them all (its dump read, 8.128) -- and
-   was measured over the race's first 1:48 only (8.125). Left: sixteen with
-   a host to the end.
+6. ~~**Sixteen karts to the race's end**~~ (Phase B's gate): **held** --
+   sixteen with a host on Opulence, to the race's end, 5.9 to 7.0 ms a
+   pass, at most 24.5% of a tic, one rebuild in the race (8.136); fifteen,
+   dedicated, likewise (8.133). Sixteen needs a host: a dedicated server
+   has 15 slots, and upstream's code stops on an assert if bots take them
+   all (its dump read, 8.128).
 7. **The history's cap** (8.107): past about 340 ms of round trip,
    `rollback_history 12` leaves the drawn world behind the newest input
    (about 5 tics at 428 ms). Raise it (up to 34) or set it from the round
@@ -176,13 +175,10 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
 
 **Added on 2026-10-02:**
 
-12. **The join's chat line** (blocking, small): a tic writes "entered the
-    game" only on its first run (8.108), and a join a rebuild runs first is
-    held back as a rerun's -- with `rollback_join`, every time; "1 chat
-    lines held back as a rerun's" in 8.129's control (8.128). Any player's
-    join line can go missing on a WORLDWIDE client. To fix before the
-    alpha: count the run that first carries the joining netxcmd as the
-    tic's first.
+12. ~~**The join's chat line**~~ -- fixed (`526de71e6`, 8.136): with the
+    speculation kept, a line is written once, by the first run that has it,
+    whatever the tic; the join through `rollback_join` now shows its
+    "entered the game" once, where it showed none (8.128).
 13. **Smaller machines** (strongly advised): a rebuild re-runs about eight
     tics, a hitch the size of eight of a machine's tics. C, a budget on a
     rebuild's cost, and a smaller machine on this one to measure it against
@@ -194,8 +190,9 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
     Machine (Gibax, during the alpha). Phase E's calibration is the long
     answer.
 
-**Order of work:** 4's cases and 13's measurement, which need nobody; 12;
-3; 2(b) to 2(d) with a second person; 6 and 7; 5; then the announcement.
+**Order of work:** 4's cases, 6, 12 and 13's measurement are done (8.134 to
+8.136); then 3; 2(b) to 2(d) with a second person, a LAN first (8.135's
+loopback note); 7; 5; then the announcement.
 
 **Branches** (Gibax, 2026-10-01). Work goes on `rollback-netcode`.
 `worldwide-2.4` is the public alpha's branch, on the 2.4 release, brought up
@@ -320,11 +317,11 @@ to 1.1 ms, a restore from about 6.5 to 1.9 ms, on by default since 8.125.
 
 **Done when:** a pass fits in **30% of a tic** at sixteen karts, late in a race,
 at the depth Phase D settles on.
-**Status on 2026-10-02:** met at fifteen karts, dedicated, on Opulence, to
-the race's end -- 5.6 to 7.3 ms, at most 25% (8.132, 8.133) -- on this
-machine; sixteen with a host over the first 1:48 (8.125); the depth Phase D
-settles on not settled; smaller machines not measured (*Next, in order*,
-item 13).
+**Status on 2026-10-02:** **met at sixteen karts**, with a host, on
+Opulence, to the race's end -- 5.9 to 7.0 ms, at most 24.5% (8.136) -- and
+at fifteen, dedicated (8.132, 8.133), on this machine. Left: the depth Phase
+D settles on; a smaller machine pays more for every tic (11 to 13 ms a pass
+4 ms a tic slower, 8.134, item 13).
 
 ---
 

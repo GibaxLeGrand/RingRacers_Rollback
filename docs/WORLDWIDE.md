@@ -143,7 +143,8 @@ scope.
    damps it or feeds it is not understood. **With `rollback_ontime` and
    stamps that step (8.131, 8.132)**, the race to its end held the gate in
    every window, 5.6 to 6.6 ms, and seven stalls of 100 ms left no chain;
-   WORLDWIDE mode turns it on since `8c9dd904e` (8.133).
+   WORLDWIDE mode turns it on since `8c9dd904e` (8.133). **Sixteen karts
+   with a host held the gate to the race's end** (8.136).
 8. **R1's two gaps** (⚠ under 8.89): the depth is taken from the samples in
    flight, not from the tics R1 gives them, so the newest input may reach the
    drawn world a tic or two late; and the instrument counts some replayed
@@ -8272,3 +8273,48 @@ audit/corrige/met à jour la roadmap.md aussi".
   eyes, on a machine that is really smaller; `rollback_rebuildbudget` stays
   off by default and goes with the alpha as a setting to try (ROADMAP item
   13).
+
+### 8.136 The join's chat line, and sixteen karts with a host to the race's end
+
+Gibax: "fais donc ça aller" -- the plan after the audit: C measured (8.134),
+the join's chat line (ROADMAP item 12), sixteen karts with a host to the
+race's end (item 6), in one race.
+
+- **The fix** (`526de71e6`, written in a worktree of its own so the
+  repository's HEAD did not move under the races, then pushed): with the
+  speculation kept, a chat line is written once, by the first run that has
+  it, whatever the tic -- the same text written in the last five seconds of
+  real time is held back. A join the server's netxcmd brings to a tic the
+  standing speculation has already run is first run by a rebuild, and its
+  "entered the game" was held back as a rerun's (8.128); each rebuild moving
+  a join a tic later wrote it again past the horizon, 1 to 5 times (8.109).
+  The `rollback_keepspec` report counts the lines held back and those written
+  by a rerun. Syntax checked (C, C++20), errors put in on purpose caught; CI
+  run 37012991318 green.
+- **Run**: installed in both folders (sha256 `7be7ac85…`; `f9e76d6` kept
+  as `.bak_f9e76d6`), `playtest.sh wwlong join karts=16 map=RR_Opulence`,
+  with a host, nobody touching, 15:42 to 15:48
+  (`playlog_wwlong_RR_Opulence_join_k16_20261002-154858_526de71.txt`).
+  Prediction in the notes before it (`cc7ae40`).
+
+  | window | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 (the end) |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | leveltime | 1777 | 2777 | 3777 | 4777 | 5777 | 6777 | 7777 | 8777 | 9777 | 10359 |
+  | a pass | 5.9 ms | 6.6 | 6.5 | 6.8 | 6.5 | 6.7 | 7.0 | 6.6 | 5.9 | 6.1 |
+  | rebuilt, an input | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+  - **Held, the chat line**: "*Guest entered the game." once in the
+    client's log, where `rollback_join`'s joins showed none; "0 chat lines
+    ... held back as a rerun's or written already, 1 written by a rerun, no
+    run having written them"; the harness's check now finds the line in the
+    client's own log.
+  - **Held, sixteen karts to the end**: every race window under the gate,
+    at most 7.0 ms (24.5% of a tic), against 6.2 to 6.8 over the first 1:48
+    before (8.125); one rebuild for an input in the whole race (8.121, a host
+    and the race's first 1:48: 263 for another's); 3746 to 3923 frames a
+    window; the host's player and the client's, both idle, timed out ("ran
+    out of time", twice) and the race ended at leveltime 10359; 0 bodies
+    below zero, 0 PARANOIA.
+- **So Phase B's gate holds at sixteen karts**, with a host, on Opulence, to
+  the race's end, on this machine; and a WORLDWIDE client shows a joining
+  player's line once.
