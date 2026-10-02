@@ -172,6 +172,18 @@ void K_RollbackNoteRelabel(int32_t delta, dboolean fromhost, dboolean inlevel);
   * which it fills by repeating the one before (WORLDWIDE.md 8.85). Client side. */
 void K_RollbackNoteSample(int32_t realtics);
 
+/** Whether this gap of realtics real tics is to be sent with a second sample:
+  * rollback_fill on, in a level, more than one tic (WORLDWIDE.md 8.129). */
+dboolean K_RollbackFillGap(int32_t realtics);
+
+/** In place of K_RollbackNoteSample for a gap sent with a second sample: two
+  * entries beside the local history, the copy's and the sample's. */
+void K_RollbackNoteFill(int32_t realtics);
+
+/** rollback_stall: holds this client's loop when one is due. Called at the end
+  * of the client's NetUpdate. */
+void K_RollbackStallPoint(void);
+
 /** The server has filed one player's sample: a tic later than it arrived,
   * because that slot was taken (shifted), and over a sample already filed there
   * (overwrote). Server side. */

@@ -3721,6 +3721,33 @@ static uint32_t g_samplehead;
 static int32_t g_histheld[MAXSPLITSCREENPLAYERS]; // confirmed tics already holding the applied sample
 static uint32_t g_histstretched;    // passes R1 laid out differently from one sample a tic
 
+// rollback_fill (WORLDWIDE.md 8.129): a frame past a tic leaves the server a
+// gap, and one sample to fill it. The server files a sample on the tic it
+// arrives, or the tic after when that one is taken (d_clisrv.c); in the steady
+// state every sample finds its tic taken by the one before and goes a tic
+// later -- 500 of 500 in a server report. One sample after a gap finds its tic
+// free, so the next one does too: the filing moves a tic earlier, and the
+// replay, which gave the sample before the gap every tic of it, runs one
+// sample off for a round trip. The rebuilds that follow run past a tic, and
+// leave the next gap: the cascade of 8.126. With fill, a gap of k tics sends
+// two samples, the newest and a copy of it stamped a tic earlier: the copy
+// takes the free tic, the newest the one after, where the steady state puts
+// it, and the sample before the gap owns k - 1 tics, which R1 is told.
+static dboolean g_fill;             // rollback_fill; off, the control, until measured
+static uint32_t g_fills;            // gaps filled with a second sample
+
+// rollback_stall: holds this client's loop once, or every so many tics, the
+// way a busy machine does -- the cascade's trigger, on demand (8.129).
+static int32_t g_stallms;           // 0 = off
+static int32_t g_stallperiod;       // 0 = once
+static tic_t g_stallnext, g_stalllast;
+static uint32_t g_stalls;
+
+// rollback_cascadelog: each gap and each rebuild for this machine's input, on
+// a line of its own, dated by the level's clock and the real one, so a cascade
+// can be laid out in time (8.129).
+static dboolean g_cascadelog;
+
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
 // lands on moves with the delay the server files this machine's inputs with --
@@ -4076,6 +4103,7 @@ enum
 	KEEPSHIFT_LOST, NUMKEEPSHIFT
 };
 static uint32_t g_keepmissshift[NUMKEEPSHIFT];
+static uint32_t g_chatheld;     // defined with K_RollbackChatSilenced, further down
 
 // Where a speculated tic spends its time (8.62: 3.2 to 3.5 ms a tic on
 // Opulence, 1.3 on Skyscraper Leaps). The game times each part of a tic
@@ -4529,6 +4557,11 @@ static void Command_RollbackKeepSpec_f(void)
 	CONS_Printf("rollback_keepspec: %u passes left the speculation standing, %u kept it "
 		"(%u of them through a correction that changed nothing)\n",
 		armed, g_keepcount[KEEP_KEPT], g_keepcorrnoop);
+
+	// A tic's chat line not written because the tic was a rerun's -- the join's
+	// "entered the game" with rollback_join, if 8.128 reads it right.
+	CONS_Printf("rollback_keepspec: %u chat lines a tic wrote were held back as a rerun's\n",
+		g_chatheld);
 
 	for (r = 1; r < KEEP_NUMREASONS; r++)
 	{
@@ -5089,7 +5122,7 @@ dboolean K_RollbackSoundsSilenced(void)
 	return g_speculating;
 }
 
-static uint32_t g_chatheld;     // chat lines held back as a rerun's
+static uint32_t g_chatheld;     // chat lines held back as a rerun's (declared above)
 
 dboolean K_RollbackChatSilenced(void)
 {
@@ -6904,6 +6937,20 @@ static int32_t K_NoteKeepMiss(tic_t from, tic_t tic)
 				g_keepmissshift[KEEPSHIFT_OLDER1]++;
 			else
 				g_keepmissshift[KEEPSHIFT_OLDER2]++;
+
+			if (g_cascadelog)
+			{
+				CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- rebuilt for this "
+					"machine's input on tic %u (%d from the frontier): ran stamp %u%s, the "
+					"server's %u%s, its sample %s\n",
+					(unsigned)I_GetTime(), (unsigned)leveltime, (unsigned)tic, at,
+					(unsigned)ran->latency, (ran->flags & TICCMD_RECEIVED) ? "" : " (a repeat)",
+					(unsigned)real->latency, (real->flags & TICCMD_RECEIVED) ? "" : " (a repeat)",
+					(ranage < 0 || realage < 0) ? "not in the history"
+						: (realage == ranage) ? "the same to the anchor"
+						: va("%s by %d", (realage > ranage) ? "older" : "newer",
+							(realage > ranage) ? realage - ranage : ranage - realage));
+			}
 		}
 	}
 
@@ -7650,6 +7697,12 @@ void K_RollbackNoteSample(int32_t realtics)
 	{
 		g_samplelate++;
 		g_samplelatetics += (uint32_t)(realtics - 1);
+
+		if (g_cascadelog)
+		{
+			CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- a sample after %d real "
+				"tics, alone\n", (unsigned)I_GetTime(), (unsigned)leveltime, (int)realtics);
+		}
 	}
 
 	now = D_LocalTiccmdAge(0, 0);
@@ -7657,6 +7710,60 @@ void K_RollbackNoteSample(int32_t realtics)
 
 	if (now != NULL && before != NULL && now->latency == before->latency)
 		g_samplesamestamp++;
+}
+
+dboolean K_RollbackFillGap(int32_t realtics)
+{
+	return (g_fill && realtics > 1 && gamestate == GS_LEVEL);
+}
+
+void K_RollbackNoteFill(int32_t realtics)
+{
+	// The copy: the sample before the gap owns the gap's tics but its last.
+	g_samplehead++;
+	g_samplerealtics[g_samplehead % MAXGENTLEMENDELAY] = realtics - 1;
+
+	// The sample itself, a tic after its copy.
+	g_samplehead++;
+	g_samplerealtics[g_samplehead % MAXGENTLEMENDELAY] = 1;
+
+	g_samples += 2;
+	g_samplelate++;
+	g_samplelatetics += (uint32_t)(realtics - 1);
+	g_fills++;
+
+	if (g_cascadelog)
+	{
+		CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- a sample after %d real "
+			"tics, sent with a copy stamped a tic earlier\n",
+			(unsigned)I_GetTime(), (unsigned)leveltime, (int)realtics);
+	}
+}
+
+void K_RollbackStallPoint(void)
+{
+	if (g_stallms <= 0 || gamestate != GS_LEVEL)
+		return;
+
+	// A new level: its clock starts again, and so does the count to the next.
+	if (leveltime < g_stalllast)
+		g_stallnext = (tic_t)g_stallperiod;
+
+	g_stalllast = leveltime;
+
+	if (leveltime < g_stallnext)
+		return;
+
+	I_Sleep((uint32_t)g_stallms);
+	g_stalls++;
+
+	CONS_Printf("rollback_stall: the loop held %d ms at leveltime %u (real tic %u)\n",
+		(int)g_stallms, (unsigned)leveltime, (unsigned)I_GetTime());
+
+	if (g_stallperiod > 0)
+		g_stallnext = leveltime + (tic_t)g_stallperiod;
+	else
+		g_stallms = 0;
 }
 
 void K_RollbackNoteFiling(int32_t player, dboolean shifted, dboolean overwrote)
@@ -8652,6 +8759,7 @@ static void K_SetHistory(int32_t want)
 	g_drawnvalid = false;
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
+	g_fills = 0;
 	g_anchorambiguous = 0;
 	g_histstretched = 0;
 }
@@ -8686,6 +8794,15 @@ static void Command_RollbackHistory_f(void)
 			"(%u tics got no sample of their own), %u with the same stamp as the one "
 			"before\n", g_samples, g_samplelate, g_samplelatetics, g_samplesamestamp);
 	}
+
+	if (g_fill || g_fills > 0)
+	{
+		CONS_Printf("rollback_history: rollback_fill %s -- %u gaps sent with a second sample\n",
+			g_fill ? "on" : "off", g_fills);
+	}
+
+	if (g_stalls > 0)
+		CONS_Printf("rollback_history: rollback_stall held the loop %u times\n", g_stalls);
 
 	if (g_histpasses == 0)
 	{
@@ -9255,6 +9372,71 @@ static void Command_RollbackJoin_f(void)
 	CONS_Printf("rollback_join: player %d asked to join the game\n", who);
 }
 
+/** Console command: rollback_fill [0/1]
+  *
+  * Client side. On: after a frame that ran past a tic, this machine sends two
+  * samples, the newest and a copy stamped a tic earlier, so the server's
+  * filing keeps its step and R1 knows where each lands (WORLDWIDE.md 8.129).
+  * Off, the default until measured: one sample, as before. */
+static void Command_RollbackFill_f(void)
+{
+	if (COM_Argc() > 1)
+		g_fill = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_fill: %s -- %u gaps sent with a second sample\n",
+		(g_fill ? "on -- a gap is sent with a copy of the sample, a tic earlier"
+			: "off -- one sample however many tics went by, as before"), g_fills);
+}
+
+/** Console command: rollback_stall [ms] [every]
+  *
+  * Client side, for testing: holds this machine's loop for ms milliseconds,
+  * once at the next tic of a level, or every so many tics of it -- the busy
+  * machine that set off 8.126's cascade, on demand (WORLDWIDE.md 8.129). 0 to
+  * stop. */
+static void Command_RollbackStall_f(void)
+{
+	if (COM_Argc() > 1)
+	{
+		g_stallms = atoi(COM_Argv(1));
+		g_stallperiod = (COM_Argc() > 2) ? atoi(COM_Argv(2)) : 0;
+
+		if (g_stallms < 0)
+			g_stallms = 0;
+		if (g_stallms > 2000)
+			g_stallms = 2000;
+		if (g_stallperiod < 0)
+			g_stallperiod = 0;
+
+		g_stallnext = (tic_t)g_stallperiod;
+		g_stalllast = 0;
+	}
+
+	if (g_stallms <= 0)
+		CONS_Printf("rollback_stall: off -- %u held so far\n", g_stalls);
+	else if (g_stallperiod > 0)
+		CONS_Printf("rollback_stall: %d ms every %d tics of a level, from leveltime %d -- %u held so far\n",
+			(int)g_stallms, (int)g_stallperiod, (int)g_stallperiod, g_stalls);
+	else
+		CONS_Printf("rollback_stall: %d ms once, at the next tic of a level -- %u held so far\n",
+			(int)g_stallms, g_stalls);
+}
+
+/** Console command: rollback_cascadelog [0/1]
+  *
+  * Client side. On: a line for each sample made after more than one real tic,
+  * and for each rebuild for this machine's own input, dated by the level's
+  * clock and the real one (WORLDWIDE.md 8.129). Off by default. */
+static void Command_RollbackCascadeLog_f(void)
+{
+	if (COM_Argc() > 1)
+		g_cascadelog = (atoi(COM_Argv(1)) != 0);
+
+	CONS_Printf("rollback_cascadelog: %s\n",
+		(g_cascadelog ? "on -- each gap and each rebuild for this machine's input, dated"
+			: "off"));
+}
+
 void K_RegisterRollbackStuff(void)
 {
 	// Debug commands rather than plain ones: they are diagnostics, and being
@@ -9292,4 +9474,7 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);
+	COM_AddDebugCommand("rollback_fill", Command_RollbackFill_f);
+	COM_AddDebugCommand("rollback_stall", Command_RollbackStall_f);
+	COM_AddDebugCommand("rollback_cascadelog", Command_RollbackCascadeLog_f);
 }
