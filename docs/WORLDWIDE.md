@@ -7868,3 +7868,53 @@ built, not run.
     own). Samples made between two tics of a pass: more than 0. Each window
     no dearer than the control's.
   - Both: 0 bodies below zero, 0 PARANOIA, no crash.
+- **Measured** (Gibax: "pousse donc, et tu peux tester aller"). `aa9629fdf`
+  pushed, CI run 36982022863 green on its three jobs, installed in both
+  folders (sha256 `70f4e916…`; `85ccac6` kept as `.bak_85ccac6`); the exe
+  has `rollback_ontime` and no `rollback_fill`. One after the other, nobody
+  touching: `wwstall` at 10:11
+  (`playlog_wwstall_RR_Opulence_join_k15_20261002-101351_aa9629f.txt`),
+  `wwstallontime` at 10:14
+  (`playlog_wwstallontime_RR_Opulence_join_k15_20261002-101637_aa9629f.txt`).
+
+  | | `wwstall` (ontime 0) | `wwstallontime` (ontime 1) |
+  |---|---|---|
+  | rebuilds for this machine's input after each stall | 10, 19, 1, 42, 1, 62, 3 | 1, 3, 1, 81, 1, 62, 24 |
+  | after the first stall, in all | 138 | 173 |
+  | windows 0 / 1 / 2, a pass | 7.6 / 8.9 / 10.4 ms | 6.5 / 11.3 / 11.9 ms |
+  | **samples made between two tics of a pass** | -- | **2** |
+  | server: late / over one already there / repeated (p15) | 2365 / 14 / 178 | 1903 / 12 / 178 |
+
+  - **Wrong, the control's size**: 138 rebuilds after the first stall, not
+    40 to 90 -- chains of 42 and 62 over 350 and 430 real tics.
+  - **`rollback_ontime` did not run**: 2 samples in the race. Not a verdict
+    on the idea: see 8.131. The race is a second control.
+  - 0 bodies below zero, 0 PARANOIA, no crash in either.
+
+### 8.131 `rollback_ontime` on the live clock
+
+Why 8.130's `rollback_ontime` made 2 samples: `I_GetTime` returns
+`g_time.time`, which `I_UpdateTime` moves once a frame, at the top of the
+main loop (`i_time.c`). During a pass it stands still, so a pass that runs
+for two tics runs on one tic's clock, and `CL_SampleOnTime` never saw a tic
+go by. Written on 2026-10-02 on a local branch, `wip/ontime2`; not pushed.
+
+- **`I_GetTimeNow`** (`i_time.c`): the tic count as it stands -- the time
+  since the frame's update, on top of what that update left over -- without
+  moving the clock; `CL_SampleOnTime` uses it. The next `NetUpdate`, on the
+  frame's clock, then finds the tic already sampled and makes none.
+- **The stamp of a sample made in a speculation**: the frontier does not
+  move while a speculation runs, and the next pass's first sample, made
+  before any tic runs, is stamped with it too. A sample made in the
+  speculation on the same stamp would be its twin -- the same to the anchor
+  for a kart held still -- and the replay would take the wrong one. So the
+  n-th made in a speculation is stamped n tics past the frontier, as one
+  made on time would have been. Between confirmed tics the stamp is the
+  confirmed world's, already distinct.
+- Checked: the syntax of `i_time.c`, `k_rollback.c`, `d_clisrv.c` (C) and
+  `d_net.cpp` (C++20), errors put in on purpose caught.
+- **Prediction**, the same test as 8.130 (`wwstall` then `wwstallontime`,
+  one build, one session): samples made between two tics of a pass, **more
+  than 7** (at least one for each stall's rebuild); **no chain: at most 4
+  rebuilds after any stall, at most 20 after the first stall in all**; the
+  control as before, with chains. 0 bodies below zero, 0 PARANOIA.
