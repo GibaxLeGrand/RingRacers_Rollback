@@ -186,9 +186,13 @@ audit's, kept because `WORLDWIDE.md` and the harness cite them; items 12 and
 13. **Smaller machines** (strongly advised): a rebuild re-runs about eight
     tics, a hitch the size of eight of a machine's tics. C, a budget on a
     rebuild's cost, and a smaller machine on this one to measure it against
-    (`rollback_rebuildbudget`, `rollback_slowtic`, 8.134), written; then the
-    laptop, the Steam Deck and the Steam Machine (Gibax, during the alpha).
-    Phase E's calibration is the long answer.
+    (`rollback_rebuildbudget`, `rollback_slowtic`, 8.134), **measured**: on a
+    machine 4 ms a tic slower, `rollback_ontime` holds (no cascade, 10.6 to
+    12.6 ms a pass), and a 20 ms budget takes the hitches over 50 ms from 45
+    to 15, for 187 moves of the drawn world back against 8. Off by default:
+    which is better is for eyes on the laptop, the Steam Deck and the Steam
+    Machine (Gibax, during the alpha). Phase E's calibration is the long
+    answer.
 
 **Order of work:** 4's cases and 13's measurement, which need nobody; 12;
 3; 2(b) to 2(d) with a second person; 6 and 7; 5; then the announcement.

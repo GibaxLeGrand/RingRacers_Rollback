@@ -8230,3 +8230,45 @@ audit/corrige/met à jour la roadmap.md aussi".
     client, watching on the waiting map, rebuilt 92 times in 700 passes for
     its own input, "the newest input guessed past it", "newer by 1". To read
     with a LAN, where the round trip is that short (ROADMAP item 2(b)).
+- **Measured** (Gibax: "pousse le C", then "fais donc ça aller"). `f9e76d65b`
+  pushed, CI run 37012340255 green, installed in both folders (sha256
+  `fb7a1ff2…`; `8c9dd90` kept as `.bak_8c9dd90`). Fifteen karts dedicated
+  on Opulence, the loop held 100 ms every 500 tics, every tic 4 ms longer,
+  nobody touching.
+  - **The first pair is not a measurement of what was meant**: a comment in
+    both scenarios -- "after the join; rollback_ontime is on" -- was cut at
+    its `;` by the console, which ran "rollback_ontime is on", that is
+    `rollback_ontime 0`. Both ran without `rollback_ontime`. What they show
+    all the same: **without it, the smaller machine collapses** -- 55.5,
+    70.9, 79.2 ms a pass, 2033 gaps and 1928 rebuilds for this machine's
+    input, 500 to 800 frames a window -- and the budget alone holds it (10.9
+    to 11.8 ms, 26 gaps, 73 rebuilds). The harness's comments lost their
+    semicolons (notes `42d04af`; of the 19, `frames_off` ran
+    "rollback_twoclock 0", which that control without prediction wanted
+    anyway, the others a word the console did not know).
+  - **Run again, `rollback_ontime` on** (15:35 and 15:38,
+    `playlog_wwslow_RR_Opulence_join_k15_20261002-153838_f9e76d6.txt`,
+    `playlog_wwslowbudget_RR_Opulence_join_k15_20261002-154120_f9e76d6.txt`):
+
+    | every tic 4 ms longer | budget 0 | budget 20 ms |
+    |---|---|---|
+    | a pass, windows 0 / 1 / 2 | 10.6 / 11.6 / 12.6 ms | 10.9 / 11.8 / 11.7 ms |
+    | frames whose work with a pass ran over 50 ms | **45** | **15** |
+    | the drawn world moving against the clock | 8 | **187** |
+    | rebuilds for this machine's input / gaps | 73 / 11 | 73 / 12 |
+    | frames a window | 3089 to 3305 | 3072 to 3219 |
+    | speculations cut short / tics left to the passes after | -- | 132 / 464 |
+
+  - **Held**: a pass of 11 to 13 ms on the smaller machine (over the gate,
+    which is this machine's: a slower one pays more for every tic), at least
+    20 hitches over 50 ms without a budget (45); with it, speculations cut
+    short, and the drawn world moving back more often (187 against 8) -- the
+    price. **`rollback_ontime` holds on the smaller machine**: no cascade,
+    11 gaps for 7 stalls.
+  - **Wrong, by a little**: the hitches over 50 ms with the budget are a
+    third of those without, not a quarter.
+- **So C trades a few long hitches for many short steps back** -- 45 frames
+  over 50 ms for 15, 8 moves back for 187. Which a player prefers is for
+  eyes, on a machine that is really smaller; `rollback_rebuildbudget` stays
+  off by default and goes with the alpha as a setting to try (ROADMAP item
+  13).
