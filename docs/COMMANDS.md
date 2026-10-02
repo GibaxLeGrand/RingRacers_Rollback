@@ -12,7 +12,7 @@ This file, `WORLDWIDE.md` and `ROADMAP.md` are kept **identical** in the
 public code repository and in the private notes repository (`docs/` on both
 sides).
 
-**Up to date as of 2026-10-01** — 32 commands, checked against
+**Up to date as of 2026-10-02** — 35 commands, checked against
 `K_RegisterRollbackStuff` in `k_rollback.c`, and one server variable,
 `worldwide` (`cvars.cpp`). Two commands are **obsolete** (`rollback_loop`,
 `rollback_pace`) and are kept only for comparison. `worldwide` and
@@ -21,7 +21,11 @@ sides).
 `371ca7419` (8.88, merged as `49daf1196`); `rollback_histreal` from
 `7a455f6fe` (8.89); `rollback_keepearly` from `6209f1786` (8.98), off by
 default from `771bec680` (8.100); `rollback_join` (8.119) and
-`rollback_botsashuman` (8.120) from 2026-10-01.
+`rollback_botsashuman` (8.120) from 2026-10-01; `rollback_stall` and
+`rollback_cascadelog` from `85ccac6e2` (8.129), `rollback_ontime` from
+`aa9629fdf` (8.130, on the live clock from `df4b3e2b7`, 8.131, its stamps
+stepped from `70814ebc0`, 8.132). `rollback_fill` (8.129) came out of the
+code once measured worse (`07e4040d8`).
 
 ⚠ Reminder: **none of these commands is ever launched in a race without the
 project owner's explicit go-ahead**, every time (rule 1 of the docs entry
@@ -257,6 +261,26 @@ player is a spectator who has not already asked: the same request for a
 player in the race would make them spectate. Otherwise it sends nothing and
 says why. `playtest.sh <scenario> join` calls it from a generated copy of
 the client scenario, the windows unmoved.
+
+### `rollback_stall [ms] [every]`
+**Client side, for testing: holds this machine's loop**, `ms` milliseconds,
+once at the next tic of a level, or every `every` tics of a level from
+leveltime `every` on (`WORLDWIDE.md` 8.129). The hold is at the end of
+`NetUpdate`, outside any pass: the busy machine that sets off a cascade of
+rebuilds, on demand. Each hold prints a line (`rollback_stall: the loop held
+...`, with the leveltime and the real tic); `rollback_history` counts them.
+`0` stops it; at most 2000 ms. The `wwstall` scenarios of `playtest.sh` run
+`rollback_stall 100 500` from the windows' start.
+
+### `rollback_cascadelog [0|1]`
+**Client side: a dated line for each gap and each rebuild for this
+machine's own input** (`WORLDWIDE.md` 8.129). A gap is a sample made after
+more than one real tic (`rollback_cascade: real tic ..., leveltime ... -- a
+sample after N real tics`); a rebuild line gives the tic, its distance from
+the frontier, the stamps run and applied (and whether either was a repeat),
+and the applied sample against the replayed one ("older by 1", "newer by
+2", "not in the history"). Off by default. `cascade.py` in the notes'
+harness lays these out stall by stall.
 
 ### `rollback_lagcheck` — not a command
 Looked for as a command, it is not one: it is an **automatic print**, edge
@@ -649,6 +673,30 @@ changes; the server still sends every bot's real input, and a human who
 finished the race and drives on bot movement is still computed. Off by
 default. `rollback_drift`'s grid line says when it is on. The `wwbots`
 scenario of `playtest.sh` turns it on (run it with `join`).
+
+### `rollback_ontime [0|1]`
+**Client side: a long pass still sends a sample each real tic**
+(`WORLDWIDE.md` 8.130 to 8.132). A client makes and sends one sample a
+`NetUpdate`, at the top of a pass; a pass that runs past a tic -- a rebuild
+re-runs about eight -- left the tics it ran over without one, the server's
+filing lost its step, the replay of this machine's input ran one off, and
+the rebuilds that followed left the next gap: the cascade of 8.126. With
+`1`:
+- between two tics a pass runs, confirmed or speculated, a sample is made
+  from the controls as they stand and sent as soon as a real tic has gone
+  by, on the live clock (`I_GetTimeNow`; `I_GetTime` stands still during a
+  pass), without reading the network;
+- a sample made in a speculation is on the frontier's clock, and the
+  applied sample's age in the history moves on by one;
+- **no sample's stamp is the same as the one before**: a stamp at or up to
+  seven tics behind the one before is moved on to the one after it (twins
+  to the anchor made a normal race go over the gate, 8.131).
+
+`rollback_history` reports the samples made between two tics of a pass and
+the stamps moved on. **Off by default** for now; measured on: seven stalls
+of 100 ms leave no chain (8.131), and the race to its end on Opulence at
+fifteen karts holds Phase B's gate in every window (8.132). The
+`wwstallontime` and `wwlongontime` scenarios turn it on.
 
 ### `rollback_lag [tics]`
 **Testing only.** Delays every packet received from a peer by this many tics.
