@@ -6741,14 +6741,6 @@ static void SV_SendServerKeepAlive(void)
 	}
 }
 
-// rollback_fill (WORLDWIDE.md 8.129): which sample of the local history a
-// CL_SendClientCmd sends -- 0, the newest, but for a gap's copy, sent first --
-// and whether it reuses the delay the copy was sent with, so the server files
-// the two from the same tic.
-static int32_t cl_sendage = 0;
-static dboolean cl_reuselag = false;
-static uint8_t cl_lastlagdelay = 0;
-
 // send the client packet to the server
 static void CL_SendClientCmd(void)
 {
@@ -6803,11 +6795,7 @@ static void CL_SendClientCmd(void)
 	{
 		uint8_t lagDelay = 0;
 
-		if (cl_reuselag)
-		{
-			lagDelay = cl_lastlagdelay;
-		}
-		else if (target_lag > 0)
+		if (target_lag > 0)
 		{
 			// Gentlemens' ping.
 			lagDelay = min(target_lag, MAXGENTLEMENDELAY);
@@ -6857,29 +6845,27 @@ static void CL_SendClientCmd(void)
 
 		}
 
-		cl_lastlagdelay = lagDelay;
-
 		packetsize = sizeof (clientcmd_pak);
-		G_MoveTiccmd(&netbuffer->u.clientpak.cmd, &localcmds[0][cl_sendage], 1);
+		G_MoveTiccmd(&netbuffer->u.clientpak.cmd, &localcmds[0][0], 1);
 		netbuffer->u.clientpak.consistancy = LSBF_SHORT(consistancy[reporttic % BACKUPTICS]);
 
 		if (splitscreen) // Send a special packet with 2 cmd for splitscreen
 		{
 			netbuffer->packettype = (mis ? PT_CLIENT2MIS : PT_CLIENT2CMD);
 			packetsize = sizeof (client2cmd_pak);
-			G_MoveTiccmd(&netbuffer->u.client2pak.cmd2, &localcmds[1][cl_sendage], 1);
+			G_MoveTiccmd(&netbuffer->u.client2pak.cmd2, &localcmds[1][0], 1);
 
 			if (splitscreen > 1)
 			{
 				netbuffer->packettype = (mis ? PT_CLIENT3MIS : PT_CLIENT3CMD);
 				packetsize = sizeof (client3cmd_pak);
-				G_MoveTiccmd(&netbuffer->u.client3pak.cmd3, &localcmds[2][cl_sendage], 1);
+				G_MoveTiccmd(&netbuffer->u.client3pak.cmd3, &localcmds[2][0], 1);
 
 				if (splitscreen > 2)
 				{
 					netbuffer->packettype = (mis ? PT_CLIENT4MIS : PT_CLIENT4CMD);
 					packetsize = sizeof (client4cmd_pak);
-					G_MoveTiccmd(&netbuffer->u.client4pak.cmd4, &localcmds[3][cl_sendage], 1);
+					G_MoveTiccmd(&netbuffer->u.client4pak.cmd4, &localcmds[3][0], 1);
 				}
 			}
 		}
@@ -7165,24 +7151,6 @@ static void CreateNewLocalCMD(uint8_t p, int32_t realtics)
 
 	G_BuildTiccmd(&localcmds[p][0], realtics, p+1);
 	localcmds[p][0].flags |= TICCMD_RECEIVED;
-}
-
-// rollback_fill (WORLDWIDE.md 8.129): the newest sample, made for a gap, is
-// put in the history twice -- as the newest, and just before it as its copy,
-// stamped a tic earlier so the anchor tells the two apart.
-static void Local_FillGap(void)
-{
-	int32_t p, i;
-
-	for (p = 0; p <= splitscreen; p++)
-	{
-		for (i = MAXGENTLEMENDELAY-1; i > 0; i--)
-		{
-			G_MoveTiccmd(&localcmds[p][i], &localcmds[p][i-1], 1);
-		}
-
-		localcmds[p][1].latency = (uint8_t)((localcmds[p][1].latency - 1) & TICCMD_LATENCYMASK);
-	}
 }
 
 static void Local_Maketic(int32_t realtics)
@@ -8265,24 +8233,9 @@ void NetUpdate(void)
 
 	Local_Maketic(realtics); // make local tic, and call menu?
 
-	// How many real tics this one sample stands for (WORLDWIDE.md 8.85), or,
-	// for a gap sent with a second sample, the two (8.129).
-	dboolean fillgap = false;
-
+	// How many real tics this one sample stands for (WORLDWIDE.md 8.85).
 	if (client)
-	{
-		fillgap = K_RollbackFillGap(realtics);
-
-		if (fillgap)
-		{
-			Local_FillGap();
-			K_RollbackNoteFill(realtics);
-		}
-		else
-		{
-			K_RollbackNoteSample(realtics);
-		}
-	}
+		K_RollbackNoteSample(realtics);
 
 	if (server)
 		CL_SendClientCmd(); // send it
@@ -8307,18 +8260,7 @@ void NetUpdate(void)
 		if (cl_redownloadinggamestate && fileneeded[0].status == FS_FOUND)
 			CL_ReloadReceivedSavegame();
 
-		if (fillgap)
-		{
-			// The copy first, then the sample with the same delay: the server
-			// files the copy on the tic they arrive and the sample on the next.
-			cl_sendage = 1;
-			CL_SendClientCmd();
-			cl_sendage = 0;
-			cl_reuselag = true;
-		}
-
 		CL_SendClientCmd(); // Send tic cmd
-		cl_reuselag = false;
 		hu_redownloadinggamestate = cl_redownloadinggamestate;
 
 		K_RollbackStallPoint();

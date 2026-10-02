@@ -3721,21 +3721,6 @@ static uint32_t g_samplehead;
 static int32_t g_histheld[MAXSPLITSCREENPLAYERS]; // confirmed tics already holding the applied sample
 static uint32_t g_histstretched;    // passes R1 laid out differently from one sample a tic
 
-// rollback_fill (WORLDWIDE.md 8.129): a frame past a tic leaves the server a
-// gap, and one sample to fill it. The server files a sample on the tic it
-// arrives, or the tic after when that one is taken (d_clisrv.c); in the steady
-// state every sample finds its tic taken by the one before and goes a tic
-// later -- 500 of 500 in a server report. One sample after a gap finds its tic
-// free, so the next one does too: the filing moves a tic earlier, and the
-// replay, which gave the sample before the gap every tic of it, runs one
-// sample off for a round trip. The rebuilds that follow run past a tic, and
-// leave the next gap: the cascade of 8.126. With fill, a gap of k tics sends
-// two samples, the newest and a copy of it stamped a tic earlier: the copy
-// takes the free tic, the newest the one after, where the steady state puts
-// it, and the sample before the gap owns k - 1 tics, which R1 is told.
-static dboolean g_fill;             // rollback_fill; off, the control, until measured
-static uint32_t g_fills;            // gaps filled with a second sample
-
 // rollback_stall: holds this client's loop once, or every so many tics, the
 // way a busy machine does -- the cascade's trigger, on demand (8.129).
 static int32_t g_stallms;           // 0 = off
@@ -7701,7 +7686,7 @@ void K_RollbackNoteSample(int32_t realtics)
 		if (g_cascadelog)
 		{
 			CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- a sample after %d real "
-				"tics, alone\n", (unsigned)I_GetTime(), (unsigned)leveltime, (int)realtics);
+				"tics\n", (unsigned)I_GetTime(), (unsigned)leveltime, (int)realtics);
 		}
 	}
 
@@ -7710,34 +7695,6 @@ void K_RollbackNoteSample(int32_t realtics)
 
 	if (now != NULL && before != NULL && now->latency == before->latency)
 		g_samplesamestamp++;
-}
-
-dboolean K_RollbackFillGap(int32_t realtics)
-{
-	return (g_fill && realtics > 1 && gamestate == GS_LEVEL);
-}
-
-void K_RollbackNoteFill(int32_t realtics)
-{
-	// The copy: the sample before the gap owns the gap's tics but its last.
-	g_samplehead++;
-	g_samplerealtics[g_samplehead % MAXGENTLEMENDELAY] = realtics - 1;
-
-	// The sample itself, a tic after its copy.
-	g_samplehead++;
-	g_samplerealtics[g_samplehead % MAXGENTLEMENDELAY] = 1;
-
-	g_samples += 2;
-	g_samplelate++;
-	g_samplelatetics += (uint32_t)(realtics - 1);
-	g_fills++;
-
-	if (g_cascadelog)
-	{
-		CONS_Printf("rollback_cascade: real tic %u, leveltime %u -- a sample after %d real "
-			"tics, sent with a copy stamped a tic earlier\n",
-			(unsigned)I_GetTime(), (unsigned)leveltime, (int)realtics);
-	}
 }
 
 void K_RollbackStallPoint(void)
@@ -8759,7 +8716,6 @@ static void K_SetHistory(int32_t want)
 	g_drawnvalid = false;
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
-	g_fills = 0;
 	g_anchorambiguous = 0;
 	g_histstretched = 0;
 }
@@ -8793,12 +8749,6 @@ static void Command_RollbackHistory_f(void)
 		CONS_Printf("rollback_history: %u samples made, %u after more than one real tic "
 			"(%u tics got no sample of their own), %u with the same stamp as the one "
 			"before\n", g_samples, g_samplelate, g_samplelatetics, g_samplesamestamp);
-	}
-
-	if (g_fill || g_fills > 0)
-	{
-		CONS_Printf("rollback_history: rollback_fill %s -- %u gaps sent with a second sample\n",
-			g_fill ? "on" : "off", g_fills);
 	}
 
 	if (g_stalls > 0)
@@ -9372,22 +9322,6 @@ static void Command_RollbackJoin_f(void)
 	CONS_Printf("rollback_join: player %d asked to join the game\n", who);
 }
 
-/** Console command: rollback_fill [0/1]
-  *
-  * Client side. On: after a frame that ran past a tic, this machine sends two
-  * samples, the newest and a copy stamped a tic earlier, so the server's
-  * filing keeps its step and R1 knows where each lands (WORLDWIDE.md 8.129).
-  * Off, the default until measured: one sample, as before. */
-static void Command_RollbackFill_f(void)
-{
-	if (COM_Argc() > 1)
-		g_fill = (atoi(COM_Argv(1)) != 0);
-
-	CONS_Printf("rollback_fill: %s -- %u gaps sent with a second sample\n",
-		(g_fill ? "on -- a gap is sent with a copy of the sample, a tic earlier"
-			: "off -- one sample however many tics went by, as before"), g_fills);
-}
-
 /** Console command: rollback_stall [ms] [every]
   *
   * Client side, for testing: holds this machine's loop for ms milliseconds,
@@ -9474,7 +9408,6 @@ void K_RegisterRollbackStuff(void)
 	COM_AddDebugCommand("rollback_poolcopy", Command_RollbackPoolCopy_f);
 	COM_AddDebugCommand("rollback_rawsnap", Command_RollbackRawSnap_f);
 	COM_AddDebugCommand("rollback_histreal", Command_RollbackHistReal_f);
-	COM_AddDebugCommand("rollback_fill", Command_RollbackFill_f);
 	COM_AddDebugCommand("rollback_stall", Command_RollbackStall_f);
 	COM_AddDebugCommand("rollback_cascadelog", Command_RollbackCascadeLog_f);
 }
