@@ -180,6 +180,11 @@ void K_RollbackStallPoint(void);
   * made and sent if a real tic has gone by (WORLDWIDE.md 8.130). */
 void K_RollbackSampleBetweenTics(void);
 
+/** rollback_ontime: moves a new sample's stamp on past the one before when it
+  * is the same or a few tics behind, so no two samples running are twins to
+  * the anchor (WORLDWIDE.md 8.132). Client side, in a level. */
+void K_RollbackStepStamp(ticcmd_t *cmd, const ticcmd_t *before);
+
 /** The server has filed one player's sample: a tic later than it arrived,
   * because that slot was taken (shifted), and over a sample already filed there
   * (overwrote). Server side. */

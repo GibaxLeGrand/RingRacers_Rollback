@@ -3742,7 +3742,7 @@ static dboolean g_cascadelog;
 // tic has gone by, on the frontier's clock, as NetUpdate's are.
 static dboolean g_ontime;           // rollback_ontime; off, the control, until measured
 static uint32_t g_ontimesamples;    // samples made between two tics of a pass
-static tic_t g_ontimepass;          // ... in the speculation now running
+static uint32_t g_ontimestepped;    // samples whose stamp was moved on past the one before
 
 // What rollback_history holds steady is the drawn tic's lead over the clock,
 // not the depth (WORLDWIDE.md 8.40, 8.41). The tic the newest input in flight
@@ -7130,17 +7130,10 @@ static void K_NotePassPhase(void)
 }
 
 /** rollback_ontime: a sample, if a real tic has gone by, between two tics of
-  * a speculation. The history ages by one, so the applied sample's age does
-  * too, and the rest of the speculation reads the samples it was laid out
-  * with.
-  *
-  * Its stamp: NetUpdate's are the frontier's leveltime, and the frontier does
-  * not move while a speculation runs -- the next pass's sample, made before
-  * any tic runs, has the frontier's stamp too. A sample made here on it would
-  * be that one's twin, the same to the anchor for a kart held still, and the
-  * replay would take the wrong one. So the n-th made in a speculation is
-  * stamped n tics past the frontier, as one made on time would have been
-  * (WORLDWIDE.md 8.131). */
+  * a speculation, on the frontier's clock as NetUpdate's are -- its stamp
+  * then moved on past the one before (K_RollbackStepStamp). The history ages
+  * by one, so the applied sample's age does too, and the rest of the
+  * speculation reads the samples it was laid out with. */
 static void K_SampleOnTime(tic_t frontierlevel)
 {
 	const tic_t level = leveltime;
@@ -7150,7 +7143,7 @@ static void K_SampleOnTime(tic_t frontierlevel)
 	if (g_ontime == false)
 		return;
 
-	leveltime = frontierlevel + g_ontimepass + 1;
+	leveltime = frontierlevel;
 	made = CL_SampleOnTime();
 	leveltime = level;
 
@@ -7158,12 +7151,36 @@ static void K_SampleOnTime(tic_t frontierlevel)
 		return;
 
 	g_ontimesamples++;
-	g_ontimepass++;
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 	{
 		if (g_histunacked[i] >= 0)
 			g_histunacked[i]++;
+	}
+}
+
+void K_RollbackStepStamp(ticcmd_t *cmd, const ticcmd_t *before)
+{
+	uint8_t back;
+
+	// A stamp is the frontier's leveltime when the sample is made, and the
+	// frontier does not move a tic for every sample: a sample made in a
+	// speculation, or two passes on one confirmed tic, share a stamp with the
+	// one before -- twins to the anchor for a kart held still, and the replay
+	// takes the wrong one. 94 in the window of 8.131's normal race that went
+	// over the gate, 0 in every other. With rollback_ontime, a stamp at or a
+	// few tics behind the one before is moved on to the one after it, so no
+	// two samples running are the same; one further behind -- a new level, a
+	// leveltime starting again -- is left as it is (WORLDWIDE.md 8.132).
+	if (g_ontime == false || gamestate != GS_LEVEL || cmd == NULL || before == NULL)
+		return;
+
+	back = (uint8_t)((before->latency - cmd->latency) & TICCMD_LATENCYMASK);
+
+	if (cmd->latency == before->latency || back < 8)
+	{
+		cmd->latency = (uint8_t)((before->latency + 1) & TICCMD_LATENCYMASK);
+		g_ontimestepped++;
 	}
 }
 
@@ -7194,7 +7211,6 @@ static void K_KeepExtend(void)
 	K_KeepEarlyCheck(frontier);
 
 	g_speculating = true;
-	g_ontimepass = 0;
 
 	while (gametic < frontier + (tic_t)ahead)
 	{
@@ -7287,8 +7303,6 @@ void K_RollbackSpeculate(void)
 	{
 		// The frontier's clock, for a sample made on time (rollback_ontime).
 		const tic_t frontierlevel = leveltime;
-
-		g_ontimepass = 0;
 
 		for (i = 0; i < ahead; i++)
 		{
@@ -8785,7 +8799,7 @@ static void K_SetHistory(int32_t want)
 	g_drawnvalid = false;
 	g_drawnpasses = g_drawnjumps = g_drawnjumptics = 0;
 	g_samples = g_samplelate = g_samplelatetics = g_samplesamestamp = 0;
-	g_ontimesamples = 0;
+	g_ontimesamples = g_ontimestepped = 0;
 	g_anchorambiguous = 0;
 	g_histstretched = 0;
 }
@@ -8827,7 +8841,8 @@ static void Command_RollbackHistory_f(void)
 	if (g_ontime || g_ontimesamples > 0)
 	{
 		CONS_Printf("rollback_history: rollback_ontime %s -- %u samples made between two "
-			"tics of a pass\n", g_ontime ? "on" : "off", g_ontimesamples);
+			"tics of a pass, %u stamps moved on past the one before\n",
+			g_ontime ? "on" : "off", g_ontimesamples, g_ontimestepped);
 	}
 
 	if (g_histpasses == 0)

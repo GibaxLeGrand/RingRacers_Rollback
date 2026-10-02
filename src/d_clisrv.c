@@ -7151,6 +7151,10 @@ static void CreateNewLocalCMD(uint8_t p, int32_t realtics)
 
 	G_BuildTiccmd(&localcmds[p][0], realtics, p+1);
 	localcmds[p][0].flags |= TICCMD_RECEIVED;
+
+	// rollback_ontime (WORLDWIDE.md 8.132): no stamp the same as the one before.
+	if (client)
+		K_RollbackStepStamp(&localcmds[p][0], &localcmds[p][1]);
 }
 
 static void Local_Maketic(int32_t realtics)
