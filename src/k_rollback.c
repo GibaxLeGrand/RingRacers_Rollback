@@ -3740,7 +3740,7 @@ static dboolean g_cascadelog;
 // machine's input runs one off: more rebuilds, more gaps (8.126, 8.129). On:
 // between two tics a pass runs, a sample is made and sent as soon as a real
 // tic has gone by, on the frontier's clock, as NetUpdate's are.
-static dboolean g_ontime;           // rollback_ontime; off, the control, until measured
+static dboolean g_ontime;           // rollback_ontime; WORLDWIDE mode turns it on (8.133)
 static uint32_t g_ontimesamples;    // samples made between two tics of a pass
 static uint32_t g_ontimestepped;    // samples whose stamp was moved on past the one before
 
@@ -9290,6 +9290,7 @@ static void K_WorldwideClientOff(void)
 	K_SetHistory(0);
 	K_SetTwoClock(0);
 	g_correctapply = false;
+	g_ontime = false;
 
 	// Two-clock switches the snapshot keeper on and nothing switches it off,
 	// and with two-clock off the keeper saves the whole world every tic
@@ -9322,11 +9323,16 @@ void K_WorldwideJoin(dboolean serverhasit)
 	K_SetHistory(WORLDWIDE_HISTORY);
 	K_SetKeepSpec(true);
 	g_correctapply = true;
+
+	// A long pass still sends a sample each real tic, its stamps stepped:
+	// the cascade of rebuilds no longer feeds itself (WORLDWIDE.md 8.131,
+	// 8.132), and a clean race costs nothing for it (8.133).
+	g_ontime = true;
 	g_wwclient = true;
 
 	CONS_Printf("worldwide: this server runs WORLDWIDE mode -- predicting, "
 		"rollback_twoclock %d, rollback_history %d, rollback_keepspec on, "
-		"corrections applied\n", WORLDWIDE_TWOCLOCK, WORLDWIDE_HISTORY);
+		"rollback_ontime on, corrections applied\n", WORLDWIDE_TWOCLOCK, WORLDWIDE_HISTORY);
 }
 
 void K_WorldwideLeave(void)
@@ -9417,8 +9423,10 @@ static void Command_RollbackJoin_f(void)
   *
   * Client side. On: between two tics a pass runs -- confirmed or speculated --
   * a sample is made and sent as soon as a real tic has gone by, so a long pass
-  * leaves the server no gap (WORLDWIDE.md 8.130). Off, the default until
-  * measured: one sample a NetUpdate, as before. */
+  * leaves the server no gap, and no sample's stamp is the same as the one
+  * before (WORLDWIDE.md 8.130 to 8.132). WORLDWIDE mode turns it on at the
+  * join and off on leaving (8.133); off otherwise: one sample a NetUpdate, as
+  * a stock client. */
 static void Command_RollbackOnTime_f(void)
 {
 	if (COM_Argc() > 1)
