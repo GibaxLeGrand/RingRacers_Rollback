@@ -8055,3 +8055,27 @@ Written on 2026-10-02 on a local branch, `wip/ontime3`; not pushed.
   to the race's end at fifteen karts, dedicated, on Opulence. Still off by
   default; next, on by default (or with WORLDWIDE mode), then the cap on a
   rebuild's cost for smaller machines.
+
+### 8.133 WORLDWIDE mode turns `rollback_ontime` on
+
+The first of the next steps 8.132 left. Written on 2026-10-02 on a local
+branch, `wip/ontime-ww` (`72857f680`); not pushed.
+
+- **`K_WorldwideJoin` turns `rollback_ontime` on** with the other switches
+  a WORLDWIDE join sets, and `K_WorldwideClientOff` turns it off, on
+  leaving or on joining a stock server. Off otherwise, as a stock client.
+  The join's line now says "rollback_ontime on".
+- **Every WORLDWIDE race from this build on runs with it**, `wwwindows`,
+  `wwlong` and the other client scenarios included; their figures are not
+  comparable with earlier ones on that count.
+- **The harness**: `wwstall`, the control, turned `rollback_ontime 0` at
+  the top of its scenario -- before the join, which would now turn it
+  back on. It turns it off at the windows' start instead.
+- Checked: the syntax of `k_rollback.c`, an error put in on purpose caught.
+- **The confirmation**: `wwlong` as it stands, no switch set by the
+  scenario, 15 karts dedicated on Opulence. **Prediction**: the join's line
+  says "rollback_ontime on", and the report counts stamps moved on (more
+  than 0); every race window under the gate (at most 7.5 ms) and none with
+  more than 20 rebuilds for this machine's input; no sample with the same
+  stamp as the one before in the race's windows; the race ends by itself;
+  0 bodies below zero, 0 PARANOIA.
