@@ -127,8 +127,9 @@ asked for first.**
    every window, under the gate. But during a Windows Update install a
    cascade of rebuilds for this machine's own idle input, its stamp
    replayed one off, took windows to 12 and 18 ms -- the second time
-   (00:35, 8.125). Left: the cascade -- its mechanism read, and a first fix,
-   `rollback_fill`, measured worse (8.129) -- and sixteen with a host to the end.
+   (00:35, 8.125). Left: the cascade -- its mechanism read, a first fix,
+   `rollback_fill`, measured worse (8.129), a second, `rollback_ontime`,
+   written (8.130) -- and sixteen with a host to the end.
    Sixteen needs a host (a dedicated server has 15 slots, and upstream's
    code stops if bots take them all).
 7. **The history's cap** (8.107): past about 340 ms of round trip,

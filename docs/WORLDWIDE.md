@@ -7816,3 +7816,55 @@ gaps sent with a copy and the stalls.
   out. What a fix has to break is the loop's gain -- our own rebuilds
   leaving gaps -- rather than to guess the server's filing from the
   client's clock.
+
+### 8.130 `rollback_ontime`: a long pass still sends a sample each real tic
+
+What 8.129 left to break is the loop's gain: our own rebuilds leaving gaps.
+Asked by Gibax whether a vanilla resync would do ("qu'est ce qui empêche
+d'utiliser nu gros resync à la vanilla Ring Racers si ça a trop desync ?"):
+no -- nothing is out of sync in a cascade (drift 0, no kart put back), it is
+time; a full resync is a long stall of its own, the biggest gap there is. And
+whether this costs much on a smaller machine ("faut que ça marche pas sur
+des betes de cours en machine, mais aussi d'autre machine moins
+performante"): a sample is a few microseconds and a packet of about fifty
+bytes, and a smaller machine has more long passes, so more for it to stop;
+what it does not do is make a rebuild cheaper (that is the next step, a cap
+on a rebuild's cost). Gibax: "Faisons comme ça alors" -- this first, then the
+cap, then the laptop, the Steam Deck and the Steam Machine during the alpha.
+Written on 2026-10-02 on a local branch, `wip/ontime`; not pushed, not
+built, not run.
+
+- **`rollback_fill` is taken out of the code** (`6d0779207`), measured
+  worse (8.129). `rollback_stall` and `rollback_cascadelog` stay; a gap's
+  line no longer says "alone".
+- **`rollback_ontime`** (client, off by default until measured): between two
+  tics a pass runs -- the confirmed ones the loop catches up on, and the
+  speculated ones -- if a real tic has gone by since the last sample, one is
+  made from the controls as they stand and sent, as `NetUpdate` would at
+  the top of the next pass (`CL_SampleOnTime`). It reads no packet and
+  processes no event in the middle of a pass. Between speculated tics it is
+  stamped with the frontier's leveltime, as `NetUpdate`'s are, and the
+  applied sample's age in the history moves on by one, so the rest of the
+  speculation replays the samples it was laid out with; the next pass maps
+  the history afresh. The `rollback_history` report counts the samples so
+  made.
+- What it cannot stop: a stall outside a pass -- `rollback_stall`'s, an
+  operating system's -- still leaves its own gap and its rebuilds. What it
+  should stop is the next gaps, the ones those rebuilds leave.
+- Checked: the syntax of `k_rollback.c` and `d_clisrv.c` (C) and of
+  `d_net.cpp` (C++20, which includes the changed `d_clisrv.h`), each
+  catching an error put in on purpose; the one error left in `d_clisrv.c`
+  is the fake config's.
+- **The test**: `wwstall` (now `rollback_ontime 0`) then `wwstallontime`
+  (`rollback_ontime 1`), the same build, the same session, 15 karts
+  dedicated on Opulence, 7 stalls of 100 ms; `cascade.py`.
+- **Prediction**:
+  - `wwstall`, the control: as at 09:41 -- a gap and at least 2 rebuilds
+    for this machine's input after each stall, some in a chain; 40 to 90
+    rebuilds after the first stall.
+  - `wwstallontime`: each stall still leaves its own gap and about 2
+    rebuilds, but **no chain: at most 4 rebuilds after any stall, at most
+    20 after the first stall in all, and one gap a stall** (the stall's
+    own). Samples made between two tics of a pass: more than 0. Each window
+    no dearer than the control's.
+  - Both: 0 bodies below zero, 0 PARANOIA, no crash.
